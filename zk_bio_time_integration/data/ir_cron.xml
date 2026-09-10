@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <record id="cron_action_sync_zk_departments" model="ir.cron">
+        <field name="name">HR Department: Sync ZK Data</field>
+        <field name="model_id" ref="hr.model_hr_department"/>
+        <field name="state">code</field>
+        <field name="code">
+            model.sync_zk_departments()
+        </field>
+    </record>
+    <record id="cron_action_sync_zk_employees" model="ir.cron">
+        <field name="name">HR Employee: Sync ZK Data</field>
+        <field name="model_id" ref="hr.model_hr_employee"/>
+        <field name="state">code</field>
+        <field name="active">False</field>
+        <field name="code">
+            model.sync_zk_employees()
+        </field>
+    </record>
+    <record id="cron_action_sync_zk_log_terminals" model="ir.cron">
+        <field name="name">ZKTeco: Sync Terminals</field>
+        <field name="model_id" ref="zk_bio_time_integration.model_log_terminal"/>
+        <field name="state">code</field>
+        <field name="active">False</field>
+        <field name="code">
+            model.sync_zk_log_terminals()
+        </field>
+    </record>
+    <record id="cron_action_fetch_daily_log_records" model="ir.cron">
+        <field name="name">ZKTeco: Daily Attendance Logs</field>
+        <field name="model_id" ref="zk_bio_time_integration.model_log_transaction"/>
+        <field name="state">code</field>
+        <field name="code">
+            model.get_attendance_data()
+        </field>
+        <field name="interval_number">1</field>
+        <field name="interval_type">days</field>
+    </record>
+</odoo>

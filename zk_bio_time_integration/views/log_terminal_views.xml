@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <record id="action_view_log_terminals_configuration_menu" model="ir.actions.act_window">
+        <field name="name">Attendance Logging Devices</field>
+        <field name="res_model">log.terminal</field>
+        <field name="view_mode">list,form</field>
+    </record>
+    <menuitem id="menu_item_attendance_logging_devices" name="Devices" parent="hr_attendance.menu_hr_attendance_configuration" action="action_view_log_terminals_configuration_menu"/>
+
+    <record id="log_terminal_list_view" model="ir.ui.view">
+        <field name="name">log.terminal.list.view</field>
+        <field name="model">log.terminal</field>
+        <field name="arch" type="xml">
+            <list>
+                <field name="name"/>
+                <field name="alias"/>
+                <field name="ip_address"/>
+<!--                <field name=""/>-->
+            </list>
+        </field>
+    </record>
+
+
+</odoo>
