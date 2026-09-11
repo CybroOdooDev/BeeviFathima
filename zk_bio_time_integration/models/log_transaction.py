@@ -51,130 +51,107 @@ class LogTransaction(models.Model):
         default=False,
     )
 
-    @api.model
-    def get_attendance_data(self):
-        header = {
+    fetch_success_date = fields.Datetime(
+        string='Fetch Success Date',
+    )
+
+    def fetch_employee_attendance_device_logs(self, emp):
+        headers = {
             "Content-Type": "application/json",
             "Authorization": "Token fe5fe2ae008e670f3c66dca96f8311f4fe870f3c"
         }
+        start_date = self.fetch_success_date
+        end_date = fields.Datetime.now()
+        print('start_date', start_date)
+        print('end_date', end_date)
+        print('GET RESPONSE')
+        url = f"http://biotimedxb.com:8007/iclock/api/transactions/?emp={emp.external_id}&start_time={start_date}&end_time={end_date}"
+        # "http://biotimedxb.com:8007/iclock/api/transactions/?emp={emp.external_id}&start_time={start_date}&end_time={end_date}"
+        try:
+            response = requests.get(url, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            print('RESPONSE', data)
+            self.fetch_success_date = end_date
+
+        except requests.RequestException:
+            return
+        records = data.get('data')
+        if not records:
+            print('NO RECORDS')
+            return
+        for rec in records:
+            print('RECORDS', rec)
+            employee_id = emp.id
+            if rec.get('punch_state') not in ['0', '1']:
+                continue
+            if rec.get('log_type') not in [0, 1, 2]:
+                continue
+            log_time = datetime.strptime(rec.get('punch_time'), "%Y-%m-%d %H:%M:%S")
+
+            user_tz = pytz.timezone('UTC')
+
+            local_dt = user_tz.localize(log_time)
+            utc_dt = local_dt.astimezone(pytz.UTC).replace(tzinfo=None)
+
+            device_id = self.env['log.terminal'].search([('name', '=', rec.get('terminal_sn'))], limit=1)
+            transaction = self.search([('external_id', '=', rec.get('id'))])
+            if not transaction:
+                self.create({
+                    'employee_id': emp.id,
+                    'log_type': rec.get('punch_state'),
+                    'id_type': str(rec.get('log_type')),
+                    'log_time': utc_dt,
+                    'device_id': device_id.id,
+                    'external_id': rec.get('id'),
+                })
+
+    def process_log_check_in(self, transaction):
+        no_check_out = self.env['hr.attendance'].search([
+            ('employee_id', '=', transaction.employee_id.id),
+            ('check_out', '=', False),
+        ], order='check_in desc', limit=1)
+        print('open log ', no_check_out)
+        if no_check_out:
+            no_check_out.check_out = transaction.log_time
+            no_check_out.out_mode = 'manual'
+        self.env['hr.attendance'].create({
+            'employee_id': transaction.employee_id.id,
+            'check_in': transaction.log_time,
+            'in_mode': 'technical',
+        })
+        transaction.is_attendance_logged = True
+
+    def process_log_check_out(self, transaction):
+        no_check_out = self.env['hr.attendance'].search([
+            ('employee_id', '=', transaction.employee_id.id),
+            ('check_out', '=', False),
+            ('check_in', '<', transaction.log_time)
+        ], order='check_in', limit=1)
+
+        if no_check_out:
+            no_check_out.check_out = transaction.log_time
+            no_check_out.out_mode = 'technical'
+            transaction.is_attendance_logged = True
+
+    def process_attendance_logs(self):
+        transactions = self.search([
+            ('is_attendance_logged', '=', False),
+        ],order='log_time')
+        for transaction in transactions:
+            if transaction.log_type == '0':
+                self.process_log_check_in(transaction)
+            elif transaction.log_type == '1':
+                self.process_log_check_out(transaction)
+
+    @api.model
+    def get_attendance_data(self):
         print('NOW  ', date.today() - timedelta(days=1))
+        #get last sync date start date = last sync date
         today = date.today()
+        tomorrow = today + timedelta(days=1)
         employees = self.env['hr.employee'].search([('is_zk_data', '!=', False)])
         for employee in employees:
-            response = requests.get(
-                f"http://biotimedxb.com:8007/iclock/api/transactions/?emp={employee.external_id}&start_time={today - timedelta(days=1)}&end_time={today}",
-                headers=header)
-            records = response.json()
-            logs = []
-            print('RECORDS:', records)
-            if 'data' in records:
-                for rec in records['data']:
-                    print(rec)
-                    employee_id = employee.id
-                    if rec['punch_state'] in ['0', '1']:
-                        log_type = rec['punch_state']
-                    log_time = datetime.strptime(rec['punch_time'], "%Y-%m-%d %H:%M:%S")
-
-                    user_tz = pytz.timezone(self.env.user.tz or 'UTC')
-
-                    local_dt = user_tz.localize(log_time)
-                    utc_dt = local_dt.astimezone(pytz.UTC).replace(tzinfo=None)
-
-                    if rec['verify_type'] in [0, 1, 2]:
-                        id_type = str(rec['verify_type'])
-                    device_id = self.env['log.terminal'].search([('name', '=', rec['terminal_sn'])])
-                    # print(f"Employee ID: {employee_id}\nLog type: {log_type}\nLog time: {log_time}\nDevice ID: {device_id}\nID type: {id_type}")
-                    transaction = self.search([('external_id', '=', rec['id'])])
-                    print('LOG:::', transaction, rec['id'])
-                    if not transaction:
-                        logs += [self.create({
-                            'employee_id': employee_id,
-                            'log_type': log_type,
-                            'log_time': utc_dt,
-                            'device_id': device_id.id,
-                            'id_type': id_type,
-                            'external_id': rec['id'],
-                        })]
-
-                for log in logs:
-                    if log.log_type == '0':
-                        no_check_out = self.env['hr.attendance'].search([
-                            ('employee_id', '=', log.employee_id.id),
-                            ('check_out', '=', False),
-                        ], order='check_in desc', limit=1)
-                        if no_check_out:
-                            check_out_log = self.search([
-                                ('employee_id', '=', log.employee_id.id),
-                                ('log_type', '=', '1'),
-                                ('log_time', '>', log.log_time),
-                                ('is_attendance_logged', '=', False),
-                            ], order='log_time', limit=1)
-                            no_check_out.check_out = log.log_time if not check_out_log else check_out_log.log_time
-                            check_out_log.is_attendance_logged = True
-                            no_check_out.out_mode = 'technical' if check_out_log else 'manual'
-                        self.env['hr.attendance'].create({
-                            'employee_id': log.employee_id.id,
-                            'check_in': log.log_time,
-                            'in_mode': 'technical'
-                        })
-                        log.is_attendance_logged = True
-            else:
-                print('NO EXTERNAL API RECORDS')
-                logs = self.search([
-                    ('employee_id', '=', employee.id),
-                    ('is_attendance_logged', '=', False),
-                ])
-                print(logs)
-                for log in logs:
-                    if log.log_type == '0':
-                        no_check_out = self.env['hr.attendance'].search([
-                            ('employee_id', '=', log.employee_id.id),
-                            ('check_out', '=', False),
-                        ], order='check_in desc', limit=1)
-                        if no_check_out:
-                            check_out_log = self.search([
-                                ('employee_id', '=', log.employee_id.id),
-                                ('log_type', '=', '1'),
-                                ('log_time', '>', log.log_time),
-                                ('is_attendance_logged', '=', False),
-                            ], order='log_time', limit=1)
-                            no_check_out.check_out = log.log_time if not check_out_log else check_out_log.log_time
-                            check_out_log.is_attendance_logged = True
-                            no_check_out.out_mode = 'technical' if check_out_log else 'manual'
-                        self.env['hr.attendance'].create({
-                            'employee_id': log.employee_id.id,
-                            'check_in': log.log_time,
-                            'in_mode': 'technical'
-                        })
-                        log.is_attendance_logged = True
-                    elif log.log_type == '1':
-                        no_check_out = self.env['hr.attendance'].search([
-                            ('employee_id', '=', log.employee_id.id),
-                            ('check_out', '=', False),
-                            ('check_in','<', log.log_time),
-                        ], order='check_in', limit=1)
-                        print(no_check_out)
-                        if no_check_out:
-                            no_check_out.check_out = log.log_time
-                            log.is_attendance_logged = True
-            # print('recs created..',log)
-
-        # for rec in self.search([]):
-        #     print(rec.log_time)
-        #     print(rec.employee_id)
-        #     if rec.log_type == '0':
-        #         no_check_out_attendances = self.env['hr.attendance'].search([
-        #             ('employee_id', '=', rec.employee_id.id),
-        #             ('check_out', '=', False),
-        #         ], order='check_in desc', limit=1)
-        #         if no_check_out_attendances:
-        #             print(123123123777, no_check_out_attendances)
-        #             no_check_out_attendances.check_out = rec.log_time
-        #
-        #         test = self.env['hr.attendance'].create({
-        #             'employee_id': rec.employee_id.id,
-        #             'check_in': rec.log_time,
-        #             'in_mode': 'technical',
-        #
-        #         })
-        #         print(22222, test)
+            print('GET ATTENDANCE ', employee.name)
+            self.fetch_employee_attendance_device_logs(employee)
+        self.process_attendance_logs()
