@@ -84,6 +84,9 @@ class LogTransaction(models.Model):
                 response.raise_for_status()
                 _logger.info("RESPONSE STATUS: %s", response.status_code)
                 data = response.json()
+                emp.write({
+                    'zk_last_sync': fields.Datetime.now()
+                })
                 # print('RESPONSE', data)
                 # _logger.info("Latest Successful fetch on %s", fields.Datetime.now())
 
@@ -121,9 +124,6 @@ class LogTransaction(models.Model):
                             'external_id': rec.get('id'),
                         })
                         _logger.info("ATTENDANCE LOG CREATED: %s", t)
-                        emp.write({
-                            'zk_last_sync': fields.Datetime.now()
-                        })
                 if data.get('next'):
                     print('pagination', data.get("next"))
                     url = data.get('next')
