@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <record id="action_log_transaction_views" model="ir.actions.act_window">
+        <field name="name">Daily Attendance Logs</field>
+        <field name="res_model">log.transaction</field>
+        <field name="view_mode">list,form</field>
+    </record>
+    <menuitem id="menu_item_attendance_device_logs" name="Attendance Logs" parent="hr_attendance.menu_hr_attendance_overview" action="action_log_transaction_views"/>
+    <record id="log_transaction_list_view" model="ir.ui.view">
+        <field name="name">log.transaction.list.view</field>
+        <field name="model">log.transaction</field>
+        <field name="arch" type="xml">
+            <list>
+                <field name="employee_id"/>
+                <field name="department_id"/>
+                <field name="log_type"/>
+                <field name="log_time"/>
+                <field name="id_type"/>
+                <field name="device_id"/>
+                <field name="is_attendance_logged"/>
+            </list>
+        </field>
+    </record>
+</odoo>
