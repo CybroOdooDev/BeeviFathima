@@ -1,3 +1,0 @@
-id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
-access_log_terminal,access.log.terminal,model_log_terminal,base.group_user,1,1,1,1
-access_log_transaction,access.log.transaction,model_log_transaction,base.group_user,1,1,1,1
