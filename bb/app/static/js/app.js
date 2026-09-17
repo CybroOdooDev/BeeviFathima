@@ -1,0 +1,222 @@
+/* Router, app shell, and boot.
+ *
+ * Hash routing on purpose: it works behind any proxy or CDN with no rewrite
+ * rules, which matters because this ships into customer infrastructure we do
+ * not control.
+ */
+
+import { api, auth, loadSession } from './api.js';
+import { $, esc, toast } from './ui.js';
+import { renderLogin, renderSignup } from './pages/auth.js';
+import { render as renderOverview } from './pages/overview.js';
+import { render as renderSetup } from './pages/setup.js';
+import { renderActivity, renderAttendance, renderEmployees } from './pages/data.js';
+import { render as renderSettings } from './pages/settings.js';
+
+const PUBLIC = new Set(['/login', '/signup']);
+
+const NAV = [
+  {
+    label: 'Monitor',
+    items: [
+      { path: '/', title: 'Overview' },
+      { path: '/attendance', title: 'Attendance' },
+      { path: '/activity', title: 'Activity' },
+    ],
+  },
+  {
+    label: 'Configure',
+    items: [
+      { path: '/employees', title: 'Employees', badge: 'unmapped' },
+      { path: '/setup', title: 'Connections' },
+      { path: '/settings', title: 'Settings' },
+    ],
+  },
+];
+
+const ROUTES = {
+  '/': { title: 'Overview', render: renderOverview },
+  '/attendance': { title: 'Attendance', render: renderAttendance },
+  '/activity': { title: 'Activity', render: renderActivity },
+  '/employees': { title: 'Employees', render: renderEmployees },
+  '/setup': { title: 'Connections', render: renderSetup },
+  '/settings': { title: 'Settings', render: renderSettings },
+};
+
+const badges = { unmapped: 0 };
+
+function parseHash() {
+  const raw = window.location.hash.replace(/^#/, '') || '/';
+  const [path, queryString] = raw.split('?');
+  const query = Object.fromEntries(new URLSearchParams(queryString || ''));
+  const clean = path.length > 1 ? path.replace(/\/+$/, '') : path;
+  return { path: clean || '/', query };
+}
+
+function mountShell() {
+  $('#auth-root').classList.add('hidden');
+  const root = $('#app-root');
+  root.classList.remove('hidden');
+  if (root.dataset.built) return root;
+  root.dataset.built = '1';
+
+  root.innerHTML = `
+    <div class="shell">
+      <aside class="sidebar" id="sidebar">
+        <div class="brand"><span class="brand-dot"></span>BioBridge</div>
+        <nav id="sidenav"></nav>
+        <div class="side-foot">
+          <div class="side-user" id="sideUser"></div>
+          <button class="link" id="signOut" style="padding-left:0">Sign out</button>
+        </div>
+      </aside>
+      <div class="main">
+        <div class="topbar">
+          <button id="menuToggle" class="sm">Menu</button>
+          <h1 id="pageTitle"></h1>
+          <div class="spacer"></div>
+          <span id="tenantPill"></span>
+        </div>
+        <div class="content" id="content"></div>
+      </div>
+    </div>`;
+
+  $('#signOut', root).addEventListener('click', async () => {
+    // Failure is ignored: signing out locally is what actually matters.
+    try {
+      if (auth.refreshToken) {
+        await api.post(`/auth/logout?refresh_token=${encodeURIComponent(auth.refreshToken)}`);
+      }
+    } catch { /* already gone */ }
+    window.dispatchEvent(new CustomEvent('bb:signed-out'));
+  });
+
+  $('#menuToggle', root).addEventListener('click', () =>
+    $('#sidebar', root).classList.toggle('open')
+  );
+
+  return root;
+}
+
+function renderChrome(path) {
+  $('#sidenav').innerHTML = NAV.map((group) => `
+    <div class="nav-group"><div class="nav-group-label">${esc(group.label)}</div></div>
+    ${group.items.map((item) => {
+      const active = item.path === path
+        || (item.path !== '/' && path.startsWith(item.path + '/'));
+      const count = item.badge ? badges[item.badge] : 0;
+      return `<a class="nav ${active ? 'active' : ''}" href="#${esc(item.path)}">
+        <span>${esc(item.title)}</span>
+        ${count ? `<span class="nav-badge">${esc(count)}</span>` : ''}
+      </a>`;
+    }).join('')}`).join('');
+
+  const sideUser = $('#sideUser');
+  sideUser.textContent = auth.user?.email || '';
+  sideUser.title = auth.user?.email || '';   // the truncated address, in full, on hover
+  $('#tenantPill').innerHTML = auth.tenant
+    ? `<span class="pill ${auth.tenant.sync_enabled ? 'ok' : 'warn'}">${
+        esc(auth.tenant.name)}${auth.tenant.sync_enabled ? '' : ' · sync off'}</span>`
+    : '';
+  $('#sidebar').classList.remove('open');
+}
+
+/** Badges are decorative: never let them break navigation. */
+async function refreshBadges() {
+  try {
+    const data = await api.get('/dashboard');
+    badges.unmapped = data.unmapped_employees || 0;
+  } catch { /* leave the previous value */ }
+}
+
+let running = false;
+
+async function resolve() {
+  if (running) return;
+  running = true;
+  try {
+    const route = parseHash();
+
+    // Rehydrate from a refresh token surviving a page reload.
+    if (!auth.isAuthenticated && auth.restore()) {
+      try {
+        const tokens = await (await fetch(
+          `/api/v1/auth/refresh?refresh_token=${encodeURIComponent(auth.refreshToken)}`,
+          { method: 'POST' }
+        )).json();
+        if (tokens.access_token) {
+          auth.persist(tokens);
+          await loadSession();
+        }
+      } catch {
+        auth.clear();
+      }
+    }
+
+    if (!auth.isAuthenticated) {
+      if (route.path === '/signup') return renderSignup();
+      return renderLogin();
+    }
+
+    if (PUBLIC.has(route.path)) {
+      window.location.hash = '#/';
+      return;
+    }
+
+    if (!auth.user) {
+      try {
+        await loadSession();
+      } catch {
+        auth.clear();
+        return renderLogin();
+      }
+    }
+
+    const entry = ROUTES[route.path];
+    mountShell();
+    renderChrome(route.path);
+    $('#pageTitle').textContent = entry ? entry.title : 'Not found';
+
+    const content = $('#content');
+    if (!entry) {
+      content.innerHTML = '<div class="empty"><strong>Page not found</strong>'
+        + '<a href="#/">Back to the overview</a></div>';
+      return;
+    }
+
+    try {
+      await entry.render(content, route);
+    } catch (error) {
+      if (error.status === 401) return; // api.js already signalled sign-out
+      content.innerHTML = `<div class="banner bad"><strong>Could not load this page</strong>${
+        esc(error.message || 'Unknown error')}</div>`;
+    }
+
+    await refreshBadges();
+    renderChrome(route.path);
+  } finally {
+    running = false;
+  }
+}
+
+window.addEventListener('bb:signed-in', async () => {
+  try {
+    await loadSession();
+  } catch { /* resolve() will retry */ }
+  window.location.hash = '#/';
+  resolve();
+});
+
+window.addEventListener('bb:signed-out', () => {
+  auth.clear();
+  $('#app-root').classList.add('hidden');
+  $('#app-root').innerHTML = '';
+  delete $('#app-root').dataset.built;
+  window.location.hash = '#/login';
+  resolve();
+});
+
+window.addEventListener('bb:toast', (event) => toast(event.detail, 'ok'));
+window.addEventListener('hashchange', resolve);
+
+resolve();
