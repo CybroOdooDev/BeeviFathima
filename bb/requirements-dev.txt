@@ -1,2 +1,7 @@
 -r requirements.txt
 pytest==8.3.4
+# Required, not optional: tests/test_scheduler_loop.py is all async, and without
+# this plugin pytest *skips* those tests and still exits 0 — a green run with
+# the scheduling loop untested. tests/conftest.py fails the run rather than let
+# that happen quietly.
+pytest-asyncio==0.25.0

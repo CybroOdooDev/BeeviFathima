@@ -10,6 +10,7 @@ from app.models.attendance import (
     SyncStatus,
 )
 from app.models.connection import ConnectionStatus, Device, DeviceSource, OdooConnection
+from app.models.scheduler import LEASE_ID, SchedulerLease
 from app.models.tenant import AuditLog, Tenant, TenantStatus, User, UserRole, UserSession
 
 __all__ = [
@@ -21,10 +22,12 @@ __all__ = [
     "DeviceSource",
     "Direction",
     "EmployeeMapping",
+    "LEASE_ID",
     "MappingStatus",
     "OdooConnection",
     "PunchRecord",
     "PunchState",
+    "SchedulerLease",
     "SyncRun",
     "SyncStatus",
     "Tenant",

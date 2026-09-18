@@ -255,3 +255,47 @@ def test_late_arrival_scored_once_per_day(db, tenant, local_day, monkeypatch):
     assert len(records) == 2
     assert records[0].is_late is True and records[0].late_minutes == 60
     assert records[1].is_late is False
+
+
+def test_each_punch_is_stamped_with_the_run_that_ingested_it(
+    db, tenant, local_day, monkeypatch
+):
+    """"What did this sync bring in" has to be answerable from the ledger.
+
+    The run counters give a number; only this stamp gives the rows, which is
+    what anyone actually wants when a run looks wrong.
+    """
+    odoo = FakeOdoo()
+    rows = [
+        punch(1, "1001", local_day.replace(hour=8)),
+        punch(2, "1001", local_day.replace(hour=17)),
+    ]
+    first = run(db, tenant, odoo, rows, monkeypatch)
+
+    stored = db.scalars(select(PunchRecord)).all()
+    assert len(stored) == 2
+    assert {p.first_seen_run_id for p in stored} == {first.id}
+
+
+def test_a_re_read_punch_stays_with_the_run_that_first_saw_it(
+    db, tenant, local_day, monkeypatch
+):
+    """Every cycle re-reads a window of known punches on purpose, so the same
+    punch is *fetched* by several runs. Re-attributing it each time would make
+    the earlier run's history change under you."""
+    odoo = FakeOdoo()
+    rows = [
+        punch(1, "1001", local_day.replace(hour=8)),
+        punch(2, "1001", local_day.replace(hour=17)),
+    ]
+    first = run(db, tenant, odoo, rows, monkeypatch)
+
+    # The same two punches, plus one more, offered again.
+    rows.append(punch(3, "1001", local_day.replace(hour=18)))
+    second = run(db, tenant, odoo, rows, monkeypatch)
+
+    by_external = {p.external_id: p.first_seen_run_id for p in db.scalars(select(PunchRecord))}
+    assert by_external["1"] == first.id, "re-reading must not move it to the later run"
+    assert by_external["2"] == first.id
+    assert by_external["3"] == second.id
+    assert second.punches_new == 1, "only the new one counts as new"

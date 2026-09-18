@@ -171,14 +171,43 @@ export async function renderEmployees(mount) {
 /* --- Activity ------------------------------------------------------------- */
 export async function renderActivity(mount, route) {
   const stateFilter = route.query.state || '';
+  const badge = route.query.emp_code || '';
+  const terminal = route.query.terminal_sn || '';
+  const runId = route.query.run_id || '';
+  const from = route.query.date_from || '';
+  const to = route.query.date_to || '';
   mount.innerHTML = loading();
 
-  const [runs, punches] = await Promise.all([
+  // Everything except the state tabs lives in the query string, so a filtered
+  // ledger is a URL you can paste into a ticket.
+  const params = new URLSearchParams({ limit: '200' });
+  if (stateFilter) params.set('state', stateFilter);
+  if (badge) params.set('emp_code', badge);
+  if (terminal) params.set('terminal_sn', terminal);
+  if (runId) params.set('run_id', runId);
+  if (from) params.set('date_from', from);
+  if (to) params.set('date_to', to);
+
+  const [runs, punches, devices] = await Promise.all([
     api.get('/sync/runs?limit=20'),
-    api.get(`/punches?limit=100${stateFilter ? `&state=${encodeURIComponent(stateFilter)}` : ''}`),
+    api.get(`/punches?${params}`),
+    api.get('/devices').catch(() => []),
   ]);
 
   const states = ['', 'pending', 'synced', 'unmapped', 'error', 'skipped'];
+
+  /** Keep the state tab while changing a filter, and vice versa. */
+  const linkFor = (overrides) => {
+    const q = new URLSearchParams();
+    const merged = { state: stateFilter, emp_code: badge, terminal_sn: terminal,
+                     run_id: runId, date_from: from, date_to: to, ...overrides };
+    Object.entries(merged).forEach(([k, v]) => { if (v) q.set(k, v); });
+    const s = q.toString();
+    return `#/activity${s ? `?${s}` : ''}`;
+  };
+
+  const filtered = Boolean(badge || terminal || runId || from || to);
+  const shownRun = runId ? runs.find((r) => r.id === runId) : null;
 
   mount.innerHTML = `
     <div class="card" style="margin-bottom:14px">
@@ -198,7 +227,13 @@ export async function renderActivity(mount, route) {
                   <td class="num">${esc(r.attendances_closed)}</td>
                   <td class="num">${esc(r.error_count)}</td>
                   <td>${esc(r.triggered_by)}</td>
-                  <td style="text-align:right">
+                  <td style="text-align:right;white-space:nowrap">
+                    ${r.punches_new
+                      ? `<a class="link sm" href="${linkFor({
+                          run_id: r.id, state: '', emp_code: '',
+                          terminal_sn: '', date_from: '', date_to: '' })}"
+                         >${esc(r.punches_new)} punch${r.punches_new === 1 ? '' : 'es'}</a>`
+                      : '<span class="hint">no new punches</span>'}
                     <button class="link sm" data-log="${esc(r.id)}">Log</button>
                   </td>
                 </tr>
@@ -214,12 +249,57 @@ export async function renderActivity(mount, route) {
     </div>
 
     <div class="card">
-      <h2>Punch ledger <span class="hint">every punch ever pulled</span></h2>
+      <h2>Punch ledger <span class="hint">${filtered
+        ? `${punches.length} punch${punches.length === 1 ? '' : 'es'} matching`
+        : 'every punch ever pulled'}</span></h2>
+      ${shownRun ? `
+        <div class="banner" style="margin:0 0 12px">
+          <strong>The sync that started ${esc(fmtUtc(shownRun.started_at))}</strong>
+          Read ${esc(shownRun.punches_fetched)} punch${shownRun.punches_fetched === 1 ? '' : 'es'}
+          from the device platform and added ${esc(shownRun.punches_new)} to the ledger${
+            shownRun.punches_fetched > shownRun.punches_new
+              ? `. The other ${
+                  esc(shownRun.punches_fetched - shownRun.punches_new)
+                } ${shownRun.punches_fetched - shownRun.punches_new === 1
+                  ? 'was' : 'were'} already here — every run deliberately
+                 re-reads a window of known punches, because devices upload
+                 late and their clocks drift. Those stay listed under the run
+                 that first saw them.`
+              : '.'}
+          <a href="${linkFor({ run_id: '' })}">Show the whole ledger</a>
+        </div>` : ''}
       <div class="tabs">
         ${states.map((s) => `
-          <a href="#/activity${s ? `?state=${s}` : ''}" class="${s === stateFilter ? 'active' : ''}">
+          <a href="${linkFor({ state: s })}" class="${s === stateFilter ? 'active' : ''}">
             ${esc(s || 'all')}</a>`).join('')}
       </div>
+
+      <form id="punchFilters" class="row" style="gap:10px;flex-wrap:wrap;margin:12px 0 4px;align-items:flex-end">
+        <div class="field" style="margin:0;min-width:150px">
+          <label for="terminal_sn">Device</label>
+          <select name="terminal_sn" id="terminal_sn">
+            <option value="">any device</option>
+            ${devices.map((d) => `<option value="${esc(d.serial_number)}"${
+              d.serial_number === terminal ? ' selected' : ''
+            }>${esc(d.alias || d.serial_number)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field" style="margin:0;width:130px">
+          <label for="emp_code">Badge</label>
+          <input type="text" name="emp_code" id="emp_code" value="${esc(badge)}" placeholder="any">
+        </div>
+        <div class="field" style="margin:0;width:165px">
+          <label for="date_from">From</label>
+          <input type="date" name="date_from" id="date_from" value="${esc(from)}">
+        </div>
+        <div class="field" style="margin:0;width:165px">
+          <label for="date_to">To</label>
+          <input type="date" name="date_to" id="date_to" value="${esc(to)}">
+        </div>
+        <button class="primary" id="applyPunches">Apply</button>
+        ${filtered ? `<a class="btn" href="${linkFor({
+          emp_code: '', terminal_sn: '', date_from: '', date_to: '' })}">Clear</a>` : ''}
+      </form>
       ${punches.length ? `
         <div class="scroll">
           <table>
@@ -242,8 +322,21 @@ export async function renderActivity(mount, route) {
                 </tr>`).join('')}
             </tbody>
           </table>
-        </div>` : empty('No punches', stateFilter ? `Nothing in the ${stateFilter} state.` : 'Run a sync to pull some.')}
+        </div>` : empty(
+          'No punches',
+          filtered
+            ? 'Nothing matches these filters. Widen the dates, or clear them.'
+            : stateFilter
+              ? `Nothing in the ${stateFilter} state.`
+              : 'Run a sync to pull some.'
+        )}
     </div>`;
+
+  $('#punchFilters', mount).addEventListener('submit', (event) => {
+    event.preventDefault();
+    const values = readForm(event.target);
+    window.location.hash = linkFor(values);
+  });
 
   mount.querySelectorAll('[data-log]').forEach((button) => {
     button.addEventListener('click', () => {

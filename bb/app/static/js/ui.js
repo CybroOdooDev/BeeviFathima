@@ -38,6 +38,21 @@ export function fmtAgo(value) {
   return `${Math.floor(seconds / 86400)} d ago`;
 }
 
+/** The mirror of fmtAgo, for a time in the future: "in 7 min". */
+export function fmtIn(value) {
+  if (!value) return '—';
+  const then = new Date(/Z|[+-]\d\d:?\d\d$/.test(value) ? value : value + 'Z');
+  const seconds = Math.round((then.getTime() - Date.now()) / 1000);
+  if (Number.isNaN(seconds)) return '—';
+  // Already due, but the tick has not come round yet. "in -20 s" reads as a bug;
+  // the schedule being a tick behind is normal.
+  if (seconds <= 30) return 'any moment';
+  if (seconds < 90) return 'in about a minute';
+  if (seconds < 3600) return `in ${Math.round(seconds / 60)} min`;
+  if (seconds < 86400) return `in ${Math.round(seconds / 3600)} h`;
+  return `in ${Math.round(seconds / 86400)} d`;
+}
+
 export function fmtHours(value) {
   if (value === null || value === undefined) return '—';
   return `${Number(value).toFixed(2)} h`;
@@ -78,9 +93,13 @@ export const banner = (title, body, kind = '') => `
 
 export const loading = () => '<div class="skeleton">Loading…</div>';
 
-export function field({ name, label, type = 'text', value = '', help, required, placeholder, options, strongHelp }) {
+export function field({ name, label, type = 'text', value = '', help, required, placeholder, options, strongHelp, boolean }) {
+  // A select always yields a string, so a "false" option would PATCH the string
+  // "false" — truthy everywhere on the server. data-bool tells readForm to
+  // convert it. Explicit rather than sniffing the value, so a genuinely
+  // string-valued "true" option never gets silently rewritten.
   const control = options
-    ? `<select name="${esc(name)}" id="${esc(name)}">${options
+    ? `<select name="${esc(name)}" id="${esc(name)}"${boolean ? ' data-bool="1"' : ''}>${options
         .map((o) => {
           const v = typeof o === 'string' ? o : o.value;
           const l = typeof o === 'string' ? o : o.label;
@@ -104,6 +123,7 @@ export function readForm(root) {
   $$('[name]', root).forEach((el) => {
     if (el.type === 'checkbox') out[el.name] = el.checked;
     else if (el.type === 'number') out[el.name] = el.value === '' ? null : Number(el.value);
+    else if (el.dataset.bool) out[el.name] = el.value === 'true';
     else out[el.name] = el.value;
   });
   return out;

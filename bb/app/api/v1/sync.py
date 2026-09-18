@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, select
@@ -30,10 +30,12 @@ from app.schemas import (
     MappingUpdate,
     MessageOut,
     PunchOut,
+    ScheduleOut,
     SyncRunOut,
     TenantOut,
     TenantUpdate,
 )
+from app.services.scheduling import effective_interval, next_run_at, scheduler_health
 from app.services.sync_engine import SyncEngine
 from app.services.timeutils import utcnow_naive
 
@@ -189,16 +191,45 @@ def list_runs(
 def list_punches(
     state: str | None = None,
     emp_code: str | None = None,
+    terminal_sn: str | None = None,
+    run_id: str | None = Query(
+        default=None, description="Punches this sync run first ingested."
+    ),
+    date_from: date | None = Query(default=None, description="Inclusive, UTC punch date."),
+    date_to: date | None = Query(default=None, description="Inclusive, UTC punch date."),
     limit: int = Query(default=100, le=500),
     offset: int = Query(default=0, ge=0),
     principal: Principal = Depends(get_principal),
     db: Session = Depends(get_db),
 ) -> list[PunchRecord]:
+    """The punch ledger, newest first.
+
+    ``terminal_sn`` and the date range exist because the ledger is the thing you
+    reach for when Odoo has rejected something: "what did gate 2 actually send
+    on the 14th" is the question, and paging through every punch since install
+    to answer it is no way to work. Dates are on the punch's UTC time, matching
+    the column the rows are ordered by.
+
+    ``run_id`` answers "what did this sync bring in". It matches the run that
+    **first ingested** each punch, which is not the same as every punch the run
+    read: each run re-reads ``fetch_overlap_minutes`` of already-known punches on
+    purpose, and those stay attributed to the run that first saw them. The run's
+    own ``punches_fetched`` and ``punches_new`` counters give the arithmetic.
+    """
     stmt = select(PunchRecord).where(PunchRecord.tenant_id == principal.tenant.id)
     if state:
         stmt = stmt.where(PunchRecord.process_state == state)
     if emp_code:
         stmt = stmt.where(PunchRecord.emp_code == emp_code)
+    if terminal_sn:
+        stmt = stmt.where(PunchRecord.terminal_sn == terminal_sn)
+    if run_id:
+        stmt = stmt.where(PunchRecord.first_seen_run_id == run_id)
+    if date_from:
+        stmt = stmt.where(PunchRecord.punch_time_utc >= datetime.combine(date_from, time.min))
+    if date_to:
+        # Inclusive: a user asking for the 14th means the whole of the 14th.
+        stmt = stmt.where(PunchRecord.punch_time_utc < datetime.combine(date_to, time.min) + timedelta(days=1))
     stmt = stmt.order_by(PunchRecord.punch_time_utc.desc()).offset(offset).limit(limit)
     return list(db.scalars(stmt).all())
 
@@ -361,4 +392,21 @@ def dashboard(
             "odoo": odoo_conn.status if odoo_conn else "missing",
             "source": source.status if source else "missing",
         },
+        schedule=_schedule_out(db, tenant),
+    )
+
+
+def _schedule_out(db: Session, tenant: Tenant) -> ScheduleOut:
+    """Combine the global scheduler health with this tenant's own next run."""
+    health = scheduler_health(db)
+    interval = effective_interval(tenant)
+    return ScheduleOut(
+        running=health["running"],
+        mode=health["mode"],
+        owner=health["owner"],
+        last_tick_at=health["last_tick_at"],
+        seconds_since_tick=health["seconds_since_tick"],
+        next_run_at=next_run_at(db, tenant),
+        effective_interval_minutes=interval,
+        interval_widened=interval != max(1, tenant.sync_interval_minutes),
     )

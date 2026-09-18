@@ -44,6 +44,125 @@ class UserOut(ORMModel):
     full_name: str | None
     role: str
     is_active: bool
+    #: Read-only everywhere. The dashboard uses it to decide whether to show the
+    #: Platform section; the server never takes it from a request.
+    is_platform_admin: bool = False
+
+
+# --- platform staff ---------------------------------------------------------
+class TenantScheduleOut(BaseModel):
+    """One customer's scheduling, as the staff console lists it."""
+
+    id: str
+    name: str
+    slug: str
+    status: str
+    timezone: str
+    sync_enabled: bool
+    #: What the customer configured.
+    sync_interval_minutes: int
+    #: What is actually being applied, after any slow-lane widening.
+    effective_interval_minutes: int
+    interval_widened: bool
+    consecutive_failures: int
+    last_run_at: datetime | None = None
+    last_run_status: str | None = None
+    next_run_at: datetime | None = None
+
+
+class TenantScheduleUpdate(BaseModel):
+    """Only scheduling — kept separate from TenantConfigUpdate on purpose.
+
+    Changing a cadence is routine; changing pairing rules silently changes a
+    customer's attendance results. Two endpoints means the risky one cannot be
+    reached by a request that meant to do the safe one.
+    """
+
+    sync_interval_minutes: int | None = Field(default=None, ge=1, le=1440)
+    sync_enabled: bool | None = None
+
+
+class TenantAdminOut(TenantScheduleOut):
+    """Everything the console lets staff see and edit, scheduling included."""
+
+    pairing_mode: str
+    day_boundary_hour: int
+    min_punch_interval_seconds: int
+    max_shift_hours: int
+    orphan_out_policy: str
+    work_start_time: str
+    late_grace_minutes: int
+    users: int = 0
+    odoo_connected: bool = False
+    source_connected: bool = False
+
+
+class TenantConfigUpdate(BaseModel):
+    """Account lifecycle and the pairing rules.
+
+    Everything optional and ``exclude_unset`` at the call site, so a console
+    editing one field cannot blank the rest.
+    """
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    status: Literal["trialing", "active", "past_due", "suspended", "cancelled"] | None = None
+    timezone: str | None = Field(default=None, min_length=1, max_length=64)
+
+    pairing_mode: Literal["state_based", "alternating", "first_last"] | None = None
+    day_boundary_hour: int | None = Field(default=None, ge=0, le=23)
+    min_punch_interval_seconds: int | None = Field(default=None, ge=0, le=3600)
+    max_shift_hours: int | None = Field(default=None, ge=1, le=48)
+    orphan_out_policy: Literal["flag", "create", "ignore"] | None = None
+    work_start_time: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}$")
+    late_grace_minutes: int | None = Field(default=None, ge=0, le=240)
+
+
+class TenantCreateIn(BaseModel):
+    """Staff onboarding a customer, instead of the customer self-registering."""
+
+    company_name: str = Field(min_length=1, max_length=120)
+    owner_email: EmailStr
+    owner_name: str | None = Field(default=None, max_length=120)
+    timezone: str = Field(default="UTC", min_length=1, max_length=64)
+    sync_interval_minutes: int = Field(default=15, ge=1, le=1440)
+    #: Left unset, one is generated and returned once.
+    owner_password: str | None = Field(default=None, min_length=12, max_length=128)
+
+
+class TenantCreateOut(BaseModel):
+    tenant: TenantAdminOut
+    owner_email: str
+    #: Shown exactly once, in this response. Nothing stores it in the clear, so
+    #: it cannot be retrieved later — only replaced.
+    owner_password: str
+    note: str
+
+
+class ErrorGroup(BaseModel):
+    """One distinct failure, with a count. No times, badges or names."""
+
+    message: str
+    count: int
+
+
+class TenantDiagnosticsOut(BaseModel):
+    """Enough to diagnose a stuck customer without reading their attendance.
+
+    Counts and error text only. The punch ledger itself — who badged when — is
+    not reachable from the staff console.
+    """
+
+    tenant_id: str
+    name: str
+    punches_pending: int
+    punches_error: int
+    punches_unmapped: int
+    punches_at_attempt_cap: int
+    unmapped_badges: int
+    last_run_status: str | None = None
+    last_run_error: str | None = None
+    errors: list[ErrorGroup] = []
+    redacted: bool = False
 
 
 # --- tenant -----------------------------------------------------------------
@@ -232,6 +351,9 @@ class PunchOut(ORMModel):
     odoo_attendance_id: int | None
     error_message: str | None
     attempts: int
+    #: The run that first ingested this punch. Null for punches recorded before
+    #: the column existed.
+    first_seen_run_id: str | None = None
 
 
 class SyncRunOut(ORMModel):
@@ -270,6 +392,27 @@ class AttendanceOut(ORMModel):
     notes: str | None
 
 
+class ScheduleOut(BaseModel):
+    """The state of the clock, as the dashboard needs to show it.
+
+    ``running`` comes from the scheduler's heartbeat, not from configuration —
+    the interesting case is a deployment that is configured correctly and whose
+    scheduler is nonetheless dead.
+    """
+
+    running: bool
+    mode: str | None = None
+    owner: str | None = None
+    last_tick_at: datetime | None = None
+    seconds_since_tick: int | None = None
+    #: None when this tenant is not scheduled at all (sync off, or suspended).
+    next_run_at: datetime | None = None
+    #: The tenant's interval after any slow-lane widening, so the UI can explain
+    #: why a 15-minute setting is currently behaving like an hour.
+    effective_interval_minutes: int
+    interval_widened: bool = False
+
+
 class DashboardOut(BaseModel):
     tenant: TenantOut
     punches_today: int
@@ -278,6 +421,7 @@ class DashboardOut(BaseModel):
     unmapped_employees: int
     last_run: SyncRunOut | None
     connection_health: dict[str, str]
+    schedule: ScheduleOut
 
 
 class MessageOut(BaseModel):

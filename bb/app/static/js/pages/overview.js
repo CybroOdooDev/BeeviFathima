@@ -1,7 +1,63 @@
 /* Overview: is it working, what needs attention, and the Sync now button. */
 
 import { api, auth } from '../api.js';
-import { $, banner, busy, empty, esc, fmtAgo, guard, loading, pill, stat } from '../ui.js';
+import {
+  $, banner, busy, empty, esc, fmtAgo, fmtIn, guard, loading, pill, stat,
+} from '../ui.js';
+
+/* The automatic-sync strip.
+ *
+ * This is the one thing an operator checks after setup: is it running by
+ * itself, or am I going to be pressing a button every morning? So it reports
+ * the scheduler's actual heartbeat rather than the configured interval — a
+ * deployment whose scheduler died looks perfectly healthy from every other
+ * angle, right up until payroll notices the missing days. */
+function scheduleCard(schedule, needsSetup) {
+  const s = schedule || {};
+  const tone = s.running ? 'ok' : 'warn';
+  const modeLabel = s.mode === 'celery' ? 'Celery beat' : s.mode === 'inprocess'
+    ? 'in the API process' : null;
+
+  let headline;
+  let detail;
+  if (!s.running) {
+    headline = 'Automatic sync is not running';
+    detail = s.last_tick_at
+      ? `Nothing has scheduled a sync since ${esc(fmtAgo(s.last_tick_at))}. `
+        + 'Punches are still collected when you press Sync now.'
+      : 'No scheduler has ever reported in. Attendance will only move when '
+        + 'someone presses Sync now.';
+  } else if (needsSetup) {
+    headline = 'Automatic sync is running, with nothing to sync';
+    detail = 'The schedule is alive; it starts pulling punches once both sides '
+      + 'are connected.';
+  } else if (!s.next_run_at) {
+    headline = 'Automatic sync is paused for this account';
+    detail = 'The scheduler is running, but this account has sync turned off in '
+      + 'Settings.';
+  } else {
+    headline = `Next sync ${esc(fmtIn(s.next_run_at))}`;
+    detail = `Every ${esc(s.effective_interval_minutes)} minute`
+      + `${s.effective_interval_minutes === 1 ? '' : 's'}`
+      + (modeLabel ? `, ${modeLabel}` : '')
+      + `. Last checked ${esc(fmtAgo(s.last_tick_at))}.`;
+  }
+
+  return `
+    <div class="card" style="margin-bottom:14px">
+      <div class="row" style="justify-content:space-between;align-items:flex-start">
+        <div>
+          <h2 style="margin:0">${headline}</h2>
+          <div class="hint" style="margin-top:4px">${detail}</div>
+          ${s.interval_widened ? `<div class="hint strong" style="margin-top:6px">
+            Backed off to ${esc(s.effective_interval_minutes)} minutes after
+            repeated connection failures. It returns to your configured interval
+            as soon as one run succeeds.</div>` : ''}
+        </div>
+        <span class="pill ${tone}">${s.running ? 'scheduler live' : 'scheduler down'}</span>
+      </div>
+    </div>`;
+}
 
 export async function render(mount) {
   mount.innerHTML = loading();
@@ -43,6 +99,7 @@ export async function render(mount) {
 
   mount.innerHTML = `
     ${banners.join('')}
+    ${scheduleCard(data.schedule, needsSetup)}
 
     <div class="grid cols-4" style="margin-bottom:14px">
       ${stat({ label: 'Punches today', value: data.punches_today })}

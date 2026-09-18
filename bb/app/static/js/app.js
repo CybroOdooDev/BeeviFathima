@@ -12,12 +12,18 @@ import { render as renderOverview } from './pages/overview.js';
 import { render as renderSetup } from './pages/setup.js';
 import { renderActivity, renderAttendance, renderEmployees } from './pages/data.js';
 import { render as renderSettings } from './pages/settings.js';
+import { render as renderPlatform } from './pages/platform.js';
 
 const PUBLIC = new Set(['/login', '/signup']);
 
 const NAV = [
   {
     label: 'Monitor',
+    // Everything in these two groups is tenant-scoped. A platform user with no
+    // customer account of their own has nothing to show there — every one of
+    // these screens would answer 403 — so the whole group is hidden and the
+    // console is all they see.
+    tenantOnly: true,
     items: [
       { path: '/', title: 'Overview' },
       { path: '/attendance', title: 'Attendance' },
@@ -26,11 +32,20 @@ const NAV = [
   },
   {
     label: 'Configure',
+    tenantOnly: true,
     items: [
       { path: '/employees', title: 'Employees', badge: 'unmapped' },
       { path: '/setup', title: 'Connections' },
       { path: '/settings', title: 'Settings' },
     ],
+  },
+  {
+    label: 'Platform',
+    // Staff only. Hiding it is a courtesy, not the control — every /admin
+    // request is checked server-side, so a hand-typed #/platform gets a
+    // refusal rather than data.
+    staffOnly: true,
+    items: [{ path: '/platform', title: 'All accounts' }],
   },
 ];
 
@@ -41,6 +56,7 @@ const ROUTES = {
   '/employees': { title: 'Employees', render: renderEmployees },
   '/setup': { title: 'Connections', render: renderSetup },
   '/settings': { title: 'Settings', render: renderSettings },
+  '/platform': { title: 'All accounts', render: renderPlatform },
 };
 
 const badges = { unmapped: 0 };
@@ -99,7 +115,10 @@ function mountShell() {
 }
 
 function renderChrome(path) {
-  $('#sidenav').innerHTML = NAV.map((group) => `
+  $('#sidenav').innerHTML = NAV.filter(
+    (group) => (!group.staffOnly || auth.isPlatformAdmin)
+            && (!group.tenantOnly || auth.tenant)
+  ).map((group) => `
     <div class="nav-group"><div class="nav-group-label">${esc(group.label)}</div></div>
     ${group.items.map((item) => {
       const active = item.path === path
@@ -117,12 +136,15 @@ function renderChrome(path) {
   $('#tenantPill').innerHTML = auth.tenant
     ? `<span class="pill ${auth.tenant.sync_enabled ? 'ok' : 'warn'}">${
         esc(auth.tenant.name)}${auth.tenant.sync_enabled ? '' : ' · sync off'}</span>`
-    : '';
+    : auth.isPlatformAdmin
+      ? '<span class="pill">platform staff</span>'
+      : '';
   $('#sidebar').classList.remove('open');
 }
 
 /** Badges are decorative: never let them break navigation. */
 async function refreshBadges() {
+  if (!auth.tenant) return;  // staff-only: there is no dashboard to count
   try {
     const data = await api.get('/dashboard');
     badges.unmapped = data.unmapped_employees || 0;
@@ -170,6 +192,14 @@ async function resolve() {
         auth.clear();
         return renderLogin();
       }
+    }
+
+    // A platform user with no customer account has no Overview to land on —
+    // every tenant-scoped screen would 403. Send them to the console instead of
+    // showing an error page on the way in.
+    if (!auth.tenant && auth.isPlatformAdmin && route.path !== '/platform') {
+      window.location.hash = '#/platform';
+      return;
     }
 
     const entry = ROUTES[route.path];

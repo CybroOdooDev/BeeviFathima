@@ -41,6 +41,12 @@ export const auth = {
     return ['owner', 'admin'].includes(this.user?.role);
   },
 
+  /** Platform staff, not a role: it crosses accounts, roles never do.
+   *  Hiding the nav is convenience only — the server checks every request. */
+  get isPlatformAdmin() {
+    return this.user?.is_platform_admin === true;
+  },
+
   persist(tokens) {
     this.accessToken = tokens.access_token;
     if (tokens.refresh_token) {
@@ -141,7 +147,12 @@ export const api = {
 };
 
 export async function loadSession() {
-  const [user, tenant] = await Promise.all([api.get('/auth/me'), api.get('/tenant')]);
+  // Platform staff have no tenant, so /tenant answers 403 for them by design.
+  // Treating that as a failed session would lock the console out of its own
+  // dashboard, so the tenant is optional and the UI branches on its absence.
+  const user = await api.get('/auth/me');
   auth.user = user;
-  auth.tenant = tenant;
+  auth.tenant = user.is_platform_admin
+    ? await api.get('/tenant').catch(() => null)
+    : await api.get('/tenant');
 }

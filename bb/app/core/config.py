@@ -38,6 +38,27 @@ class Settings(BaseSettings):
     #:   python -c "import secrets; print(secrets.token_urlsafe(48))"
     master_encryption_key: str = Field(default="dev-only-master-key-not-for-production")
 
+    # --- scheduling ----------------------------------------------------------
+    #: Who runs the clock.
+    #:   auto      — Celery beat when REDIS_URL is set, otherwise in-process.
+    #:   inprocess — the API process runs it. No broker, no worker, one service.
+    #:   celery    — beat only. The API never dispatches on a timer.
+    #:   off       — nothing is scheduled; syncs happen only when triggered.
+    #: "auto" is the default so a plain `uvicorn app.main:app` actually syncs on
+    #: a schedule. Deployments that add Redis get beat and the API stands down,
+    #: which is what stops both from firing the same tenant in the same minute.
+    scheduler_mode: str = "auto"
+    #: How often the loop wakes. The tick does not decide the sync frequency —
+    #: each tenant's own interval does — so this only bounds how late a due
+    #: tenant can be.
+    scheduler_tick_seconds: int = 60
+    #: Tenants synced at once. A cycle is I/O-bound on two remote systems, so
+    #: this is about not opening fifty sockets to fifty customer LANs at once.
+    scheduler_concurrency: int = 4
+    #: Lease lifetime. Longer than a tick so a slow tick does not lose it,
+    #: short enough that a killed process is replaced within a minute or two.
+    scheduler_lease_ttl_seconds: int = 180
+
     # --- sync engine ---------------------------------------------------------
     default_sync_interval_minutes: int = 15
     #: Devices upload late and their clocks drift, so a strict cursor loses
@@ -62,6 +83,23 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.environment.lower() == "production"
+
+    @property
+    def scheduler_runs_in_process(self) -> bool:
+        """Should this API process run the scheduling loop?
+
+        Resolving "auto" in one place keeps the decision out of the loop, the
+        health endpoint and the UI, which would otherwise each have their own
+        opinion about whether a broker means Celery is really running.
+        """
+        mode = self.scheduler_mode.strip().lower()
+        if mode == "off":
+            return False
+        if mode == "inprocess":
+            return True
+        if mode == "celery":
+            return False
+        return not self.redis_url  # auto
 
 
 @lru_cache

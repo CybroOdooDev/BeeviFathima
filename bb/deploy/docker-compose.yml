@@ -1,0 +1,102 @@
+# BioBridge, two ways.
+#
+#   docker compose up -d                      api + postgres. The API runs the
+#                                             schedule itself. This is enough.
+#   docker compose --profile celery up -d     adds redis, a worker and beat, and
+#                                             the API stands down from
+#                                             scheduling (SCHEDULER_MODE=auto
+#                                             sees REDIS_URL and defers).
+#
+# Reach for the celery profile when one box is no longer enough, or when syncs
+# need to run somewhere other than where HTTP is served. Not before: it is three
+# more processes to keep alive for the same result.
+
+name: biobridge
+
+x-app: &app
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile
+  env_file: [../.env]
+  environment:
+    DATABASE_URL: postgresql+psycopg://biobridge:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/biobridge
+  depends_on:
+    postgres:
+      condition: service_healthy
+  # Bring it back, always. An unsupervised scheduler is a scheduler that stops
+  # one night and is noticed at the end of the month.
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: biobridge
+      POSTGRES_USER: biobridge
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      # Without this the API can start before Postgres accepts connections and
+      # die on its first query; compose then restarts it, which works but looks
+      # like a fault in the logs.
+      test: ["CMD-SHELL", "pg_isready -U biobridge -d biobridge"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    <<: *app
+    ports: ["8000:8000"]
+    # Schema first, then serve. create_all is skipped in production, so this is
+    # the step that makes a fresh volume usable.
+    command: >
+      sh -c "python tools/init_db.py &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers"
+
+  # --- the celery profile: only started with --profile celery ---------------
+  redis:
+    image: redis:7-alpine
+    profiles: [celery]
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  worker:
+    <<: *app
+    profiles: [celery]
+    environment:
+      DATABASE_URL: postgresql+psycopg://biobridge:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/biobridge
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["celery", "-A", "app.workers.celery_app", "worker",
+              "-Q", "sync,maintenance", "--concurrency", "4", "-l", "info"]
+
+  beat:
+    <<: *app
+    profiles: [celery]
+    environment:
+      DATABASE_URL: postgresql+psycopg://biobridge:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/biobridge
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # One beat. Two would double-dispatch — except they no longer can: beat
+    # claims the same database lease the in-process scheduler uses, so a second
+    # one finds the lease held and dispatches nothing. Still run one.
+    command: ["celery", "-A", "app.workers.celery_app", "beat", "-l", "info"]
+
+volumes:
+  pgdata:
+  redisdata:

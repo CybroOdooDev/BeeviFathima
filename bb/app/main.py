@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.exc import OperationalError
 
 from app.api.v1 import api_router
 from app.core.config import settings
@@ -22,6 +23,36 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
 )
 log = logging.getLogger(__name__)
+
+
+def _warn_about_schema_drift() -> None:
+    """Say at boot when the database is behind the models.
+
+    ``create_all`` adds missing tables and stops there, so a new column on an
+    existing table is simply absent — and the first query that mentions it fails
+    with ``no such column``, mid-request or mid-sync, pointing at SQLAlchemy
+    rather than at the upgrade nobody applied. One line here costs nothing and
+    turns that into an instruction.
+
+    A warning, never a refusal: a schema one column behind still serves most of
+    the product, and refusing to boot over it would take a working system down.
+    """
+    try:
+        from app.db.base import Base
+        from app.db.schema_check import detect_drift
+        from app.db.session import engine
+        import app.models  # noqa: F401
+
+        drift = detect_drift(engine, Base.metadata)
+        if drift.is_empty:
+            return
+        log.warning(
+            "The database is behind the models — missing %s. "
+            "Run: python3 tools/migrate.py --apply",
+            drift.summary(),
+        )
+    except Exception as exc:  # noqa: BLE001 — a diagnostic must never block boot
+        log.debug("Could not check the schema: %s", exc)
 
 
 @asynccontextmanager
@@ -41,6 +72,8 @@ async def lifespan(app: FastAPI):
         Base.metadata.create_all(engine)
         log.info("Schema ensured (development mode)")
 
+    _warn_about_schema_drift()
+
     if settings.is_production:
         # Refuse to boot with development secrets rather than run a production
         # system whose credential encryption everyone can reproduce.
@@ -50,7 +83,29 @@ async def lifespan(app: FastAPI):
             raise RuntimeError("JWT_SECRET must be set in production")
         if settings.cors_origins.strip() == "*":
             raise RuntimeError("CORS_ORIGINS must name real origins in production")
+
+    # The clock. Safe in every replica: a database lease decides which one
+    # actually dispatches, so scaling the API does not multiply the syncs.
+    # Under SCHEDULER_MODE=celery (or auto with a broker configured) this stands
+    # down and beat owns the schedule instead — see config.scheduler_mode.
+    if settings.scheduler_runs_in_process:
+        from app.services.scheduler import scheduler
+
+        scheduler.start()
+    else:
+        log.info(
+            "In-process scheduler off (SCHEDULER_MODE=%s, broker=%s) — Celery beat "
+            "is expected to run the schedule",
+            settings.scheduler_mode,
+            "set" if settings.redis_url else "unset",
+        )
+
     yield
+
+    if settings.scheduler_runs_in_process:
+        from app.services.scheduler import scheduler
+
+        await scheduler.stop()
     log.info("%s shutting down", settings.app_name)
 
 
@@ -92,9 +147,83 @@ async def _unsafe_target(_: Request, exc: UnsafeTargetError) -> JSONResponse:
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
+@app.exception_handler(OperationalError)
+async def _database_error(_: Request, exc: OperationalError) -> JSONResponse:
+    """Turn a schema-drift failure into an instruction.
+
+    A model that gained a column queries for it everywhere, so on a database
+    that was not migrated the failure lands on ordinary endpoints — login first,
+    since ``select(User)`` names every column. What the user sees is a bare 500
+    from a login form, which reads as "wrong password" and sends them hunting in
+    exactly the wrong place. The boot log says what is wrong, but by then it has
+    scrolled away.
+    """
+    message = str(exc.orig) if exc.orig else str(exc)
+    missing = "no such column" in message.lower() or "undefinedcolumn" in message.lower()
+    if missing:
+        log.error("Schema drift reached a request: %s", message)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": (
+                    "The database is missing a column this version needs, so this "
+                    "request cannot be served. On the server, run: "
+                    "python3 tools/migrate.py --apply"
+                ),
+                "database_error": message[:200],
+            },
+        )
+    log.exception("Database error")
+    return JSONResponse(status_code=503, content={"detail": "The database is unavailable."})
+
+
 @app.get("/health", tags=["meta"])
 def health() -> dict[str, str]:
+    """Liveness. Deliberately cheap — no database — so a load balancer can poll it."""
     return {"status": "ok", "service": settings.app_name, "version": app.version}
+
+
+@app.get("/health/scheduler", tags=["meta"])
+def scheduler_health_endpoint() -> JSONResponse:
+    """Is the clock running? **503 when it is not**, so a monitor can alert.
+
+    Point an uptime check here rather than at ``/health``: a BioBridge whose API
+    answers but whose scheduler died is the failure that actually hurts, and it
+    is invisible from the outside — attendance simply stops appearing in Odoo and
+    nobody notices until payroll.
+
+    Unauthenticated on purpose, and it reveals nothing tenant-specific: a
+    monitoring endpoint behind a login is a monitoring endpoint nobody wires up.
+    """
+    from app.db.session import session_scope
+    from app.services.scheduling import scheduler_health
+
+    try:
+        with session_scope() as db:
+            state = scheduler_health(db)
+    except Exception as exc:  # noqa: BLE001 — a dead database is also unhealthy
+        return JSONResponse(
+            status_code=503, content={"status": "error", "detail": str(exc)}
+        )
+
+    if settings.scheduler_mode.strip().lower() == "off":
+        # Explicitly disabled is a configuration choice, not a fault. Reporting
+        # it as unhealthy would train whoever set it to ignore this endpoint.
+        return JSONResponse(
+            status_code=200, content={"status": "disabled", "mode": "off"}
+        )
+
+    payload = {
+        "status": "ok" if state["running"] else "stalled",
+        "mode": state["mode"],
+        "owner": state["owner"],
+        "last_tick_at": state["last_tick_at"].isoformat() + "Z"
+        if state["last_tick_at"]
+        else None,
+        "seconds_since_tick": state["seconds_since_tick"],
+        "expected_tick_seconds": settings.scheduler_tick_seconds,
+    }
+    return JSONResponse(status_code=200 if state["running"] else 503, content=payload)
 
 
 class RevalidatingStatics(StaticFiles):

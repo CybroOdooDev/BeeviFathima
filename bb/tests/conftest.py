@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 from datetime import datetime, timedelta
 
 import pytest
@@ -12,6 +13,24 @@ from sqlalchemy.pool import StaticPool
 from app.core.crypto import encrypt
 from app.integrations.base import PunchEvent
 from app.models import Base, Device, DeviceSource, OdooConnection, Tenant
+
+
+def pytest_configure(config):
+    """Refuse to run a suite that would quietly skip the async tests.
+
+    Without pytest-asyncio, pytest *skips* every async test and still exits 0.
+    The whole of test_scheduler_loop.py is async, so the result is a green run
+    with the scheduling loop — the thing that makes any sync happen at all —
+    completely untested, reported as success. A missing dev dependency must not
+    be able to hide a broken scheduler, so this is a hard failure with the fix
+    in the message.
+    """
+    if importlib.util.find_spec("pytest_asyncio") is None:
+        raise pytest.UsageError(
+            "pytest-asyncio is not installed, so the async scheduler tests would "
+            "be SKIPPED and this run would still report success.\n"
+            "    pip install -r requirements-dev.txt"
+        )
 
 TZ = "Asia/Dubai"  # UTC+4, no DST, so the offset arithmetic is checkable by eye
 

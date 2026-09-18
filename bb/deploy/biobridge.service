@@ -1,0 +1,65 @@
+# BioBridge API and scheduler, as one supervised service.
+#
+# The scheduler runs inside this process, so this unit is the whole "runs on a
+# schedule" story on a single box: no crontab, no Celery, no Redis.
+#
+#   sudo cp deploy/biobridge.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now biobridge
+#   systemctl status biobridge
+#   journalctl -u biobridge -f
+#
+# Edit User, WorkingDirectory and the venv path to match the install.
+
+[Unit]
+Description=BioBridge — biometric attendance sync for Odoo
+Documentation=file:///opt/biobridge/README.md
+# Start after the network is genuinely up: the first tick polls a customer's
+# BioTime box within seconds of boot, and DNS that is not ready yet turns into a
+# failed run and a scary first log line.
+After=network-online.target postgresql.service
+Wants=network-online.target
+# Restart forever rather than giving up after the default burst limit. A
+# customer's Odoo being unreachable at boot must not permanently stop the
+# service — this key lives in [Unit], not [Service], where systemd ignores it.
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+User=biobridge
+Group=biobridge
+WorkingDirectory=/opt/biobridge
+EnvironmentFile=/opt/biobridge/.env
+
+# One worker. The scheduler is safe with more — a database lease picks the
+# dispatcher — but a single process is simpler to reason about, and this
+# workload is I/O-bound on two remote systems rather than CPU-bound.
+# Scaling up: raise --workers freely, the lease still yields one sync per
+# tenant per interval.
+ExecStart=/opt/biobridge/.venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 --port 8000 --workers 1 --proxy-headers
+
+# Come back from a crash, and keep coming back. A scheduler that dies quietly
+# is the failure mode this whole file exists to prevent.
+Restart=always
+RestartSec=5
+
+# Graceful stop: shutdown drains in-flight syncs and hands back the lease, so a
+# restart resumes dispatching at once instead of waiting out the lease TTL.
+KillSignal=SIGTERM
+TimeoutStopSec=45
+
+# --- hardening -------------------------------------------------------------
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# The SQLite file and any local logs live here. Drop this line on Postgres.
+ReadWritePaths=/opt/biobridge
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

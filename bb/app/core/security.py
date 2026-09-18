@@ -39,7 +39,9 @@ def new_token(nbytes: int = 32) -> str:
     return secrets.token_urlsafe(nbytes)
 
 
-def _create_token(subject: str, tenant_id: str, role: str, ttl: timedelta, kind: str) -> str:
+def _create_token(
+    subject: str, tenant_id: str | None, role: str, ttl: timedelta, kind: str
+) -> str:
     now = datetime.now(timezone.utc)
     payload: dict[str, Any] = {
         "sub": subject,
@@ -53,14 +55,15 @@ def _create_token(subject: str, tenant_id: str, role: str, ttl: timedelta, kind:
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
-def create_access_token(user_id: str, tenant_id: str, role: str) -> str:
+def create_access_token(user_id: str, tenant_id: str | None, role: str) -> str:
+    """``tenant_id`` is None for platform staff, who belong to no customer."""
     return _create_token(
         user_id, tenant_id, role,
         timedelta(minutes=settings.access_token_ttl_minutes), "access",
     )
 
 
-def create_refresh_token(user_id: str, tenant_id: str, role: str) -> str:
+def create_refresh_token(user_id: str, tenant_id: str | None, role: str) -> str:
     return _create_token(
         user_id, tenant_id, role,
         timedelta(days=settings.refresh_token_ttl_days), "refresh",

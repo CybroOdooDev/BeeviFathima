@@ -3,23 +3,25 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 from sqlalchemy import delete, select
 
 from app.core.config import settings
 from app.db.session import session_scope
-from app.models import PunchRecord, PunchState, SyncRun, Tenant, TenantStatus
+from app.models import PunchRecord, PunchState, Tenant
+from app.services.scheduling import (
+    SLOW_LANE_MULTIPLIER,  # noqa: F401 — re-exported; imported from here historically
+    SYNCABLE,
+    claim_lease,
+    due_tenants,
+    owner_id,
+)
 from app.services.sync_engine import SyncEngine, close_stale_attendances as _close_stale
-from app.services.timeutils import ensure_aware, utcnow_naive
+from app.services.timeutils import utcnow_naive
 from app.workers.celery_app import celery_app
 
 log = logging.getLogger(__name__)
-
-SYNCABLE = {TenantStatus.trialing.value, TenantStatus.active.value}
-#: A tenant whose connections keep failing polls this many times less often, so
-#: a dead customer server is not hammered every interval.
-SLOW_LANE_MULTIPLIER = 4
 
 _redis_client = None
 
@@ -47,39 +49,33 @@ def get_redis():
 
 @celery_app.task(name="app.workers.tasks.dispatch_due_tenants")
 def dispatch_due_tenants() -> dict[str, int]:
-    """Beat entry point: enqueue a sync for every tenant whose interval elapsed."""
-    dispatched = skipped = 0
+    """Beat entry point: enqueue a sync for every tenant whose interval elapsed.
 
+    The due-ness rule lives in ``services.scheduling`` and is shared with the
+    in-process scheduler. It used to be written out here as well, which is how a
+    customer's 15 minutes ends up meaning two different things depending on
+    whether they deployed a worker.
+
+    Claiming the same lease does two jobs: it stamps the heartbeat the dashboard
+    reads, so the UI reports a running schedule under Celery too, and it keeps a
+    second beat — the classic outcome of scaling the beat container — from
+    double-dispatching every tenant.
+    """
     with session_scope() as db:
-        tenants = db.scalars(
-            select(Tenant).where(
-                Tenant.sync_enabled.is_(True), Tenant.status.in_(SYNCABLE)
-            )
-        ).all()
+        if not claim_lease(
+            db,
+            owner=owner_id(),
+            mode="celery",
+            ttl_seconds=settings.scheduler_lease_ttl_seconds,
+        ):
+            log.info("Another scheduler holds the lease; not dispatching")
+            return {"dispatched": 0, "skipped": 0, "status": "lease_held_elsewhere"}
 
-        for tenant in tenants:
-            interval = tenant.sync_interval_minutes
-            if tenant.consecutive_failures >= settings.max_consecutive_failures:
-                interval *= SLOW_LANE_MULTIPLIER
-
-            last = db.scalars(
-                select(SyncRun)
-                .where(SyncRun.tenant_id == tenant.id)
-                .order_by(SyncRun.started_at.desc())
-                .limit(1)
-            ).first()
-
-            due = last is None or ensure_aware(last.started_at) <= datetime.now(
-                timezone.utc
-            ) - timedelta(minutes=interval)
-            if not due:
-                skipped += 1
-                continue
-
+        due = due_tenants(db)
+        for tenant in due:
             sync_tenant.delay(tenant.id, "schedule")
-            dispatched += 1
 
-    return {"dispatched": dispatched, "skipped": skipped}
+        return {"dispatched": len(due), "skipped": 0}
 
 
 @celery_app.task(

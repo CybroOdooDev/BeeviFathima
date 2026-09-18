@@ -130,13 +130,29 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8099)
     parser.add_argument("--punches", default=None)
+    parser.add_argument(
+        "--host", default="127.0.0.1",
+        help="Address to bind. The default is loopback-only, which is right for "
+             "a BioBridge on the same machine and invisible to one in a "
+             "container or on another host — use 0.0.0.0 for those.",
+    )
     args = parser.parse_args()
 
     global PUNCH_FILE
     PUNCH_FILE = args.punches
 
-    server = HTTPServer(("127.0.0.1", args.port), Handler)
-    print(f"mock BioTime on http://127.0.0.1:{args.port} (token {TOKEN})", flush=True)
+    server = HTTPServer((args.host, args.port), Handler)
+    # The port is printed because the default (8099) is not the one people
+    # usually put in the connection form, and a silent mismatch looks exactly
+    # like a dead server: the sync says "connection refused" forever.
+    print(f"mock BioTime on http://{args.host}:{args.port} (token {TOKEN})", flush=True)
+    print(
+        f"  point the source's Server URL at exactly http://{args.host}:{args.port}",
+        flush=True,
+    )
+    if args.host == "127.0.0.1":
+        print("  loopback only — pass --host 0.0.0.0 if BioBridge is not on this machine",
+              flush=True)
     server.serve_forever()
 
 

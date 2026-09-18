@@ -87,6 +87,14 @@ def main():
         page.click("#go")
         page.wait_for_selector("#sidenav a", timeout=15000)
         check("signup lands on the dashboard shell", page.locator("#sidenav").is_visible())
+        # This account is an ordinary customer, so the cross-tenant console must
+        # not be offered to it. Server-side checks are the real control; this
+        # catches the nav filter silently inverting.
+        check(
+            "an ordinary customer is not shown the platform console",
+            "All accounts" not in page.locator("#sidenav").inner_text(),
+            page.locator("#sidenav").inner_text().replace("\n", " · "),
+        )
         check("the overview renders stat tiles", page.locator(".stat").count() >= 4,
               f"{page.locator('.stat').count()} tiles")
         check("it warns that nothing is connected",
@@ -149,6 +157,87 @@ def main():
             page.wait_for_timeout(1800)
             check(f"{label} renders", marker in page.content())
             snap(page, f"{index:02d}-{label.lower()}")
+
+        # --- the punch ledger's filters -------------------------------------
+        print("\n--- punch ledger filters ---")
+        page.click("#sidenav >> text=Activity")
+        page.wait_for_selector("#punchFilters", timeout=10000)
+        options = page.locator("#terminal_sn option").count()
+        check("the device filter is populated from the imported terminals",
+              options >= 2, f"{options} option(s) including 'any device'")
+
+        # Each run links to the punches it brought in — the answer to "what did
+        # this sync fetch", which the counters alone cannot give.
+        run_link = page.locator("a.link.sm").filter(has_text="punch").first
+        if run_link.count():
+            run_link.click()
+            page.wait_for_timeout(2000)
+            check("a run links to the punches it ingested",
+                  "run_id=" in page.evaluate("location.hash")
+                  and "Read" in page.content(),
+                  page.evaluate("location.hash"))
+            page.click("text=Show the whole ledger")
+            page.wait_for_timeout(1500)
+        else:
+            check("a run links to the punches it ingested", False,
+                  "no run reported new punches, so there was no link to click")
+
+        serial = page.locator("#terminal_sn option").nth(1).get_attribute("value")
+        page.select_option("#terminal_sn", serial)
+        page.click("#applyPunches")
+        page.wait_for_timeout(2000)
+        check("filtering by device puts it in the URL, so the view can be shared",
+              f"terminal_sn={serial}" in page.evaluate("location.hash"),
+              page.evaluate("location.hash"))
+        rows = page.locator("table").last.locator("tbody tr").count()
+        shown = page.locator("table").last.locator("tbody tr td:nth-child(5)").all_inner_texts()
+        check("only that device's punches are listed",
+              all(serial in text for text in shown) if shown else True,
+              f"{rows} row(s), all {serial}" if shown else "no punches in range")
+
+        # A date range that cannot contain anything, to prove it filters rather
+        # than being ignored.
+        page.fill("#date_from", "2001-01-01")
+        page.fill("#date_to", "2001-01-02")
+        page.click("#applyPunches")
+        page.wait_for_timeout(2000)
+        check("an empty date range returns nothing rather than everything",
+              "No punches" in page.content(), "empty state shown")
+        page.click("text=Clear")
+        page.wait_for_timeout(1500)
+        check("Clear drops the filters", page.evaluate("location.hash") in ("#/activity", "#/"),
+              page.evaluate("location.hash"))
+
+        # --- the schedule ---------------------------------------------------
+        print("\n--- schedule ---")
+        page.click("#sidenav >> text=Overview")
+        page.wait_for_selector("#syncNow", timeout=10000)
+        body = page.content()
+        check(
+            "the overview reports the schedule state",
+            "Next sync" in body or "Automatic sync is not running" in body,
+            "scheduler strip rendered",
+        )
+
+        # A select yields a string, so "false" would PATCH as truthy and the
+        # setting would appear to save and then come back On.
+        page.click("#sidenav >> text=Settings")
+        page.wait_for_selector("#sync_enabled", timeout=10000)
+        page.select_option("#sync_enabled", "false")
+        page.click("#save")
+        page.wait_for_timeout(2500)
+        page.click("#sidenav >> text=Overview")
+        page.wait_for_timeout(1200)
+        page.click("#sidenav >> text=Settings")
+        page.wait_for_selector("#sync_enabled", timeout=10000)
+        check(
+            "turning automatic sync off actually persists",
+            page.locator("#sync_enabled").input_value() == "false",
+            f"reads back as {page.locator('#sync_enabled').input_value()}",
+        )
+        page.select_option("#sync_enabled", "true")
+        page.click("#save")
+        page.wait_for_timeout(2000)
 
         page.click("#sidenav >> text=Overview")
         page.wait_for_timeout(1500)

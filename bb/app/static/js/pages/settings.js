@@ -5,8 +5,23 @@ import { $, banner, busy, field, guard, loading, readForm } from '../ui.js';
 
 export async function render(mount) {
   mount.innerHTML = loading();
-  const tenant = await api.get('/tenant');
+  // The schedule's live state comes with the dashboard. Fetched alongside so the
+  // interval field can say what is actually happening instead of "if a worker is
+  // running" — which left the reader to go and find out.
+  const [tenant, dash] = await Promise.all([
+    api.get('/tenant'),
+    api.get('/dashboard').catch(() => null),
+  ]);
+  const schedule = dash?.schedule;
   const readonly = !auth.canWrite;
+
+  const intervalHelp = !schedule
+    ? 'How often BioBridge pulls new punches.'
+    : schedule.running
+      ? `The scheduler is running${schedule.mode === 'celery' ? ' under Celery beat' : ''}`
+        + `, so this takes effect on its own — no button, no cron entry.`
+      : 'Nothing is scheduling syncs right now, so this value has no effect yet. '
+        + 'Check SCHEDULER_MODE and the service log, or /health/scheduler.';
 
   mount.innerHTML = `
     ${readonly ? banner('Read-only', 'Your role cannot change settings.', 'warn') : ''}
@@ -22,7 +37,18 @@ export async function render(mount) {
         ${field({
           name: 'sync_interval_minutes', label: 'Sync every (minutes)', type: 'number',
           value: tenant.sync_interval_minutes, required: true,
-          help: 'Only applies when a background worker is running.',
+          help: intervalHelp, strongHelp: schedule ? !schedule.running : false,
+        })}
+        ${field({
+          name: 'sync_enabled', label: 'Automatic sync', boolean: true, required: true,
+          value: String(Boolean(tenant.sync_enabled)),
+          options: [
+            { value: 'true', label: 'On — pull punches on the interval above' },
+            { value: 'false', label: 'Off — only sync when someone asks' },
+          ],
+          help: 'Turning this off stops the schedule for this account only. '
+              + 'Nothing is lost: the cursor stays where it is and the next run '
+              + 'picks up from there.',
         })}
       </div>
 

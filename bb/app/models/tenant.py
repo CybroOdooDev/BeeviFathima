@@ -14,6 +14,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -76,14 +77,44 @@ class User(Base, UUIDPk, Timestamped):
     __tablename__ = "app_user"
     __table_args__ = (UniqueConstraint("email", name="uq_user_email"),)
 
-    tenant_id: Mapped[str] = mapped_column(
-        ForeignKey("tenant.id", ondelete="CASCADE"), index=True, nullable=False
+    #: Null for platform staff, who are not a customer.
+    #:
+    #: A support engineer is not a tenant. Forcing one on them put a phantom
+    #: company in the customer list, counted it in "N accounts scheduled", and
+    #: polled a BioTime server that does not exist — while giving the engineer a
+    #: meaningless attendance dashboard of their own. Null says the true thing:
+    #: this person has no customer workspace, and every tenant-scoped query
+    #: correctly finds nothing for them.
+    #:
+    #: Still allowed to be set: someone who really is both a customer and staff
+    #: keeps their account and gains the console on top.
+    tenant_id: Mapped[str | None] = mapped_column(
+        ForeignKey("tenant.id", ondelete="CASCADE"), index=True, nullable=True
     )
     email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     full_name: Mapped[str | None] = mapped_column(String(120))
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(20), default=UserRole.owner.value)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    #: Platform staff: may read and change *other* tenants' scheduling.
+    #:
+    #: Deliberately not a ``UserRole``. The roles are positions inside one
+    #: customer's account and every query filters on that account; this crosses
+    #: that line, so making it a fourth role would invite someone to hand it out
+    #: from the customer-facing user screen. It is a separate flag with a
+    #: separate dependency, and no HTTP route writes it — ``tools/grant_admin.py``
+    #: on the server is the only way in, which keeps the blast radius where a
+    #: database login already reaches.
+    #:
+    #: ``server_default`` as well as ``default``: the Python-side default only
+    #: applies to rows this ORM inserts, and is never rendered into DDL. Without
+    #: it, adding this column to a table that already has users emits
+    #: ``BOOLEAN NOT NULL`` with no DEFAULT, and every existing row has no value
+    #: to take — the migration fails outright.
+    is_platform_admin: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("0"), nullable=False
+    )
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     failed_login_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -105,7 +136,8 @@ class UserSession(Base, UUIDPk, Timestamped):
     user_id: Mapped[str] = mapped_column(
         ForeignKey("app_user.id", ondelete="CASCADE"), index=True, nullable=False
     )
-    tenant_id: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    #: Mirrors the user's tenant, and is null for a platform staff session.
+    tenant_id: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     device_label: Mapped[str | None] = mapped_column(String(120))
     ip_address: Mapped[str | None] = mapped_column(String(64))

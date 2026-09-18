@@ -84,6 +84,56 @@ class _Transaction:
         return None
 
 
+def _describe_transport_error(base_url: str, exc: httpx.RequestError) -> str:
+    """Turn an httpx transport failure into something a customer can act on.
+
+    These are the most common failures in production and they are almost never
+    bugs: the BioTime box is off, the port is wrong, or it is on a LAN segment
+    BioBridge cannot see. Left unwrapped they surface as "[Errno 111] Connection
+    refused" with a stack trace, which reads like BioBridge broke.
+
+    The cause is inferred from the httpx subclass rather than the errno string,
+    because the string is platform-specific — Linux says "Connection refused",
+    Windows says "No connection could be made because the target machine
+    actively refused it", and the same sync must explain both.
+    """
+    detail = str(exc) or type(exc).__name__
+
+    if isinstance(exc, httpx.ConnectTimeout):
+        hint = (
+            f"nothing answered within {settings.http_timeout_seconds}s. The host "
+            "is usually up but unreachable — a firewall dropping the packets, or "
+            "a VPN tunnel that is down."
+        )
+    elif isinstance(exc, httpx.TimeoutException):
+        hint = (
+            f"the server accepted the connection but did not reply within "
+            f"{settings.http_timeout_seconds}s. Either it is overloaded, or the "
+            "requested window is large enough that the query is slow — a shorter "
+            "sync interval keeps each window small."
+        )
+    elif isinstance(exc, httpx.ConnectError):
+        # gaierror is wrapped in ConnectError by httpx, so name resolution and a
+        # refused port arrive as the same class and need separating by text.
+        lowered = detail.lower()
+        if "name or service not known" in lowered or "nodename nor servname" in lowered \
+                or "getaddrinfo" in lowered or "temporary failure in name resolution" in lowered:
+            hint = (
+                "the hostname does not resolve. Check the spelling, or use the "
+                "server's IP address if it has no DNS entry."
+            )
+        else:
+            hint = (
+                "the connection was refused — nothing is listening on that port. "
+                "Check BioTime is running, that the port in the URL is the one it "
+                "serves on, and that this host can reach it."
+            )
+    else:
+        hint = f"the connection failed ({type(exc).__name__})."
+
+    return f"Cannot reach BioTime at {base_url}: {hint}"
+
+
 def _as_str(value: Any) -> str | None:
     if value is None or value == "":
         return None
@@ -148,16 +198,48 @@ class BioTimeProvider(AttendanceProvider):
         """Lets the caller persist a renewed token and skip the next handshake."""
         return self._token
 
+    # -- transport ---------------------------------------------------------
+    @retry(
+        retry=retry_if_exception_type((httpx.TransportError, httpx.TimeoutException)),
+        wait=wait_exponential_jitter(initial=1, max=20),
+        stop=stop_after_attempt(3),
+        reraise=True,
+    )
+    def _send(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        """Transport only, deliberately leaking httpx so tenacity can retry it.
+
+        Nothing outside this class may call it: the raw exception is retryable
+        but not reportable.
+        """
+        return self._client.request(method, path, **kwargs)
+
+    def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        """The boundary. Past here, no httpx exception escapes.
+
+        Retries first, then translates. Wrapping inside ``_send`` would make the
+        BioTimeError un-retryable and a single dropped packet would fail the run;
+        wrapping here means the retries happen and *then* the exhausted failure
+        is named.
+
+        This mattered more than it looks: an unwrapped ``httpx.ConnectError`` is
+        not a ``ProviderError``, so it sailed past the per-source handler in the
+        sync engine that exists to keep one dead site from killing the others,
+        and landed in the catch-all as "Unexpected error". A customer with two
+        sites lost the working site's punches because the other one was off.
+        """
+        try:
+            return self._send(method, path, **kwargs)
+        except httpx.RequestError as exc:
+            raise BioTimeError(_describe_transport_error(self.base_url, exc)) from exc
+
     # -- auth --------------------------------------------------------------
     def _authenticate(self) -> str:
         path = "/jwt-api-token-auth/" if self.auth_type == "jwt" else "/api-token-auth/"
-        try:
-            response = self._client.post(
-                path,
-                json={"username": self.config.username, "password": self.config.password},
-            )
-        except httpx.RequestError as exc:
-            raise BioTimeError(f"Cannot reach BioTime at {self.base_url}: {exc}") from exc
+        response = self._request(
+            "POST",
+            path,
+            json={"username": self.config.username, "password": self.config.password},
+        )
 
         if response.status_code in (400, 401, 403):
             raise BioTimeAuthError("BioTime rejected the username or password.")
@@ -179,22 +261,16 @@ class BioTimeProvider(AttendanceProvider):
         scheme = "JWT" if self.auth_type == "jwt" else "Token"
         return {"Authorization": f"{scheme} {self._token}"}
 
-    # -- transport ---------------------------------------------------------
-    @retry(
-        retry=retry_if_exception_type((httpx.TransportError, httpx.TimeoutException)),
-        wait=wait_exponential_jitter(initial=1, max=20),
-        stop=stop_after_attempt(3),
-        reraise=True,
-    )
+    # -- reads -------------------------------------------------------------
     def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        response = self._client.get(path, params=params, headers=self._auth_header())
+        response = self._request("GET", path, params=params, headers=self._auth_header())
 
         # A token can expire mid-run. Re-authenticate once and replay before
         # giving up, so a long backfill does not fail at the 40th page.
         if response.status_code in (401, 403):
             log.info("BioTime token rejected; re-authenticating")
             self._token = None
-            response = self._client.get(path, params=params, headers=self._auth_header())
+            response = self._request("GET", path, params=params, headers=self._auth_header())
 
         if response.status_code == 404:
             raise BioTimeError(

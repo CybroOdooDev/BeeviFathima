@@ -109,6 +109,19 @@ class PunchRecord(Base, UUIDPk, Timestamped):
     source_id: Mapped[str] = mapped_column(String(32), nullable=False)
     device_id: Mapped[str | None] = mapped_column(String(32))
 
+    #: The run that first put this punch in the ledger.
+    #:
+    #: "Ingested by", not "fetched by", and the difference is the whole point:
+    #: every run re-reads ``fetch_overlap_minutes`` of already-known punches,
+    #: because devices upload late and their clocks drift. So a punch is fetched
+    #: by several runs and ingested by exactly one — which is the attribution
+    #: worth keeping. A run's ``punches_fetched`` minus ``punches_new`` is the
+    #: re-read, and it is expected to be large.
+    #:
+    #: Nullable, and no foreign key: punches predate this column, and pruning
+    #: old runs must never cascade into the ledger.
+    first_seen_run_id: Mapped[str | None] = mapped_column(String(32), index=True)
+
     external_id: Mapped[str] = mapped_column(String(190), nullable=False)
     emp_code: Mapped[str] = mapped_column(String(64), nullable=False)
 

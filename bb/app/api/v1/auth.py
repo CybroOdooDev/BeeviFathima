@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from app.api.deps import Principal, get_principal
+from app.api.deps import get_current_user
 from app.core.config import settings
 from app.core.security import (
     create_access_token,
@@ -186,5 +186,10 @@ def logout(refresh_token: str = "", db: Session = Depends(get_db)) -> MessageOut
 
 
 @router.get("/me", response_model=UserOut)
-def me(principal: Principal = Depends(get_principal)) -> User:
-    return principal.user
+def me(user: User = Depends(get_current_user)) -> User:
+    """Who am I — regardless of whether I have a customer workspace.
+
+    Deliberately not tenant-scoped: platform staff have no tenant, and this is
+    the first call the dashboard makes after sign-in.
+    """
+    return user

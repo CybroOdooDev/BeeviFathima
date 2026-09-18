@@ -71,6 +71,17 @@ class SyncAborted(Exception):
     """
 
 
+class AllSourcesUnreachable(SyncAborted):
+    """Every configured platform failed. An outage, and it must be counted.
+
+    A subclass because the *run* ends the same way — nothing to do, stop early —
+    but the *cause* is the opposite of a configuration problem. Without this it
+    inherited SyncAborted's exemption from the failure streak, so a customer
+    whose BioTime server was switched off for good would never be badged
+    degraded and BioBridge would poll a dead address on the fast lane forever.
+    """
+
+
 class SyncEngine:
     """Runs one full cycle for one tenant."""
 
@@ -136,9 +147,23 @@ class SyncEngine:
                     self._log(f"'{source.name}' unreachable: {exc}", "error")
 
             if reachable == 0:
-                raise SyncAborted(
-                    f"None of the {len(sources)} connected platform(s) could be "
-                    "reached. Punches already in the ledger are unaffected."
+                # The run list shows this message and nothing else, so it has to
+                # carry the reason — "none could be reached" tells a customer
+                # only what they already suspected. The per-source handler above
+                # has just written a specific, actionable message; reuse it
+                # rather than inventing a vaguer one.
+                reasons = [s.status_message for s in sources if s.status_message]
+                if len(sources) == 1 and reasons:
+                    detail = reasons[0]          # one site: its message *is* the answer
+                elif reasons:
+                    detail = (
+                        f"None of the {len(sources)} connected platforms could be "
+                        f"reached. First: {reasons[0]}"
+                    )
+                else:
+                    detail = f"None of the {len(sources)} connected platforms could be reached."
+                raise AllSourcesUnreachable(
+                    f"{detail} Punches already in the ledger are unaffected."
                 )
 
             # Knowing *which badges punched* needs no Odoo — it is in the punch
@@ -168,6 +193,14 @@ class SyncEngine:
                 SyncStatus.partial.value if self.run.error_count else SyncStatus.success.value
             )
 
+        except AllSourcesUnreachable as exc:
+            # Ordered before SyncAborted: it is a subclass, so the broader
+            # handler below would swallow it and skip the streak.
+            self.tenant.consecutive_failures += 1
+            self.run.status = SyncStatus.failed.value
+            self.run.error_message = str(exc)
+            self._log(str(exc), "error")
+            self._mark_degraded_if_needed()
         except SyncAborted as exc:
             self.run.status = SyncStatus.failed.value
             self.run.error_message = str(exc)
@@ -291,6 +324,9 @@ class SyncEngine:
                 tenant_id=self.tenant.id,
                 source_id=source.id,
                 device_id=device.id if device else None,
+                # Stamp the run, so "what did this sync bring in" is answerable
+                # later from the ledger rather than only from a counter.
+                first_seen_run_id=self.run.id,
                 external_id=event.external_id,
                 emp_code=event.emp_code,
                 punch_time_utc=punch_utc,
