@@ -1,0 +1,14 @@
+[
+  {"id": 1, "emp_code": "1001", "punch_time": "2026-09-19 09:00:00", "punch_state": "0",
+   "verify_type": "15", "terminal_sn": "MOCK-GATE-01", "first_name": "", "last_name": ""},
+  {"id": 2, "emp_code": "1001", "punch_time": "2026-09-19 17:00:00", "punch_state": "1",
+   "verify_type": "15", "terminal_sn": "MOCK-GATE-01", "first_name": "", "last_name": ""},
+  {"id": 3, "emp_code": "0042", "punch_time": "2026-09-19 09:00:00", "punch_state": "0",
+   "verify_type": "15", "terminal_sn": "MOCK-GATE-01", "first_name": "", "last_name": ""},
+  {"id": 4, "emp_code": "0042", "punch_time": "2026-09-19 17:00:00", "punch_state": "1",
+   "verify_type": "15", "terminal_sn": "MOCK-GATE-01", "first_name": "", "last_name": ""},
+  {"id": 5, "emp_code": "A7", "punch_time": "2026-09-19 09:00:00", "punch_state": "0",
+   "verify_type": "15", "terminal_sn": "MOCK-GATE-02", "first_name": "", "last_name": ""},
+  {"id": 6, "emp_code": "A7", "punch_time": "2026-09-19 17:00:00", "punch_state": "1",
+   "verify_type": "15", "terminal_sn": "MOCK-GATE-02", "first_name": "", "last_name": ""}
+]

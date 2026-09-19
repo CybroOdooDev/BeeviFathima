@@ -13,7 +13,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import socket
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 TOKEN = "mock-token"
@@ -50,6 +51,22 @@ def _punches() -> list[dict]:
 
 
 class Handler(BaseHTTPRequestHandler):
+    # A connection that goes quiet is dropped rather than held forever. Without
+    # this, a client that opens a socket and never finishes a request — a
+    # browser's speculative pre-connect, a port scanner, a health check — parks
+    # a thread on a blocking readline() that never returns. On the
+    # single-threaded server this file used to use, one of those wedged the
+    # whole mock: the port kept accepting connections (so a TCP check passed
+    # instantly) while nothing was ever answered, which reads exactly like a
+    # hung BioTime and cost an afternoon to find.
+    timeout = 10
+
+    def handle_one_request(self):
+        try:
+            super().handle_one_request()
+        except (TimeoutError, socket.timeout):
+            self.close_connection = True
+
     def log_message(self, *args):
         pass  # keep test output readable
 
@@ -126,6 +143,16 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"detail": "Not found."}, 404)
 
 
+def build_server(host: str = "127.0.0.1", port: int = 0) -> ThreadingHTTPServer:
+    """The one place the server is constructed, so a test can exercise it.
+
+    Split out of ``main`` deliberately: a test that builds its own
+    ``ThreadingHTTPServer`` would keep passing if this file went back to the
+    single-threaded one, which is exactly the regression worth guarding.
+    """
+    return ThreadingHTTPServer((host, port), Handler)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8099)
@@ -141,7 +168,10 @@ def main():
     global PUNCH_FILE
     PUNCH_FILE = args.punches
 
-    server = HTTPServer((args.host, args.port), Handler)
+    # Threaded: one slow or abandoned client must not stop every other
+    # request. BioBridge paginates, so it holds several sequential
+    # connections per sync and a wedge here stalls the whole run.
+    server = build_server(args.host, args.port)
     # The port is printed because the default (8099) is not the one people
     # usually put in the connection form, and a silent mismatch looks exactly
     # like a dead server: the sync says "connection refused" forever.

@@ -455,7 +455,15 @@ demo-company / Primary BioTime  —  http://localhost:8090
 
 It reads the database directly rather than the API, because the reason to run it
 is usually that something is down. It writes nothing, so it is safe against
-production. Three things it catches that guessing does not:
+production. Things it catches that guessing does not:
+
+- **An open port that never answers.** TCP connecting instantly and HTTP timing
+  out has three causes that look identical: a server that is merely slow, a
+  non-HTTP service on the port, and a single-threaded server wedged by an
+  abandoned connection. It sends a raw request on a bare socket with a longer
+  budget and reports which — "it IS a web server, just slower than 14s" versus a
+  banner naming what actually owns the port versus "accepted the connection,
+  then sent nothing".
 
 - **The port moved.** On a refusal it scans the ports BioTime is commonly on and
   names the live one. On a *timeout* it deliberately does not — a filter drops
@@ -481,6 +489,14 @@ python3 tools/mock_biotime.py --host 0.0.0.0 --port 8090   # BioBridge elsewhere
 It runs in the foreground and dies with its terminal. If a sync that was working
 starts refusing connections after you close a shell or reboot, that is why —
 `nohup`, `tmux`, or a systemd unit alongside `deploy/biobridge.service`.
+
+It is threaded, and that is not incidental. It used to be a single-threaded
+`HTTPServer`, where one client that opened a connection and never completed a
+request blocked every subsequent one *forever* — and a browser tab left open on
+it is enough to do that. The kernel keeps accepting into the backlog, so the
+port still passes a TCP check while nothing is ever served: a sync that reads as
+a hung BioTime, on a mock that looks fine. Each connection now gets its own
+thread and goes quiet after 10 idle seconds.
 
 #### Proving the error path itself
 

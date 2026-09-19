@@ -166,6 +166,110 @@ def test_timeout_does_not_suggest_a_wrong_port(monkeypatch) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# An open port that will not talk HTTP has three causes, not one
+# --------------------------------------------------------------------------- #
+class _Slow(BaseHTTPRequestHandler):
+    delay = 0.6
+
+    def log_message(self, *_args):
+        pass
+
+    def do_GET(self):  # noqa: N802
+        import time
+
+        time.sleep(type(self).delay)
+        self.send_response(200)
+        self.send_header("Content-Length", "2")
+        self.end_headers()
+        self.wfile.write(b"{}")
+
+
+def test_a_slow_server_is_not_called_a_non_web_service(monkeypatch) -> None:
+    """The one that cost real time: "not a web server" when it plainly is.
+
+    A read timeout says nothing about what is on the port — only that it did not
+    answer in the window allowed. Blaming the wrong thing sends someone hunting
+    for a rogue service instead of raising a timeout.
+    """
+    from http.server import ThreadingHTTPServer
+
+    from tools import check_source
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Slow)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    # Impatient client, patient probe: exactly the production shape.
+    monkeypatch.setattr(check_source, "HTTP_TIMEOUT", 0.2)
+    try:
+        report = check_source.check(
+            f"http://127.0.0.1:{server.server_port}", "admin", "pw"
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert report.failed_at == "http"
+    assert any("IS a web server" in item for item in report.advice)
+    assert not any("not a web server" in item for item in report.advice)
+    assert any("TIMEOUT" in item for item in report.advice), "name the knob to turn"
+
+
+def test_a_wedged_single_threaded_server_is_named_as_such() -> None:
+    """Accepts connections, serves none — the failure that motivated all this.
+
+    A single-threaded server blocked on one abandoned connection keeps accepting
+    into the kernel backlog, so a TCP check passes instantly while nothing is
+    ever answered. It looks identical to a healthy port from the outside.
+    """
+    from tools import check_source
+
+    server = HTTPServer(("127.0.0.1", 0), _Slow)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    port = server.server_port
+    hold = socket.create_connection(("127.0.0.1", port))  # never sends a request
+    check_source.HTTP_TIMEOUT, check_source.PROBE_TIMEOUT = 0.3, 0.6
+    try:
+        assert check_source.port_open("127.0.0.1", port)[0], (
+            "the port must still look open — that is the trap"
+        )
+        report = check_source.check(f"http://127.0.0.1:{port}", "admin", "pw")
+    finally:
+        check_source.HTTP_TIMEOUT, check_source.PROBE_TIMEOUT = 10.0, 20.0
+        hold.close()
+        server.shutdown()
+        server.server_close()
+
+    assert report.failed_at == "http"
+    assert any("sent nothing" in message for _, message in report.lines)
+    assert any("single-threaded" in item for item in report.advice)
+
+
+def test_a_non_http_service_shows_its_banner() -> None:
+    """The banner is the answer — it names what actually owns the port."""
+    import socketserver
+
+    class _Banner(socketserver.BaseRequestHandler):
+        def handle(self):
+            self.request.sendall(b"SSH-2.0-OpenSSH_8.9p1\r\n")
+
+    from tools import check_source
+
+    socketserver.ThreadingTCPServer.allow_reuse_address = True
+    server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _Banner)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        report = check_source.check(f"http://127.0.0.1:{port}", "admin", "pw")
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert report.failed_at == "http"
+    assert any("SSH-2.0" in message for _, message in report.lines), (
+        "print what answered; naming the service is the whole finding"
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Output stays readable
 # --------------------------------------------------------------------------- #
 class _FakeResponse:
@@ -189,3 +293,43 @@ def test_empty_body_says_so() -> None:
 def test_wrap_never_loses_a_word() -> None:
     text = "The connection was refused, which means the host is up and answered."
     assert " ".join(_wrap(text, 20)).split() == text.split()
+
+
+# --------------------------------------------------------------------------- #
+# The mock must not be the thing that breaks
+# --------------------------------------------------------------------------- #
+def test_mock_survives_abandoned_connections() -> None:
+    """A stray socket must not take the mock down.
+
+    It used to run on a single-threaded ``HTTPServer``, so one client that
+    connected and never finished a request blocked every subsequent one —
+    forever. The kernel kept accepting into the backlog, so the port stayed
+    "open" while nothing was served, which is indistinguishable from a hung
+    BioTime and sends you debugging the wrong machine. A browser tab left open
+    on the mock is enough to trigger it.
+    """
+    import httpx
+
+    from tools.mock_biotime import build_server
+
+    # build_server, not a hand-rolled ThreadingHTTPServer: the point is to
+    # exercise the construction the tool actually uses, so this fails if it
+    # goes back to the single-threaded one.
+    server = build_server()
+    port = server.server_port
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    abandoned = [socket.create_connection(("127.0.0.1", port)) for _ in range(5)]
+    try:
+        response = httpx.post(
+            f"http://127.0.0.1:{port}/api-token-auth/",
+            json={"username": "a", "password": "b"},
+            timeout=5.0,
+        )
+        assert response.status_code == 200, "five dead sockets must not wedge it"
+        assert response.json()["token"]
+    finally:
+        for sock in abandoned:
+            sock.close()
+        server.shutdown()
+        server.server_close()

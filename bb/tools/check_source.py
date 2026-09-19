@@ -45,6 +45,13 @@ NEARBY_PORTS = [8090, 8081, 8000, 8080, 80, 443, 8099, 8888]
 
 CONNECT_TIMEOUT = 3.0
 
+# Two deliberately different budgets. The HTTP client is impatient, because a
+# BioTime that takes this long will time out the sync too. The raw probe is
+# patient, because its job is to answer "did it EVER reply" — the question that
+# separates a slow server from a silent one.
+HTTP_TIMEOUT = 10.0
+PROBE_TIMEOUT = 20.0
+
 OK = "  ok  "
 BAD = " FAIL "
 WARN = " warn "
@@ -101,6 +108,93 @@ def port_open(host: str, port: int, timeout: float = CONNECT_TIMEOUT) -> tuple[b
 
 def scan_nearby(host: str, skip: int) -> list[int]:
     return [p for p in NEARBY_PORTS if p != skip and port_open(host, p, timeout=0.4)[0]]
+
+
+def probe_raw(host: str, port: int, timeout: float | None = None) -> tuple[bytes, float]:
+    """Send a minimal HTTP request on a bare socket and return whatever comes back.
+
+    The point is to separate "answers slowly" from "never answers" from "answers
+    with something that is not HTTP" — three causes that an HTTP client collapses
+    into one read timeout, and that need three different fixes.
+
+    ``HTTP/1.0`` with no keep-alive on purpose: the server closes when it is
+    done, so a short read loop is enough and there is nothing left half-open
+    behind us.
+    """
+    timeout = PROBE_TIMEOUT if timeout is None else timeout
+    started = time.monotonic()
+    try:
+        with socket.create_connection((host, port), timeout=CONNECT_TIMEOUT) as sock:
+            sock.settimeout(timeout)
+            sock.sendall(
+                b"GET / HTTP/1.0\r\nHost: " + host.encode() + b"\r\n"
+                b"User-Agent: biobridge-check\r\nConnection: close\r\n\r\n"
+            )
+            chunks, total = [], 0
+            while total < 2048:
+                chunk = sock.recv(1024)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                total += len(chunk)
+            return b"".join(chunks), time.monotonic() - started
+    except Exception:  # noqa: BLE001 — silence is itself the finding
+        return b"", time.monotonic() - started
+
+
+def _explain_http_silence(report: "Report", host: str, port: int, scheme: str) -> None:
+    """Work out *why* an open port did not answer HTTP.
+
+    The tempting single answer — "that is not a web server" — is right maybe a
+    third of the time, and confidently wrong the rest. It sends someone hunting
+    for a rogue service when the real cause is a wedged dev server or a timeout
+    set too low.
+    """
+    body, elapsed = probe_raw(host, port)
+
+    if body.startswith(b"HTTP/"):
+        first = body.split(b"\r\n", 1)[0].decode("ascii", "replace")
+        report.step(WARN, f"a bare socket got a reply after {elapsed:.1f}s: {first}")
+        report.advice.append(
+            f"It IS a web server — just slower than the {elapsed:.0f}s this took. "
+            "Raise BIOBRIDGE_HTTP_TIMEOUT_SECONDS (default 30) if BioTime is "
+            "genuinely this slow, and shorten the sync interval so each query "
+            "covers a smaller window."
+        )
+        return
+
+    if body:
+        banner = body[:60].decode("ascii", "replace").strip()
+        report.step(BAD, f"the port answered, but not with HTTP: {banner!r}")
+        report.advice.append(
+            "Something else owns this port — the banner above usually names it. "
+            "Find the port BioTime is actually on and update the Server URL."
+        )
+        if scheme == "http" and b"\x15\x03" in body[:8]:
+            report.advice.append("That looks like TLS. Try https:// instead of http://.")
+        return
+
+    # Accepted the connection, then said nothing at all.
+    report.step(BAD, f"accepted the connection, then sent nothing for {elapsed:.0f}s")
+    if host in ("localhost", "127.0.0.1", "::1"):
+        report.advice.append(
+            "A local port that accepts and never answers is almost always a "
+            "single-threaded dev server wedged by an abandoned connection — a "
+            "browser tab left open on it will do this. The kernel keeps "
+            "accepting into the backlog, so the port looks healthy while "
+            "nothing is being served."
+        )
+        report.advice.append(
+            "Restart it. If it is tools/mock_biotime.py, update to the threaded "
+            "version in this release, which cannot wedge this way."
+        )
+    else:
+        report.advice.append(
+            "The host accepted the connection and then sent nothing. Either the "
+            "service is hung, or a firewall is allowing the handshake and "
+            "dropping the traffic after it — check the service is responsive "
+            "from a shell on that machine first, which separates the two."
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -227,7 +321,7 @@ def check(url: str, username: str | None, password: str | None, label: str = "")
 
     client = httpx.Client(
         base_url=f"{parsed.scheme}://{host}:{port}",
-        timeout=10.0,
+        timeout=HTTP_TIMEOUT,
         verify=False,          # noqa: S501 — diagnosing, not trusting
         follow_redirects=True,
         trust_env=False,
@@ -239,10 +333,9 @@ def check(url: str, username: str | None, password: str | None, label: str = "")
             report.step(OK, f"HTTP answers (HTTP {root.status_code}, server: {server})")
         except httpx.RequestError as exc:
             report.fail(
-                "http", f"the port is open but HTTP failed: {type(exc).__name__}: {exc}",
-                "Something is listening that is not a web server — check the port "
-                "belongs to BioTime and not another service.",
+                "http", f"the port is open but HTTP failed: {type(exc).__name__}: {exc}"
             )
+            _explain_http_silence(report, host, port, parsed.scheme)
             return report
 
         if not username:
