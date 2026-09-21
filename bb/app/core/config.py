@@ -30,6 +30,17 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_ttl_minutes: int = 60 * 12
     refresh_token_ttl_days: int = 30
+
+    #: Staff sessions expire far sooner than customer ones, because they are
+    #: worth far more: a console token reaches every tenant, while a customer's
+    #: reaches one. A support engineer signs in to answer a ticket and should
+    #: not still be holding a cross-tenant credential the next morning — twelve
+    #: hours of ambient console access is the wrong default for a laptop in a
+    #: coffee shop. An hour is long enough for the work and short enough that a
+    #: stolen token is usually already dead.
+    staff_access_token_ttl_minutes: int = 60
+    staff_refresh_token_ttl_days: int = 1
+
     max_failed_logins: int = 8
     lockout_minutes: int = 15
 
@@ -69,6 +80,28 @@ class Settings(BaseSettings):
     max_pages_per_run: int = 100
     max_consecutive_failures: int = 5
     http_timeout_seconds: int = 30
+
+    # --- subscriptions ---------------------------------------------------------
+    #: Length of a self-signup trial, in days. Applied once, at signup — see
+    #: app.api.v1.auth.signup. Staff can set any date by hand afterwards, and
+    #: a staff-created account (app.api.v1.admin.create_tenant) gets the same
+    #: default, theirs to change immediately if it should be something else.
+    trial_days: int = 10
+    #: Assumed length of one billing cycle, in days, for an account that
+    #: skips the trial and starts directly on a chosen plan at signup
+    #: (SignupRequest.skip_trial). There is no billing integration to say
+    #: otherwise — see app.api.v1.auth.signup — so this is a placeholder
+    #: "paid through" period, the same role trial_days plays for a trial.
+    billing_period_days: int = 30
+    #: How close to its renewal date an account has to be before the warning
+    #: banner appears — on both the tenant's own dashboard and the staff
+    #: console, so the two surfaces always agree on what counts as "soon".
+    #: See app.services.scheduling.renewal_warning.
+    subscription_warning_days: int = 7
+    #: Inside this many days of lapsing, the same warning is shown with an
+    #: urgent tone instead of a routine one — still one message, not a second
+    #: banner. See app.services.scheduling.renewal_warning.
+    subscription_urgent_days: int = 3
 
     # --- security ------------------------------------------------------------
     #: Customers legitimately run BioTime on a LAN, so this is a policy switch

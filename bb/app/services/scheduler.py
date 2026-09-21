@@ -37,6 +37,7 @@ from app.services.scheduling import (
     due_tenants,
     owner_id,
     release_lease,
+    sweep_subscriptions,
 )
 from app.services.sync_engine import SyncEngine, close_stale_attendances
 
@@ -46,6 +47,11 @@ log = logging.getLogger(__name__)
 #: out holds an open record that blocks every later check-in for that person, so
 #: it has to happen without anyone asking — but hourly is plenty.
 STALE_CLOSE_EVERY_SECONDS = 3600
+
+#: Renewal dates do not move minute to minute, so the subscription sweep runs
+#: on the same unhurried cadence as the stale-close housekeeping above rather
+#: than on every tick.
+SUBSCRIPTION_SWEEP_EVERY_SECONDS = 3600
 
 
 class Scheduler:
@@ -58,6 +64,7 @@ class Scheduler:
         self._in_flight: set[str] = set()
         self._semaphore = asyncio.Semaphore(max(1, settings.scheduler_concurrency))
         self._last_stale_close: datetime | None = None
+        self._last_subscription_sweep: datetime | None = None
         self.ticks = 0
         self.dispatched = 0
 
@@ -149,6 +156,9 @@ class Scheduler:
         if self._stale_close_due():
             asyncio.create_task(self._run_stale_close())
 
+        if self._subscription_sweep_due():
+            asyncio.create_task(self._run_subscription_sweep())
+
     def _claim_and_select(self) -> tuple[bool, list[str]]:
         """Claim the lease and read the due list — one short database visit.
 
@@ -227,6 +237,32 @@ class Scheduler:
                 except Exception as exc:  # noqa: BLE001
                     log.warning("Stale-close failed for %s: %s", tenant.slug, exc)
         return closed
+
+    def _subscription_sweep_due(self) -> bool:
+        now = datetime.now(timezone.utc)
+        if self._last_subscription_sweep is None:
+            self._last_subscription_sweep = now  # not on the first tick either
+            return False
+        if (now - self._last_subscription_sweep).total_seconds() < SUBSCRIPTION_SWEEP_EVERY_SECONDS:
+            return False
+        self._last_subscription_sweep = now
+        return True
+
+    async def _run_subscription_sweep(self) -> None:
+        try:
+            result = await asyncio.to_thread(self._subscription_sweep_blocking)
+            if result["lapsed"] or result["renewed"]:
+                log.info(
+                    "Subscription sweep: %d lapsed to past_due, %d renewed to active",
+                    result["lapsed"], result["renewed"],
+                )
+        except Exception:  # noqa: BLE001
+            log.exception("Subscription sweep failed")
+
+    @staticmethod
+    def _subscription_sweep_blocking() -> dict[str, int]:
+        with session_scope() as db:
+            return sweep_subscriptions(db)
 
 
 scheduler = Scheduler()

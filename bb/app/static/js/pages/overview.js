@@ -14,13 +14,25 @@ import {
  * angle, right up until payroll notices the missing days. */
 function scheduleCard(schedule, needsSetup) {
   const s = schedule || {};
-  const tone = s.running ? 'ok' : 'warn';
+  const stopped = !auth.tenant?.syncable;
+  const tone = stopped ? 'bad' : s.running ? 'ok' : 'warn';
   const modeLabel = s.mode === 'celery' ? 'Celery beat' : s.mode === 'inprocess'
     ? 'in the API process' : null;
 
   let headline;
   let detail;
-  if (!s.running) {
+  if (!auth.tenant?.syncable) {
+    // First in the chain, and above the scheduler's own state, because it is
+    // the true answer for this reader: whatever the scheduler is doing, it is
+    // not going to sync this account. Getting this wrong was worse than saying
+    // nothing — next_run_at is null for a stopped account, so this card used to
+    // fall through to "sync is turned off in Settings" and send people to a
+    // screen where their own switch is plainly still on.
+    headline = 'Syncing is stopped for this account';
+    detail = 'Your records are unchanged and still here. New punches are not '
+      + 'being collected while the account is stopped. Contact support to have '
+      + 'it restored.';
+  } else if (!s.running) {
     headline = 'Automatic sync is not running';
     detail = s.last_tick_at
       ? `Nothing has scheduled a sync since ${esc(fmtAgo(s.last_tick_at))}. `
@@ -54,7 +66,9 @@ function scheduleCard(schedule, needsSetup) {
             repeated connection failures. It returns to your configured interval
             as soon as one run succeeds.</div>` : ''}
         </div>
-        <span class="pill ${tone}">${s.running ? 'scheduler live' : 'scheduler down'}</span>
+        <span class="pill ${tone}">${
+          stopped ? 'account stopped' : s.running ? 'scheduler live' : 'scheduler down'
+        }</span>
       </div>
     </div>`;
 }
@@ -71,6 +85,20 @@ export async function render(mount) {
   const run = data.last_run;
 
   const banners = [];
+  if (!auth.tenant?.syncable) {
+    // Above the setup and unmapped-badge banners on purpose: those ask the
+    // customer to go and fix something, and none of it will change anything
+    // while the account is stopped.
+    banners.push(banner(
+      'This account is not syncing',
+      'Syncing has been stopped by BioBridge'
+        + (auth.tenant?.suspended_at ? ` ${fmtAgo(auth.tenant.suspended_at)}` : '')
+        + '. Everything already recorded is still here and still visible — only '
+        + 'the collection of new punches has stopped. Contact support to have it '
+        + 'restored.',
+      'bad'
+    ));
+  }
   if (needsSetup) {
     banners.push(banner(
       'Finish connecting',
@@ -80,6 +108,25 @@ export async function render(mount) {
           ? 'Odoo is not connected. Punches are captured but cannot be pushed.'
           : 'No device platform is connected, so there is nothing to pull punches from.',
       'warn'
+    ));
+  }
+  if (data.renewal_warning) {
+    // Ranked above the routine operational banners below (unmapped badges,
+    // failed punches) even though nothing is actually broken yet — an
+    // account about to stop syncing entirely is more consequential than
+    // either, and the whole point of a warning is to be seen before it
+    // becomes one of those two banners instead.
+    const { days_left: daysLeft, urgent } = data.renewal_warning;
+    banners.push(banner(
+      daysLeft <= 0 ? 'Your subscription ends today'
+        : `Your subscription ends in ${daysLeft} day${daysLeft === 1 ? '' : 's'}`,
+      'Syncing stops automatically when it does. Nothing already recorded is '
+        + 'ever affected — only the collection of new punches would stop. '
+        + 'Contact support to renew.',
+      // Same message either way — just louder once it's close. 'bad' inside
+      // subscription_urgent_days (default 3), 'warn' from the wider
+      // subscription_warning_days window down to that point.
+      urgent ? 'bad' : 'warn'
     ));
   }
   if (data.unmapped_employees > 0) {

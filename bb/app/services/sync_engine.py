@@ -130,6 +130,26 @@ class SyncEngine:
         self.db.flush()
 
         try:
+            # The subscription gate, as a backstop.
+            #
+            # The scheduler filters on this and the console's own button checks
+            # it, but the customer's "Sync now" did not — so a suspended
+            # account could press it and the run went through. Putting the
+            # check here as well means the gate holds for every caller,
+            # including any route added later that forgets: there is exactly one
+            # place a cycle can start.
+            #
+            # SyncAborted rather than a bare raise: it records a run saying why,
+            # visible to the customer and to staff, and is exempt from the
+            # failure streak — a stopped account is not a failing one and must
+            # not be badged degraded or slow-laned for it.
+            if not self.tenant.syncable:
+                raise SyncAborted(
+                    f"This account is {self.tenant.status} and does not sync. "
+                    f"Nothing has been lost: the cursor stays where it is and "
+                    f"the next run picks up from there."
+                )
+
             odoo_conn = self._active_odoo_connection()
             sources = self._active_sources()
             if not sources:
@@ -481,6 +501,22 @@ class SyncEngine:
             ).all()
         }
 
+        # The plan's employee cap, if any. Counted once up front rather than
+        # re-queried per code: every new match below increments it in memory,
+        # so the loop sees a consistent, monotonically-updated count instead
+        # of racing its own writes within the same run. Skipped entirely when
+        # there is no cap, which is the common case and the state of every
+        # tenant with no plan assigned.
+        cap = self.tenant.plan_max_employees
+        mapped_count = 0
+        if cap is not None:
+            mapped_count = self.db.scalar(
+                select(func.count(EmployeeMapping.id)).where(
+                    EmployeeMapping.tenant_id == self.tenant.id,
+                    EmployeeMapping.status == MappingStatus.mapped.value,
+                )
+            ) or 0
+
         matched = 0
         for code in sorted(pending):
             mapping = existing.get(code)
@@ -493,6 +529,24 @@ class SyncEngine:
                 mapping = EmployeeMapping(tenant_id=self.tenant.id, emp_code=code)
                 self.db.add(mapping)
                 existing[code] = mapping
+
+            # The cap only holds back *new* matches. A mapping already
+            # `mapped` was excluded above and never reaches here, so a plan
+            # downgraded under a tenant already over its new cap does not
+            # start unmapping people relying on it — see
+            # SubscriptionPlan.max_employees. Checked before the Odoo lookup
+            # below on purpose: there is no reason to spend an API call, or
+            # auto-create an employee in Odoo, for a badge this run is not
+            # going to use anyway.
+            if cap is not None and mapped_count >= cap:
+                mapping.status = MappingStatus.unmapped.value
+                mapping.source_name = self._name_for(code)
+                mapping.match_note = (
+                    f"Not matched: this account's plan allows up to {cap} mapped "
+                    f"employee(s), and that many are already in use. Upgrade the "
+                    f"plan, or free one up, to match this badge."
+                )
+                continue
 
             try:
                 emp_id, emp_name, method = odoo.find_employee(code)
@@ -507,6 +561,7 @@ class SyncEngine:
                 mapping.match_method = method
                 mapping.match_note = None
                 matched += 1
+                mapped_count += 1
             elif method and method.startswith("ambiguous:"):
                 mapping.status = MappingStatus.ambiguous.value
                 mapping.match_note = (
@@ -524,6 +579,7 @@ class SyncEngine:
                 mapping.status = MappingStatus.mapped.value
                 mapping.match_method = "auto_created"
                 matched += 1
+                mapped_count += 1
             else:
                 mapping.status = MappingStatus.unmapped.value
                 mapping.source_name = self._name_for(code)

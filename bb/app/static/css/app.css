@@ -21,6 +21,7 @@
   --bad: #97302b;
   --bad-soft: #f8e5e3;
   --shadow: 0 1px 2px rgba(19, 26, 31, .07);
+  --scroll-fade: rgba(19, 26, 31, .2);
   --radius: 4px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -46,6 +47,7 @@
     --bad: #e0837a;
     --bad-soft: #2b1a19;
     --shadow: 0 1px 2px rgba(0, 0, 0, .35);
+    --scroll-fade: rgba(0, 0, 0, .5);
   }
 }
 
@@ -94,6 +96,21 @@ a { color: var(--accent); }
   background: var(--accent);
   flex: none;
 }
+/* The console sign-in, deliberately not the customer one.
+   A staff credential is worth every tenant at once, so the page it gets typed
+   into should be impossible to confuse with the product login at a glance —
+   both to orient whoever is signing in, and so that a lookalike of the wrong
+   page is noticeable rather than convincing. */
+.auth-card.staff {
+  border-color: var(--warn);
+  box-shadow: var(--shadow), inset 0 3px 0 var(--warn);
+}
+.auth-card.staff .brand-dot { background: var(--warn); }
+
+/* Wide enough for the plan-card grid to lay two or more columns out side by
+   side — the signup screen only, when there's a set of plans to compare. */
+.auth-card.wide { max-width: 640px; }
+
 .auth-card h1 { font-size: 19px; margin: 18px 0 4px; letter-spacing: -.01em; }
 .auth-card .sub { color: var(--muted); margin: 0 0 20px; font-size: 13.5px; }
 .auth-alt { margin-top: 18px; font-size: 13px; color: var(--muted); text-align: center; }
@@ -178,6 +195,12 @@ a { color: var(--accent); }
   .sidebar.open { display: flex; }
   #menuToggle { display: inline-flex; }
   .content { padding: 16px; }
+
+  /* A touch target sized for a cursor is a fiddly one for a thumb. Scoped to
+     this breakpoint on purpose: the desktop density stays exactly as before. */
+  button, .btn, input, select, textarea { padding: 10px 13px; font-size: 14px; }
+  button.sm { padding: 7px 11px; font-size: 12.5px; }
+  .sidebar a.nav { padding: 10px 18px; }
 }
 
 /* --- primitives ----------------------------------------------------------- */
@@ -256,8 +279,61 @@ input, select, textarea {
 .field { margin-bottom: 13px; }
 .field .help { font-size: 12px; color: var(--muted); margin-top: 4px; }
 .field .help.strong { color: var(--warn); }
+
+/* --- plan picker (ui.js planCards) ---------------------------------------- */
+.plan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+.plan-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: 11px 12px;
+  cursor: pointer;
+  background: var(--panel);
+  margin: 0;
+  font-weight: 400;
+  transition: border-color .12s, box-shadow .12s, background .12s;
+}
+.plan-card:hover { border-color: var(--faint); }
+.plan-card.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.plan-card input[type="radio"] {
+  width: auto;
+  margin: 3px 0 0;
+  padding: 0;
+  flex: none;
+  accent-color: var(--accent);
+}
+.plan-card-body { min-width: 0; flex: 1; }
+.plan-card-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.plan-card-name { font-weight: 600; font-size: 13px; color: var(--ink); }
+.plan-card-price {
+  font-size: 12px; color: var(--muted); margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.plan-card-desc { font-size: 12px; color: var(--muted); margin-top: 6px; line-height: 1.45; }
+.plan-card-features { list-style: none; margin: 8px 0 0; padding: 0; font-size: 11.5px; color: var(--muted); }
+.plan-card-features li { position: relative; padding-left: 13px; margin-top: 3px; }
+.plan-card-features li::before { content: "✓"; position: absolute; left: 0; color: var(--accent); font-weight: 700; }
 .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 .row.end { justify-content: flex-end; }
+
+/* The subscription gate's row lives in a cell styled white-space:nowrap, so
+   Save/Configure never wrap onto an awkward second line. That property
+   inherits, though, and the gate's own confirm step — a reason field plus two
+   buttons — has no business honouring it: on a narrow screen it was forcing
+   all three onto one unbreakable line that ran off the edge of the table,
+   with nothing past "Reason (optional)" reachable without scrolling the
+   whole table sideways first. */
+.gate { white-space: normal; }
 
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { text-align: left; padding: 8px 11px; border-bottom: 1px solid var(--rule-soft); vertical-align: top; }
@@ -272,8 +348,49 @@ thead th {
 tbody tr:last-child td { border-bottom: none; }
 td.num, th.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
 td.mono { font-family: var(--mono); font-size: 12px; }
-.scroll { overflow-x: auto; margin: 0 -18px -16px; padding: 0 18px; }
+/* A table in here is deliberately wider than its card (min-width below) —
+   that trade favours readable columns over squeezed ones. Nothing said so
+   before you tried to swipe it, though: these four background layers paint a
+   shadow at whichever edge still has more to see, and hide it once you reach
+   that end. The two solid "cover" layers scroll with the table itself
+   (attachment: local) and blot out the shadow beneath them (attachment:
+   scroll, pinned to the viewport) exactly when that edge comes into view. */
+.scroll {
+  overflow-x: auto;
+  margin: 0 -18px -16px;
+  padding: 0 18px;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule) transparent;
+  background-image:
+    linear-gradient(to right, var(--panel) 40%, transparent),
+    linear-gradient(to left, var(--panel) 40%, transparent),
+    linear-gradient(to right, var(--scroll-fade), transparent),
+    linear-gradient(to left, var(--scroll-fade), transparent);
+  background-position: left, right, left, right;
+  background-size: 24px 100%, 24px 100%, 10px 100%, 10px 100%;
+  background-repeat: no-repeat;
+  background-attachment: local, local, scroll, scroll;
+}
 .scroll table { min-width: 560px; }
+.scroll::-webkit-scrollbar { height: 6px; }
+.scroll::-webkit-scrollbar-track { background: transparent; }
+.scroll::-webkit-scrollbar-thumb { background: var(--rule); border-radius: 3px; }
+
+/* The edge shadow says "there is more" — it does not solve scrolling past
+   the one column that says *what row this is* (account, badge, punch time)
+   while reading the columns that say what happened to it. Pin the first
+   column so identity survives the scroll; everything else moves under it.
+   Skipped on the platform console's own expanded config row, which spans
+   every column already and is not an identity cell to pin. */
+.scroll table thead th:first-child,
+.scroll table tbody tr:not(.detail-row) > td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--panel);
+  box-shadow: 1px 0 0 var(--rule-soft);
+}
 
 .pill {
   display: inline-block;
@@ -341,7 +458,7 @@ pre.log {
   padding: 10px 14px;
   box-shadow: 0 4px 14px rgba(0, 0, 0, .13);
   font-size: 13px;
-  max-width: 340px;
+  max-width: min(340px, calc(100vw - 32px));
 }
 .toast.bad { border-left-color: var(--bad); }
 .toast.ok { border-left-color: var(--ok); }

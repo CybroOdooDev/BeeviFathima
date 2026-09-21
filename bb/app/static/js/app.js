@@ -7,14 +7,26 @@
 
 import { api, auth, loadSession } from './api.js';
 import { $, esc, toast } from './ui.js';
-import { renderLogin, renderSignup } from './pages/auth.js';
+import { renderLogin, renderSignup, renderStaffLogin } from './pages/auth.js';
 import { render as renderOverview } from './pages/overview.js';
 import { render as renderSetup } from './pages/setup.js';
 import { renderActivity, renderAttendance, renderEmployees } from './pages/data.js';
 import { render as renderSettings } from './pages/settings.js';
 import { render as renderPlatform } from './pages/platform.js';
 
-const PUBLIC = new Set(['/login', '/signup']);
+const PUBLIC = new Set(['/login', '/signup', '/staff/login']);
+
+/** Where an unauthenticated visitor lands, by path.
+ *
+ * The staff console has its own entry so a console credential is never typed
+ * into the customer form. It is unadvertised — nothing links to it from the
+ * product — which is not a security measure (the server checks the scope of
+ * every token) but does keep the two audiences from drifting onto each
+ * other's page. */
+const DOORS = {
+  '/staff/login': renderStaffLogin,
+  '/signup': renderSignup,
+};
 
 const NAV = [
   {
@@ -83,6 +95,7 @@ function mountShell() {
         <nav id="sidenav"></nav>
         <div class="side-foot">
           <div class="side-user" id="sideUser"></div>
+          <div id="consoleSwitch"></div>
           <button class="link" id="signOut" style="padding-left:0">Sign out</button>
         </div>
       </aside>
@@ -133,9 +146,27 @@ function renderChrome(path) {
   const sideUser = $('#sideUser');
   sideUser.textContent = auth.user?.email || '';
   sideUser.title = auth.user?.email || '';   // the truncated address, in full, on hover
+
+  // Staff signed in to their own workspace: the console is a different session,
+  // reached through its own door. Offered rather than hidden, because the page
+  // is unadvertised and they would otherwise have no way to find it.
+  $('#consoleSwitch').innerHTML =
+    auth.user?.is_platform_admin === true && !auth.isStaffSession
+      ? '<a class="link" href="#/staff/login">Open the staff console &rsaquo;</a>'
+      : '';
+  // Three states, and the order matters. A stopped account used to show the
+  // green pill — the pill was keyed on sync_enabled alone, so an account the
+  // platform had suspended looked perfectly healthy while nothing synced. The
+  // platform's decision outranks the customer's own switch here, because it is
+  // the one they cannot do anything about from this screen.
   $('#tenantPill').innerHTML = auth.tenant
-    ? `<span class="pill ${auth.tenant.sync_enabled ? 'ok' : 'warn'}">${
-        esc(auth.tenant.name)}${auth.tenant.sync_enabled ? '' : ' · sync off'}</span>`
+    ? (() => {
+        const t = auth.tenant;
+        const [tone, note] = t.syncable === false
+          ? ['bad', ' · sync stopped']
+          : t.sync_enabled ? ['ok', ''] : ['warn', ' · sync off'];
+        return `<span class="pill ${tone}">${esc(t.name)}${note}</span>`;
+      })()
     : auth.isPlatformAdmin
       ? '<span class="pill">platform staff</span>'
       : '';
@@ -176,13 +207,23 @@ async function resolve() {
     }
 
     if (!auth.isAuthenticated) {
-      if (route.path === '/signup') return renderSignup();
-      return renderLogin();
+      return (DOORS[route.path] || renderLogin)();
     }
 
     if (PUBLIC.has(route.path)) {
-      window.location.hash = '#/';
-      return;
+      // One exception to the bounce: someone who holds the staff flag but is
+      // signed in to their own workspace has no other route to the console,
+      // and signing in at that door swaps the session rather than adding a
+      // second one. Without this they would have to sign out first to find a
+      // page nothing links to.
+      const switchingHats = route.path === '/staff/login'
+        && auth.user?.is_platform_admin === true
+        && !auth.isStaffSession;
+      if (!switchingHats) {
+        window.location.hash = '#/';
+        return;
+      }
+      return renderStaffLogin();
     }
 
     if (!auth.user) {
@@ -190,7 +231,7 @@ async function resolve() {
         await loadSession();
       } catch {
         auth.clear();
-        return renderLogin();
+        return (DOORS[route.path] || renderLogin)();
       }
     }
 
@@ -242,7 +283,10 @@ window.addEventListener('bb:signed-out', () => {
   $('#app-root').classList.add('hidden');
   $('#app-root').innerHTML = '';
   delete $('#app-root').dataset.built;
-  window.location.hash = '#/login';
+  // Back to the door this session came in through. Sending a support engineer
+  // to the customer login would have them type a console credential into the
+  // customer form, which is the one habit the split is meant to break.
+  window.location.hash = auth.lastDoor === 'staff' ? '#/staff/login' : '#/login';
   resolve();
 });
 

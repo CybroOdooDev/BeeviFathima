@@ -97,6 +97,12 @@ def main() -> int:
                                       "Take the id from --runs.")
     parser.add_argument("--runs", action="store_true",
                         help="List recent sync runs with their ids and counts, then exit.")
+    parser.add_argument("--verbose", "-v", action="store_true",
+                        help="With --runs, also print each run's error message and its "
+                             "full log — the exact fetch window and timezone it used, "
+                             "the same way sync_engine wrote it. This is where 'fetched 0 "
+                             "but the source clearly has punches' gets explained: compare "
+                             "the printed window against the timestamps in your source data.")
     parser.add_argument("--from", dest="date_from", help="YYYY-MM-DD, inclusive, UTC.")
     parser.add_argument("--to", dest="date_to", help="YYYY-MM-DD, inclusive, UTC.")
     parser.add_argument("--limit", type=int, default=500)
@@ -127,10 +133,17 @@ def main() -> int:
         for r in runs:
             print(f"{r['id']:<34} {str(r['started_at'])[:19]:<21} {r['status']:<9} "
                   f"{r['punches_fetched']:>7} {r['punches_new']:>4}  {r['triggered_by']}")
+            if args.verbose:
+                if r.get("error_message"):
+                    print(f"    ! {r['error_message']}")
+                for line in r.get("log") or []:
+                    print(f"    {line}")
+                print()
         print("\nFetched minus new is the overlap re-read: every run deliberately "
               "re-reads a\nwindow of known punches, which stay listed under the run "
               "that first saw them.")
-        print("\nThen: --run <id> for the punches one run brought in.")
+        print("\nThen: --run <id> for the punches one run brought in"
+              + ("." if args.verbose else ", or rerun with -v for the fetch window and log."))
         return 0
 
     params = {

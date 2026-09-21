@@ -16,6 +16,7 @@ from app.services.scheduling import (
     claim_lease,
     due_tenants,
     owner_id,
+    sweep_subscriptions as _sweep_subscriptions,
 )
 from app.services.sync_engine import SyncEngine, close_stale_attendances as _close_stale
 from app.services.timeutils import utcnow_naive
@@ -128,6 +129,21 @@ def close_stale_attendances() -> dict[str, int]:
             except Exception as exc:  # noqa: BLE001 — one tenant must not stop the rest
                 log.warning("Stale-close failed for %s: %s", tenant.slug, exc)
     return {"closed": closed}
+
+
+@celery_app.task(name="app.workers.tasks.sweep_subscriptions")
+def sweep_subscriptions() -> dict[str, int]:
+    """Beat entry point for the renewal-date check.
+
+    Runs on its own hourly slot rather than the tenant-sync one — renewal
+    dates do not move minute to minute — and shares its logic with the
+    in-process scheduler's equivalent timer, so a customer's account lapses
+    (or comes back) on the same rule whichever scheduler is running. See
+    app.services.scheduling.sweep_subscriptions for what actually moves and
+    what is deliberately left alone.
+    """
+    with session_scope() as db:
+        return _sweep_subscriptions(db)
 
 
 @celery_app.task(name="app.workers.tasks.prune_old_punches")

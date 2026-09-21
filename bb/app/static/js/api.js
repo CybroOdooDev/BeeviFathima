@@ -34,6 +34,20 @@ export const auth = {
   user: null,
   tenant: null,
 
+  /** Which door this session was opened at: 'tenant' or 'staff'.
+   *
+   * Never stored separately. It is a claim inside the token, and every
+   * response that hands us a token tells us what it is — including the refresh
+   * that rehydrates a reloaded tab — so the server stays the only authority on
+   * which surface we are in. */
+  scope: 'tenant',
+
+  /** The door the last session was opened at, kept deliberately across
+   *  clear() so that a sign-out — or a token quietly expiring — returns to the
+   *  page it came from instead of dropping a support engineer onto the
+   *  customer login. */
+  lastDoor: 'tenant',
+
   get isAuthenticated() {
     return Boolean(this.accessToken);
   },
@@ -41,14 +55,25 @@ export const auth = {
     return ['owner', 'admin'].includes(this.user?.role);
   },
 
+  get isStaffSession() {
+    return this.scope === 'staff';
+  },
+
   /** Platform staff, not a role: it crosses accounts, roles never do.
-   *  Hiding the nav is convenience only — the server checks every request. */
+   *
+   * Both halves matter. The flag says this person may use the console; the
+   * scope says the session in hand is the one the server will accept there. A
+   * dual-role user signed in at the customer door has the flag and no console,
+   * and showing them the nav would offer a screen that answers 403.
+   *
+   * Hiding it is still convenience only — the server checks every request. */
   get isPlatformAdmin() {
-    return this.user?.is_platform_admin === true;
+    return this.user?.is_platform_admin === true && this.isStaffSession;
   },
 
   persist(tokens) {
     this.accessToken = tokens.access_token;
+    if (tokens.scope) this.scope = tokens.scope;
     if (tokens.refresh_token) {
       this.refreshToken = tokens.refresh_token;
       try {
@@ -65,10 +90,15 @@ export const auth = {
     return this.refreshToken;
   },
   clear() {
+    // Only when there was something to clear: an expiry clears once in api.js
+    // and again in the signed-out handler, and the second pass must not
+    // overwrite the remembered door with the reset default.
+    if (this.accessToken || this.refreshToken) this.lastDoor = this.scope;
     this.accessToken = null;
     this.refreshToken = null;
     this.user = null;
     this.tenant = null;
+    this.scope = 'tenant';
     try {
       sessionStorage.removeItem(REFRESH_KEY);
     } catch { /* nothing to clean up */ }
@@ -147,12 +177,13 @@ export const api = {
 };
 
 export async function loadSession() {
-  // Platform staff have no tenant, so /tenant answers 403 for them by design.
-  // Treating that as a failed session would lock the console out of its own
-  // dashboard, so the tenant is optional and the UI branches on its absence.
-  const user = await api.get('/auth/me');
-  auth.user = user;
-  auth.tenant = user.is_platform_admin
-    ? await api.get('/tenant').catch(() => null)
-    : await api.get('/tenant');
+  // /auth/me is the one route that takes either kind of token, which is why it
+  // is safe to call before we know which shell to build.
+  auth.user = await api.get('/auth/me');
+
+  // A console session has no workspace to load. /tenant refuses a staff-scoped
+  // token by design, and for someone who is both a customer and staff it would
+  // quietly pull their own account into the console shell — the exact mixing of
+  // hats the two doors exist to prevent.
+  auth.tenant = auth.isStaffSession ? null : await api.get('/tenant');
 }

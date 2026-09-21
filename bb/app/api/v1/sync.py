@@ -9,7 +9,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import Principal, audit, get_principal, require_writer
+from app.api.deps import (
+    Principal,
+    audit,
+    get_principal,
+    require_syncable,
+    require_writer,
+)
 from app.core.config import settings
 from app.db.session import get_db
 from app.models import (
@@ -20,8 +26,10 @@ from app.models import (
     OdooConnection,
     PunchRecord,
     PunchState,
+    SubscriptionPlan,
     SyncRun,
     Tenant,
+    TenantStatus,
 )
 from app.schemas import (
     AttendanceOut,
@@ -35,7 +43,12 @@ from app.schemas import (
     TenantOut,
     TenantUpdate,
 )
-from app.services.scheduling import effective_interval, next_run_at, scheduler_health
+from app.services.scheduling import (
+    effective_interval,
+    next_run_at,
+    renewal_warning,
+    scheduler_health,
+)
 from app.services.sync_engine import SyncEngine
 from app.services.timeutils import utcnow_naive
 
@@ -59,12 +72,98 @@ def update_tenant(
     db: Session = Depends(get_db),
 ) -> Tenant:
     data = payload.model_dump(exclude_unset=True)
+    tenant = principal.tenant
+
+    # Self-service plan switching: repeatable, any time. A customer can move
+    # to another *active* plan but — unlike the staff console's
+    # TenantConfigUpdate.plan_id — cannot clear their own plan and go
+    # unenforced that way; null is refused rather than silently ignored, so a
+    # request that meant to do that gets an answer instead of no effect.
+    #
+    # Once something has actually been paid for — status ``active`` and a
+    # plan already assigned — a switch is queued in ``pending_plan_id``
+    # instead of landing immediately: mid-period is not "after the duration
+    # of the current plan", which is the whole point of a plan a customer is
+    # already on. A ``trialing`` account has paid for nothing yet, and a
+    # ``past_due`` one has already lapsed, so either still switches
+    # immediately, exactly as before this existed.
+    new_plan: SubscriptionPlan | None = None
+    deferred = False
+    pending_touched = False
+    if "plan_id" in data:
+        if data["plan_id"] is None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Contact support to remove your plan.",
+            )
+        new_plan = db.get(SubscriptionPlan, data["plan_id"])
+        if new_plan is None or not new_plan.is_active:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "No such plan")
+
+        if new_plan.id == tenant.plan_id:
+            # Already on this plan: nothing to switch to. If something
+            # *else* was queued, choosing the current plan again is how a
+            # customer backs out of it before it lands.
+            tenant.pending_plan_id = None
+            pending_touched = True
+            del data["plan_id"]
+            new_plan = None
+        elif tenant.status == TenantStatus.active.value and tenant.plan_id is not None:
+            deferred = True
+            tenant.pending_plan_id = new_plan.id
+            pending_touched = True
+            del data["plan_id"]
+        else:
+            # Applies immediately below, alongside the rest of `data` — and
+            # supersedes outright whatever might have been queued from a
+            # previous, since-ended paid period.
+            tenant.pending_plan_id = None
+        # A downgrade never unmaps anyone already matched — SyncEngine only
+        # ever checks the cap against *new* matches — so there is nothing to
+        # validate here for max_employees, deferred or not.
+
+    # The plan's floor is enforced only here, on the customer's own
+    # self-service save — not on the staff console's schedule endpoint. Staff
+    # already override status, pairing rules and everything else directly;
+    # blocking them from setting a tighter interval than a plan allows would
+    # restrict the people running the platform, not protect anything.
+    #
+    # Judged against the plan this save is switching *to*, when the switch is
+    # taking effect immediately — a combined {plan_id, sync_interval_minutes}
+    # request means "put me on this plan at this interval", not "reject the
+    # interval against the plan I'm about to leave". A *deferred* switch has
+    # not taken effect yet, so the interval is judged against whatever plan
+    # is actually in force right now, exactly as if plan_id had been left
+    # out — the deferred plan's floor is applied later, when it lands (see
+    # app.services.scheduling.sweep_subscriptions).
+    landing_now = new_plan if not deferred else None
+    floor = landing_now.min_sync_interval_minutes if landing_now else tenant.plan_min_sync_interval_minutes
+    plan_label = landing_now.name if landing_now else tenant.plan_name
+
+    if "sync_interval_minutes" in data:
+        if floor and data["sync_interval_minutes"] < floor:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"{'That' if landing_now else 'Your'} plan ({plan_label}) allows a sync "
+                f"interval of {floor} minutes or slower. Contact support to change plans.",
+            )
+    elif landing_now and floor and tenant.sync_interval_minutes < floor:
+        # Switching plans without touching the interval in the same request:
+        # raise it to the new floor automatically rather than leave the
+        # account holding a setting its own new plan would reject — the same
+        # fix already applied to a fresh signup (see app.api.v1.auth.signup).
+        data["sync_interval_minutes"] = floor
+
     for key, value in data.items():
-        setattr(principal.tenant, key, value)
-    audit(db, principal, "tenant.update", None, ",".join(data), request)
+        setattr(tenant, key, value)
+    audit(
+        db, principal, "tenant.update", None,
+        ",".join([*data, *(["pending_plan_id"] if pending_touched else [])]),
+        request,
+    )
     db.commit()
-    db.refresh(principal.tenant)
-    return principal.tenant
+    db.refresh(tenant)
+    return tenant
 
 
 # ===========================================================================
@@ -118,7 +217,7 @@ def _queue_or_run(principal: Principal, db: Session) -> str:
 @router.post("/sync/run", response_model=MessageOut, status_code=status.HTTP_202_ACCEPTED)
 def trigger_sync(
     request: Request,
-    principal: Principal = Depends(require_writer),
+    principal: Principal = Depends(require_syncable),
     db: Session = Depends(get_db),
 ) -> MessageOut:
     audit(db, principal, "sync.manual", None, None, request)
@@ -128,7 +227,7 @@ def trigger_sync(
 
 @router.post("/sync/run-inline", response_model=SyncRunOut)
 def trigger_sync_inline(
-    principal: Principal = Depends(require_writer), db: Session = Depends(get_db)
+    principal: Principal = Depends(require_syncable), db: Session = Depends(get_db)
 ) -> SyncRun:
     """Run a cycle synchronously — used by onboarding's 'first sync' step."""
     return SyncEngine(db, principal.tenant, "manual").run_cycle()
@@ -393,6 +492,7 @@ def dashboard(
             "source": source.status if source else "missing",
         },
         schedule=_schedule_out(db, tenant),
+        renewal_warning=renewal_warning(tenant),
     )
 
 

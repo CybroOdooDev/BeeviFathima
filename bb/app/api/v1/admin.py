@@ -17,12 +17,14 @@ from __future__ import annotations
 import logging
 import re
 import secrets
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import audit_platform, get_platform_admin
+from app.core.config import settings
 from app.core.security import hash_password
 from app.db.session import get_db
 from app.models import (
@@ -32,6 +34,7 @@ from app.models import (
     OdooConnection,
     PunchRecord,
     PunchState,
+    SubscriptionPlan,
     SyncRun,
     Tenant,
     TenantStatus,
@@ -41,11 +44,13 @@ from app.models import (
 from app.schemas import (
     ErrorGroup,
     MessageOut,
+    SubscriptionPlanOut,
     SyncRunOut,
     TenantAdminOut,
     TenantConfigUpdate,
     TenantCreateIn,
     TenantCreateOut,
+    TenantDeactivateIn,
     TenantDiagnosticsOut,
     TenantScheduleUpdate,
 )
@@ -53,6 +58,7 @@ from app.services.scheduling import (
     SYNCABLE,
     effective_interval,
     next_run_at,
+    renewal_warning,
     scheduler_health,
 )
 from app.services.sync_engine import SyncEngine
@@ -123,6 +129,15 @@ def _to_out(db: Session, tenant: Tenant) -> TenantAdminOut:
                 )
             )
         ),
+        syncable=tenant.syncable,
+        suspended_at=tenant.suspended_at,
+        suspension_reason=tenant.suspension_reason,
+        plan_id=tenant.plan_id,
+        plan_name=tenant.plan_name,
+        subscription_renews_at=tenant.subscription_renews_at,
+        renewal_warning=renewal_warning(tenant),
+        pending_plan_id=tenant.pending_plan_id,
+        pending_plan_name=tenant.pending_plan_name,
     )
 
 
@@ -167,6 +182,21 @@ def platform_scheduler(
             )
         ) or 0,
     }
+
+
+@router.get("/plans", response_model=list[SubscriptionPlanOut])
+def list_plans(
+    _: User = Depends(get_platform_admin), db: Session = Depends(get_db)
+) -> list[SubscriptionPlan]:
+    """Every plan, active or retired.
+
+    Retired ones stay in this list on purpose: it is what feeds the plan
+    picker on an account's own config form, and hiding a retired plan there
+    would leave that tenant's current selection unable to render — a select
+    whose chosen option is not among its options. Plans are not created or
+    edited through this API at all; see tools/seed_plans.py.
+    """
+    return db.scalars(select(SubscriptionPlan).order_by(SubscriptionPlan.name)).all()
 
 
 @router.get("/tenants", response_model=list[TenantAdminOut])
@@ -271,6 +301,21 @@ def update_config(
     if not data:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Nothing to change")
 
+    # A bad id here would otherwise surface as a raw foreign-key error from
+    # the database at commit time, which is a 500 for what is really a 400 —
+    # the console sent a plan that does not exist, most likely a stale list.
+    if "plan_id" in data and data["plan_id"] is not None:
+        if db.get(SubscriptionPlan, data["plan_id"]) is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "No such plan")
+
+    if "plan_id" in data and tenant.pending_plan_id is not None:
+        # Staff setting plan_id directly is a deliberate override — the same
+        # power they already have over status and pairing rules. It
+        # supersedes whatever the customer had queued through self-service,
+        # rather than leaving that switch to land later and quietly undo
+        # this one at the next renewal.
+        tenant.pending_plan_id = None
+
     before = {key: getattr(tenant, key) for key in data}
     for key, value in data.items():
         setattr(tenant, key, value)
@@ -288,6 +333,121 @@ def update_config(
     db.commit()
     db.refresh(tenant)
     log.info("Platform user %s changed %s config — %s", actor.email, tenant.slug, changes)
+    return _to_out(db, tenant)
+
+
+@router.post("/tenants/{tenant_id}/deactivate", response_model=TenantAdminOut)
+def deactivate_tenant(
+    tenant_id: str,
+    payload: TenantDeactivateIn,
+    request: Request,
+    actor: User = Depends(get_platform_admin),
+    db: Session = Depends(get_db),
+) -> TenantAdminOut:
+    """Stop this account syncing — the subscription gate.
+
+    Its own endpoint rather than a ``status`` field on the config form, because
+    the intent is different from editing a setting: this is what happens when a
+    subscription lapses or ends, it needs a reason attached, and it should read
+    as one deliberate act in the audit trail instead of
+    ``status: active -> suspended`` among a form's other changes.
+
+    **It does not touch ``sync_enabled``.** That switch belongs to the
+    customer, and a suspension that flipped it would (a) look to them like they
+    turned their own sync off, and (b) silently switch syncing on for an
+    account that had chosen to have it off, the moment anyone reactivated.
+    Status and preference are separate questions and stay separate.
+
+    The customer keeps their data and their screens. Only the syncing stops —
+    which is also what makes this safe to use for non-payment: nothing is
+    destroyed and reactivating is one click.
+    """
+    tenant = db.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such tenant")
+
+    if tenant.status == TenantStatus.cancelled.value:
+        # Cancelled is the stronger, more deliberate state. Quietly turning it
+        # into "suspended" would lose that, and it already does not sync, so
+        # there is nothing for this action to achieve.
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"{tenant.name} is already cancelled, which does not sync. Use the "
+            f"account form to change a cancelled account's status.",
+        )
+
+    already = not tenant.syncable
+    tenant.status = TenantStatus.suspended.value
+    tenant.suspension_reason = (payload.reason or "").strip() or None
+    # Only on the way in: re-running this to correct the reason should not move
+    # the date and lose when the account actually stopped.
+    if not already:
+        tenant.suspended_at = datetime.now(timezone.utc)
+
+    # The reason is deliberately NOT in the audit detail. This trail belongs to
+    # the customer — it exists so they can see that support changed something —
+    # and a staff note like "chasing payment, third email" is for the next
+    # engineer, not for them. It lives on the tenant row, which only the console
+    # can read, and in the server log below.
+    audit_platform(
+        db,
+        actor,
+        tenant.id,
+        "platform.tenant.deactivate",
+        target=tenant.slug,
+        detail=f"syncing stopped by platform staff (by {actor.email})",
+        request=request,
+    )
+    db.commit()
+    db.refresh(tenant)
+
+    log.warning(
+        "Platform user %s deactivated %s — reason: %s",
+        actor.email, tenant.slug, tenant.suspension_reason or "(none given)",
+    )
+    return _to_out(db, tenant)
+
+
+@router.post("/tenants/{tenant_id}/activate", response_model=TenantAdminOut)
+def activate_tenant(
+    tenant_id: str,
+    request: Request,
+    actor: User = Depends(get_platform_admin),
+    db: Session = Depends(get_db),
+) -> TenantAdminOut:
+    """Let this account sync again.
+
+    Sets *active* rather than restoring whatever it was before. The previous
+    status is not recorded, and guessing would be worse than being plain: staff
+    reactivating an account mean it may run, and an account that should go back
+    to trialing can be set there on the account form.
+
+    ``sync_enabled`` is untouched, so a customer who had their own sync switched
+    off stays switched off — reactivating returns the account to their control,
+    it does not make a decision on their behalf.
+    """
+    tenant = db.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such tenant")
+
+    was = tenant.status
+    tenant.status = TenantStatus.active.value
+    tenant.suspended_at = None
+    tenant.suspension_reason = None
+
+    audit_platform(
+        db,
+        actor,
+        tenant.id,
+        "platform.tenant.activate",
+        target=tenant.slug,
+        detail=f"syncing restored by platform staff, was {was} (by {actor.email})",
+        request=request,
+    )
+    db.commit()
+    db.refresh(tenant)
+
+    log.info("Platform user %s activated %s (was %s)", actor.email, tenant.slug, was)
     return _to_out(db, tenant)
 
 
@@ -316,12 +476,29 @@ def create_tenant(
 
     password = payload.owner_password or secrets.token_urlsafe(16)
 
+    if payload.plan_id is not None:
+        if db.get(SubscriptionPlan, payload.plan_id) is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "No such plan")
+        plan_id = payload.plan_id
+    else:
+        # Same rule self-signup follows: whichever plan is marked default,
+        # or none at all if no plan has ever been set up for this deployment.
+        default_plan = db.scalars(
+            select(SubscriptionPlan).where(SubscriptionPlan.is_default.is_(True))
+        ).first()
+        plan_id = default_plan.id if default_plan else None
+
     tenant = Tenant(
         name=payload.company_name,
         slug=_unique_slug(db, _slugify(payload.company_name)),
         status=TenantStatus.trialing.value,
         timezone=payload.timezone,
         sync_interval_minutes=payload.sync_interval_minutes,
+        plan_id=plan_id,
+        # Same trial length as self-signup (settings.trial_days). Staff can
+        # move it immediately from the account's own row if this onboarding
+        # should start on a different clock.
+        subscription_renews_at=datetime.now(timezone.utc) + timedelta(days=settings.trial_days),
     )
     db.add(tenant)
     db.flush()

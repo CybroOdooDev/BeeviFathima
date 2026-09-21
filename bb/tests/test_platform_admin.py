@@ -57,12 +57,28 @@ def signup(client, company, email):
 
 
 def promote(client, email):
-    """What tools/grant_admin.py does — the only way the flag is ever set."""
+    """Set the flag, then sign in at the console door and return that token.
+
+    Two steps because the flag alone no longer opens the console: a session
+    minted at the customer door stays tenant-scoped however privileged its
+    owner is, so a test that wants console access has to go through
+    /auth/staff/login like a real staff member does.
+    """
     db = client.session_factory()
     user = db.scalars(select(User).where(User.email == email)).first()
     user.is_platform_admin = True
     db.commit()
     db.close()
+    return staff_login(client, email)
+
+
+def staff_login(client, email, password="a-long-enough-password"):
+    response = client.post(
+        "/api/v1/auth/staff/login", json={"email": email, "password": password}
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["scope"] == "staff"
+    return response.json()["access_token"]
 
 
 def head(token):
@@ -148,8 +164,8 @@ def test_me_reports_the_flag_so_the_dashboard_can_hide_the_section(api):
 def test_staff_see_every_tenant(api):
     signup(api, "Acme", "a@acme.example.com")
     signup(api, "Globex", "b@globex.example.com")
-    staff = signup(api, "Ops", "ops@platform.example.com")
-    promote(api, "ops@platform.example.com")
+    signup(api, "Ops", "ops@platform.example.com")
+    staff = promote(api, "ops@platform.example.com")
 
     rows = api.get("/api/v1/admin/tenants", headers=head(staff)).json()
     assert {r["slug"] for r in rows} == {"acme", "globex", "ops"}
@@ -158,8 +174,8 @@ def test_staff_see_every_tenant(api):
 def test_staff_can_search_by_name_or_slug(api):
     signup(api, "Acme Industrial", "a@acme.example.com")
     signup(api, "Globex", "b@globex.example.com")
-    staff = signup(api, "Ops", "ops@platform.example.com")
-    promote(api, "ops@platform.example.com")
+    signup(api, "Ops", "ops@platform.example.com")
+    staff = promote(api, "ops@platform.example.com")
 
     rows = api.get("/api/v1/admin/tenants?q=globe", headers=head(staff)).json()
     assert [r["slug"] for r in rows] == ["globex"]
@@ -167,8 +183,8 @@ def test_staff_can_search_by_name_or_slug(api):
 
 def test_staff_change_one_tenants_interval(api):
     signup(api, "Acme", "a@acme.example.com")
-    staff = signup(api, "Ops", "ops@platform.example.com")
-    promote(api, "ops@platform.example.com")
+    signup(api, "Ops", "ops@platform.example.com")
+    staff = promote(api, "ops@platform.example.com")
 
     rows = api.get("/api/v1/admin/tenants?q=acme", headers=head(staff)).json()
     acme = rows[0]
@@ -187,8 +203,8 @@ def test_changing_one_tenant_leaves_the_others_alone(api):
     """An obvious property, and exactly the one a bad WHERE clause breaks."""
     signup(api, "Acme", "a@acme.example.com")
     signup(api, "Globex", "b@globex.example.com")
-    staff = signup(api, "Ops", "ops@platform.example.com")
-    promote(api, "ops@platform.example.com")
+    signup(api, "Ops", "ops@platform.example.com")
+    staff = promote(api, "ops@platform.example.com")
 
     rows = {r["slug"]: r for r in api.get("/api/v1/admin/tenants", headers=head(staff)).json()}
     api.patch(
@@ -206,8 +222,8 @@ def test_the_customer_sees_the_change_in_their_own_audit_trail(api):
     """Support work that is invisible to the customer is how "we never touched
     it" arguments start."""
     signup(api, "Acme", "a@acme.example.com")
-    staff = signup(api, "Ops", "ops@platform.example.com")
-    promote(api, "ops@platform.example.com")
+    signup(api, "Ops", "ops@platform.example.com")
+    staff = promote(api, "ops@platform.example.com")
 
     acme = api.get("/api/v1/admin/tenants?q=acme", headers=head(staff)).json()[0]
     api.patch(
@@ -227,8 +243,8 @@ def test_the_customer_sees_the_change_in_their_own_audit_trail(api):
 
 
 def test_the_interval_is_bounded(api):
-    staff = signup(api, "Ops", "ops@platform.example.com")
-    promote(api, "ops@platform.example.com")
+    signup(api, "Ops", "ops@platform.example.com")
+    staff = promote(api, "ops@platform.example.com")
     own = api.get("/api/v1/admin/tenants", headers=head(staff)).json()[0]
 
     for bad in (0, -5, 1441):
@@ -241,8 +257,8 @@ def test_the_interval_is_bounded(api):
 
 
 def test_an_empty_patch_is_refused_rather_than_silently_doing_nothing(api):
-    staff = signup(api, "Ops", "ops@platform.example.com")
-    promote(api, "ops@platform.example.com")
+    signup(api, "Ops", "ops@platform.example.com")
+    staff = promote(api, "ops@platform.example.com")
     own = api.get("/api/v1/admin/tenants", headers=head(staff)).json()[0]
 
     response = api.patch(
@@ -252,8 +268,8 @@ def test_an_empty_patch_is_refused_rather_than_silently_doing_nothing(api):
 
 
 def test_an_unknown_tenant_is_a_404(api):
-    staff = signup(api, "Ops", "ops@platform.example.com")
-    promote(api, "ops@platform.example.com")
+    signup(api, "Ops", "ops@platform.example.com")
+    staff = promote(api, "ops@platform.example.com")
     response = api.patch(
         "/api/v1/admin/tenants/does-not-exist/schedule",
         json={"sync_interval_minutes": 5},
@@ -263,8 +279,8 @@ def test_an_unknown_tenant_is_a_404(api):
 
 
 def test_turning_sync_off_clears_the_next_run(api):
-    staff = signup(api, "Ops", "ops@platform.example.com")
-    promote(api, "ops@platform.example.com")
+    signup(api, "Ops", "ops@platform.example.com")
+    staff = promote(api, "ops@platform.example.com")
     own = api.get("/api/v1/admin/tenants", headers=head(staff)).json()[0]
     assert own["next_run_at"] is not None
 
@@ -278,8 +294,8 @@ def test_turning_sync_off_clears_the_next_run(api):
 
 def test_clearing_the_failure_count_lifts_the_slow_lane(api):
     signup(api, "Acme", "a@acme.example.com")
-    staff = signup(api, "Ops", "ops@platform.example.com")
-    promote(api, "ops@platform.example.com")
+    signup(api, "Ops", "ops@platform.example.com")
+    staff = promote(api, "ops@platform.example.com")
 
     db = api.session_factory()
     acme = db.scalars(select(Tenant).where(Tenant.slug == "acme")).first()
@@ -302,8 +318,8 @@ def test_clearing_the_failure_count_lifts_the_slow_lane(api):
 def test_the_console_exposes_no_customer_attendance_data(api):
     """Scope check. Scheduling only — a support console that hands over one
     customer's punches is a data-protection problem waiting to happen."""
-    staff = signup(api, "Ops", "ops@platform.example.com")
-    promote(api, "ops@platform.example.com")
+    signup(api, "Ops", "ops@platform.example.com")
+    staff = promote(api, "ops@platform.example.com")
 
     row = api.get("/api/v1/admin/tenants", headers=head(staff)).json()[0]
     leaky = {"punches", "attendance", "employees", "api_key", "password", "credentials"}
@@ -314,9 +330,8 @@ def test_the_console_exposes_no_customer_attendance_data(api):
 # Configuring a tenant
 # ===========================================================================
 def staff_client(api):
-    token = signup(api, "Ops", "ops@platform.example.com")
-    promote(api, "ops@platform.example.com")
-    return token
+    signup(api, "Ops", "ops@platform.example.com")
+    return promote(api, "ops@platform.example.com")
 
 
 def test_staff_change_account_lifecycle(api):
@@ -596,12 +611,7 @@ def make_staff(api, email="ops@platform.example.com"):
     )
     db.commit()
     db.close()
-    response = api.post(
-        "/api/v1/auth/login",
-        json={"email": email, "password": "a-long-enough-password"},
-    )
-    assert response.status_code == 200, response.text
-    return response.json()["access_token"]
+    return staff_login(api, email)
 
 
 def test_a_staff_user_needs_no_tenant_to_exist(api):
@@ -657,8 +667,20 @@ def test_the_scheduler_never_picks_up_a_staff_user(api):
 
 def test_a_dual_role_user_keeps_their_customer_account(api):
     """Someone who really is both stays both — the tenant is optional, not
-    forbidden."""
-    token = signup(api, "Acme", "owner@acme.example.com")
-    promote(api, "owner@acme.example.com")
-    assert api.get("/api/v1/tenant", headers=head(token)).status_code == 200
-    assert api.get("/api/v1/admin/tenants", headers=head(token)).status_code == 200
+    forbidden.
+
+    What changed when the doors were split is that they hold one hat at a
+    time. Both accounts still work; neither session reaches the other's
+    surface, so the flag alone no longer turns a customer login into a
+    cross-tenant credential.
+    """
+    customer = signup(api, "Acme", "owner@acme.example.com")
+    console = promote(api, "owner@acme.example.com")
+
+    # The customer door: their own workspace, and no console.
+    assert api.get("/api/v1/tenant", headers=head(customer)).status_code == 200
+    assert api.get("/api/v1/admin/tenants", headers=head(customer)).status_code == 403
+
+    # The console door: every tenant, and not their own workspace.
+    assert api.get("/api/v1/admin/tenants", headers=head(console)).status_code == 200
+    assert api.get("/api/v1/tenant", headers=head(console)).status_code == 403

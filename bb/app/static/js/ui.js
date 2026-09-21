@@ -117,10 +117,68 @@ export function field({ name, label, type = 'text', value = '', help, required, 
     </div>`;
 }
 
+/**
+ * A grid of selectable plan cards — the richer alternative to field()'s
+ * plain <select> for a choice worth seeing laid out: each plan's price,
+ * one-line description and enforced limits, side by side, instead of
+ * buried in an option label.
+ *
+ * Renders one native radio input per card (all sharing `name`), so it reads
+ * back through readForm() exactly like any other field, degrades to a
+ * normal (if unstyled) set of radio buttons with no JS at all, and needs a
+ * script only to repaint the `.selected` highlight on change — wiring left
+ * to the caller since that also differs by page (see pages/auth.js).
+ */
+export function planCards({ id, name, label, plans, value, required, help }) {
+  const cards = plans.map((p) => {
+    const price = p.monthly_price_cents != null
+      ? `$${(p.monthly_price_cents / 100).toFixed(0)}/mo`
+      : 'Custom pricing';
+    const employees = p.max_employees != null
+      ? `Up to ${p.max_employees} employee${p.max_employees === 1 ? '' : 's'}`
+      : 'Unlimited employees';
+    const speed = p.min_sync_interval_minutes != null
+      ? `Syncs as often as every ${p.min_sync_interval_minutes} min`
+      : 'No sync-speed limit';
+    const checked = p.id === value;
+    return `
+      <label class="plan-card${checked ? ' selected' : ''}">
+        <input type="radio" name="${esc(name)}" value="${esc(p.id)}"
+          ${checked ? 'checked' : ''}${required ? ' required' : ''}>
+        <div class="plan-card-body">
+          <div class="plan-card-head">
+            <span class="plan-card-name">${esc(p.name)}</span>
+            ${p.is_default ? '<span class="pill ok">Recommended</span>' : ''}
+          </div>
+          <div class="plan-card-price">${esc(price)}</div>
+          ${p.description ? `<div class="plan-card-desc">${esc(p.description)}</div>` : ''}
+          <ul class="plan-card-features">
+            <li>${esc(employees)}</li>
+            <li>${esc(speed)}</li>
+          </ul>
+        </div>
+      </label>`;
+  }).join('');
+  return `
+    <div class="field"${id ? ` id="${esc(id)}"` : ''}>
+      <label>${esc(label)}${required ? '' : ' <span class="opt">optional</span>'}</label>
+      <div class="plan-grid" role="radiogroup" aria-label="${esc(label)}">${cards}</div>
+      ${help ? `<div class="help">${esc(help)}</div>` : ''}
+    </div>`;
+}
+
 /** Read every [name] control under a root into a plain object. */
 export function readForm(root) {
   const out = {};
   $$('[name]', root).forEach((el) => {
+    // A radio group shares one [name] across several elements — only the
+    // checked one carries the group's value. Without this, whichever radio
+    // happens to be last in the DOM would silently win over the one the
+    // person actually picked.
+    if (el.type === 'radio') {
+      if (el.checked) out[el.name] = el.value;
+      return;
+    }
     if (el.type === 'checkbox') out[el.name] = el.checked;
     else if (el.type === 'number') out[el.name] = el.value === '' ? null : Number(el.value);
     else if (el.dataset.bool) out[el.name] = el.value === 'true';

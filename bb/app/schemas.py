@@ -17,6 +17,40 @@ class ORMModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+# --- subscription plans ------------------------------------------------------
+class SubscriptionPlanOut(ORMModel):
+    """A tier as the staff console lists it — active or retired.
+
+    Retired plans are included deliberately: a tenant already on one still
+    needs its name to show up wherever a plan is picked, even though new
+    assignment should prefer the active ones. ``is_active`` is what lets the
+    console tell the two apart rather than guessing from absence.
+    """
+
+    id: str
+    name: str
+    description: str | None = None
+    is_active: bool
+    is_default: bool
+    monthly_price_cents: int | None = None
+    max_employees: int | None = None
+    min_sync_interval_minutes: int | None = None
+
+
+class RenewalWarningOut(BaseModel):
+    """Present only when a subscription is close enough to lapse to mention.
+
+    See ``app.services.scheduling.renewal_warning`` for the window and why a
+    lapsed account does not get one of these as well.
+    """
+
+    renews_at: datetime
+    days_left: int
+    #: Inside subscription_urgent_days of lapsing — same warning, louder
+    #: styling, not a second message. See app.services.scheduling.renewal_warning.
+    urgent: bool = False
+
+
 # --- auth -------------------------------------------------------------------
 class SignupRequest(BaseModel):
     company_name: str = Field(min_length=2, max_length=120)
@@ -24,6 +58,18 @@ class SignupRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=10, max_length=128)
     timezone: str = "UTC"
+    #: Left unset, the plan marked default is used — same fallback staff
+    #: onboarding follows (TenantCreateIn.plan_id). Sent explicitly, it is the
+    #: signup screen's plan picker: validated against the active plans in
+    #: GET /auth/plans, the same list the picker itself was built from.
+    plan_id: str | None = Field(default=None)
+    #: The other half of signup's "start a free trial" vs "choose a plan"
+    #: choice. False (the default) is the trial: status starts ``trialing``
+    #: for settings.trial_days, whatever plan_id says. True skips the trial
+    #: entirely — status starts ``active`` for settings.billing_period_days
+    #: — and requires plan_id, since "no trial, no chosen plan" is not a
+    #: real choice. See app.api.v1.auth.signup.
+    skip_trial: bool = False
 
 
 class LoginRequest(BaseModel):
@@ -36,6 +82,10 @@ class TokenPair(BaseModel):
     refresh_token: str | None = None
     token_type: Literal["bearer"] = "bearer"
     expires_in: int
+    #: Which surface this session is for — "tenant" or "staff". Returned so the
+    #: UI knows which shell to render without having to decode the token, and so
+    #: a client cannot end up showing the console to a customer session.
+    scope: Literal["tenant", "staff"] = "tenant"
 
 
 class UserOut(ORMModel):
@@ -69,6 +119,25 @@ class TenantScheduleOut(BaseModel):
     last_run_status: str | None = None
     next_run_at: datetime | None = None
 
+    #: Whether the platform permits this account to sync at all — ``status`` in
+    #: SYNCABLE. Computed server-side rather than left to each client to work
+    #: out from the status string, so there is one definition of "stopped" and
+    #: the console and the customer's dashboard cannot disagree about it.
+    syncable: bool = True
+    suspended_at: datetime | None = None
+
+    #: The tier this account is on, when to renew, and whether that is close
+    #: enough to warn about — all null/null/null together means no plan is
+    #: assigned, which enforces nothing. See SubscriptionPlan.
+    plan_id: str | None = None
+    plan_name: str | None = None
+    subscription_renews_at: datetime | None = None
+    renewal_warning: RenewalWarningOut | None = None
+    #: A self-service switch queued while this account was on a paid plan —
+    #: null the rest of the time. See Tenant.pending_plan_id.
+    pending_plan_id: str | None = None
+    pending_plan_name: str | None = None
+
 
 class TenantScheduleUpdate(BaseModel):
     """Only scheduling — kept separate from TenantConfigUpdate on purpose.
@@ -95,6 +164,20 @@ class TenantAdminOut(TenantScheduleOut):
     users: int = 0
     odoo_connected: bool = False
     source_connected: bool = False
+    #: Staff-only. Deliberately absent from TenantOut: the customer is shown a
+    #: fixed line, not whatever note support left for the next engineer.
+    suspension_reason: str | None = None
+
+
+class TenantDeactivateIn(BaseModel):
+    """Why an account is being stopped.
+
+    Optional so the console can offer a one-click action, but worth filling in:
+    it is what the next person reads when the customer calls to ask why their
+    attendance stopped updating.
+    """
+
+    reason: str | None = Field(default=None, max_length=200)
 
 
 class TenantConfigUpdate(BaseModel):
@@ -116,6 +199,16 @@ class TenantConfigUpdate(BaseModel):
     work_start_time: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}$")
     late_grace_minutes: int | None = Field(default=None, ge=0, le=240)
 
+    #: Which tier this account is sold under. Explicitly nullable: sending
+    #: ``null`` clears the plan (nothing enforced from then on), distinct from
+    #: leaving the key out (which — like every field here — leaves it alone).
+    plan_id: str | None = None
+    #: When this account's access lapses without a renewal. Also explicitly
+    #: nullable: ``null`` exempts the account from the automatic sweep in
+    #: app.services.scheduling rather than lapsing it, since a missing date
+    #: has no "past due" moment to reach.
+    subscription_renews_at: datetime | None = None
+
 
 class TenantCreateIn(BaseModel):
     """Staff onboarding a customer, instead of the customer self-registering."""
@@ -127,6 +220,12 @@ class TenantCreateIn(BaseModel):
     sync_interval_minutes: int = Field(default=15, ge=1, le=1440)
     #: Left unset, one is generated and returned once.
     owner_password: str | None = Field(default=None, min_length=12, max_length=128)
+    #: Left unset (or sent as null), whichever plan is marked default is used
+    #: — the same rule self-signup follows in app.api.v1.auth.signup. An
+    #: account can still end up with no plan at all (no default exists, or
+    #: staff clears it afterwards from the account's own config form) — this
+    #: field just is not how that is requested at creation time.
+    plan_id: str | None = Field(default=None)
 
 
 class TenantCreateOut(BaseModel):
@@ -183,6 +282,32 @@ class TenantOut(ORMModel):
     late_grace_minutes: int
     consecutive_failures: int
 
+    #: Why the dashboard is not updating, when it is not the customer's own
+    #: doing. ``syncable`` is false while the platform has the account stopped;
+    #: ``suspended_at`` says since when. The staff note behind it is not here on
+    #: purpose — see TenantAdminOut.
+    syncable: bool = True
+    suspended_at: datetime | None = None
+
+    #: What this account's plan is and what it enforces for *them* — the
+    #: employee cap and sync-interval floor, so Settings can explain a limit
+    #: before they hit it rather than only after. All null together means no
+    #: plan is assigned, which enforces nothing. The renewal date itself is
+    #: always shown; whether it is close enough to warn about is a separate,
+    #: server-decided question — see DashboardOut.renewal_warning.
+    plan_name: str | None = None
+    plan_max_employees: int | None = None
+    plan_min_sync_interval_minutes: int | None = None
+    subscription_renews_at: datetime | None = None
+    #: Which plan, by id — alongside plan_name so a self-service plan picker
+    #: can preselect the current choice without a second lookup.
+    plan_id: str | None = None
+    #: A switch already chosen but not yet in effect — see
+    #: Tenant.pending_plan_id. Settings shows this as "switching to X on
+    #: renewal"; null means no switch is queued.
+    pending_plan_id: str | None = None
+    pending_plan_name: str | None = None
+
 
 class TenantUpdate(BaseModel):
     name: str | None = None
@@ -197,6 +322,15 @@ class TenantUpdate(BaseModel):
     auto_create_employees: bool | None = None
     work_start_time: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}$")
     late_grace_minutes: int | None = Field(default=None, ge=0, le=240)
+    #: Self-service plan switch — repeatable, any time. Deliberately not
+    #: nullable the way the staff console's TenantConfigUpdate.plan_id is:
+    #: a customer can move to another active plan but cannot clear their own
+    #: plan and go unenforced that way. Takes effect immediately unless the
+    #: account is already on a paid (``active``) plan, in which case it is
+    #: queued in Tenant.pending_plan_id instead and lands at the next
+    #: renewal — see app.api.v1.sync.update_tenant for the full rule and the
+    #: auto-raise-the-floor behaviour signup also uses.
+    plan_id: str | None = None
 
 
 # --- connections ------------------------------------------------------------
@@ -422,6 +556,10 @@ class DashboardOut(BaseModel):
     last_run: SyncRunOut | None
     connection_health: dict[str, str]
     schedule: ScheduleOut
+    #: None right up until the subscription is genuinely close to lapsing —
+    #: see app.services.scheduling.renewal_warning. The overview page is the
+    #: one place this is rendered as a banner.
+    renewal_warning: RenewalWarningOut | None = None
 
 
 class MessageOut(BaseModel):

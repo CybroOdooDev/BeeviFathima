@@ -35,6 +35,7 @@ celery_app.conf.update(
         "app.workers.tasks.dispatch_due_tenants": {"queue": "beat"},
         "app.workers.tasks.close_stale_attendances": {"queue": "maintenance"},
         "app.workers.tasks.prune_old_punches": {"queue": "maintenance"},
+        "app.workers.tasks.sweep_subscriptions": {"queue": "maintenance"},
     },
     beat_schedule={
         # Every minute; the task itself decides who is actually due, which keeps
@@ -52,6 +53,12 @@ celery_app.conf.update(
         "prune-old-punches": {
             "task": "app.workers.tasks.prune_old_punches",
             "schedule": crontab(hour=3, minute=30),
+        },
+        # Offset from the other two maintenance jobs above so all three do not
+        # contend for the same worker in the same minute.
+        "sweep-subscriptions": {
+            "task": "app.workers.tasks.sweep_subscriptions",
+            "schedule": crontab(minute=45),
         },
     },
 )

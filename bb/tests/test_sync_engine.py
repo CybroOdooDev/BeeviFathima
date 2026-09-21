@@ -13,6 +13,7 @@ from app.models import (
     MappingStatus,
     PunchRecord,
     PunchState,
+    SubscriptionPlan,
 )
 from app.services import sync_engine as engine_mod
 from tests.conftest import TZ, FakeOdoo, FakeProvider
@@ -151,6 +152,75 @@ def test_a_badge_matched_later_gets_its_punches_pushed(db, tenant, local_day, mo
 
     assert len(odoo.attendances) == 1
     assert db.scalars(select(PunchRecord)).first().process_state == PunchState.synced.value
+
+
+def test_plan_cap_blocks_new_matches_once_reached(db, tenant, local_day, monkeypatch):
+    """A plan's employee cap holds back new matches once it is reached.
+
+    Codes are matched in sorted order (see _resolve_mappings), so with a cap
+    of one and two badges arriving in the same run, "1001" fills the seat and
+    "1002" is held back — not matched, not even looked up in Odoo — with a
+    note that says why rather than the usual "no such employee" message.
+    """
+    plan = SubscriptionPlan(name="Capped", max_employees=1)
+    db.add(plan)
+    db.flush()
+    tenant.plan_id = plan.id
+    db.commit()
+
+    odoo = FakeOdoo()  # 1001 -> Jane Doe, 1002 -> Omar Haddad, both known to Odoo
+    rows = [
+        punch(1, "1001", local_day.replace(hour=8)),
+        punch(2, "1002", local_day.replace(hour=8, minute=5)),
+    ]
+    result = run(db, tenant, odoo, rows, monkeypatch)
+    assert result.status == "success", result.error_message
+
+    mappings = {m.emp_code: m for m in db.scalars(select(EmployeeMapping)).all()}
+    assert mappings["1001"].status == MappingStatus.mapped.value
+    assert mappings["1002"].status == MappingStatus.unmapped.value
+    assert "plan allows up to 1" in mappings["1002"].match_note
+    assert mappings["1002"].odoo_employee_id is None, "held back before ever reaching Odoo"
+
+
+def test_plan_cap_does_not_unmap_existing_matches(db, tenant, local_day, monkeypatch):
+    """Lowering a tenant's cap after the fact must not undo who already fits.
+
+    A plan can be assigned — or downgraded — after a tenant already has more
+    mapped employees than its new cap allows. Enforcement only ever holds
+    back *new* matches (see SubscriptionPlan.max_employees); it must never
+    walk back a match that already exists, or a billing change would break
+    live attendance for someone it never touched.
+    """
+    odoo = FakeOdoo()  # 1001, 1002 both known, no cap yet
+    rows = [
+        punch(1, "1001", local_day.replace(hour=8)),
+        punch(2, "1002", local_day.replace(hour=8, minute=5)),
+    ]
+    run(db, tenant, odoo, rows, monkeypatch)
+    mapped_before = {
+        m.emp_code for m in db.scalars(select(EmployeeMapping)).all()
+        if m.status == MappingStatus.mapped.value
+    }
+    assert mapped_before == {"1001", "1002"}
+
+    # A plan is assigned afterward, with a cap already below what is in use.
+    plan = SubscriptionPlan(name="Capped", max_employees=1)
+    db.add(plan)
+    db.flush()
+    tenant.plan_id = plan.id
+    db.commit()
+
+    odoo.employees["1003"] = (13, "New Hire")
+    rows.append(punch(3, "1003", local_day.replace(hour=8, minute=10)))
+    result = run(db, tenant, odoo, rows, monkeypatch)
+    assert result.status == "success", result.error_message
+
+    mappings = {m.emp_code: m for m in db.scalars(select(EmployeeMapping)).all()}
+    assert mappings["1001"].status == MappingStatus.mapped.value, "already-matched, left alone"
+    assert mappings["1002"].status == MappingStatus.mapped.value, "already-matched, left alone"
+    assert mappings["1003"].status == MappingStatus.unmapped.value, "new badge, held back by the cap"
+    assert "plan allows up to 1" in mappings["1003"].match_note
 
 
 def test_badges_register_even_when_odoo_is_absent(db, tenant, local_day, monkeypatch):

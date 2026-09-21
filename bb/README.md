@@ -19,8 +19,15 @@ source .venv/bin/activate          # do this first — see the note below
 pip install -r requirements-dev.txt
 
 cp .env.example .env               # defaults are fine for local work
-uvicorn app.main:app --reload      # dashboard on http://localhost:8000/
+uvicorn app.main:app --reload --reload-dir app   # dashboard on http://localhost:8000/
 ```
+
+`--reload-dir app` matters, not just tidiness: without it, the reloader watches the
+whole project root, `.venv` included, and `.venv` holds every dependency's entire
+source tree — tens of thousands of files. That reliably blows past the OS's inotify
+watch limit on a fresh machine or container, and uvicorn fails before it ever binds
+the port. See the note below if you hit `OSError: OS file watch limit reached`
+anyway — the app's own code under `app/` is all `--reload` ever needs to watch.
 
 Open `http://localhost:8000/` and create an account — that is the dashboard.
 `/docs` is the same API as OpenAPI, for anyone integrating.
@@ -70,8 +77,22 @@ If port 8000 is taken (`[Errno 98] Address already in use`), find the holder
 with `ss -ltnp | grep :8000` and either stop it or run on another port:
 
 ```bash
-uvicorn app.main:app --reload --port 8001
+uvicorn app.main:app --reload --reload-dir app --port 8001
 ```
+
+If instead the traceback ends in `OSError: OS file watch limit reached` naming a
+path under `.venv` (Celery is a common one — it alone ships thousands of files),
+`--reload-dir app` above is the fix, not a bigger limit: it stops the reloader
+recursing into every installed dependency and watches only the code that
+actually changes. Raising the limit instead works too, and needs no code change:
+
+```bash
+sudo sysctl fs.inotify.max_user_watches=524288    # this boot only
+```
+
+But that is treating the symptom — the reloader is still doing thousands of
+times more work than watching `app/` alone does, on every machine this ever
+runs on.
 
 SQLite and no broker out of the box, so there is no database or queue to set up.
 The schedule runs inside this process, so syncs start happening on their own as
@@ -83,7 +104,8 @@ does the sync inside the request.
 Try the whole loop with no hardware:
 
 ```bash
-python3 tools/mock_biotime.py --punches punches.json   # fake BioTime on :8099
+python3 tools/generate_punches.py                       # writes punches.json, timed off right now
+python3 tools/mock_biotime.py --punches punches.json     # fake BioTime on :8099
 python3 tools/e2e_proof.py --odoo-url https://your.odoo.com \
     --odoo-db yourdb --odoo-user you@example.com --odoo-key <api-key>
 ```
@@ -194,13 +216,73 @@ From **Platform → All accounts**, staff can:
 | Account | Company name, status, display timezone |
 | Pairing | Mode, dedupe window, max shift, shift-day boundary, orphan-out policy |
 | Working hours | Day start and grace, for late scoring |
-| Onboarding | Create an account and its owner, password shown once |
+| Onboarding | Create an account and its owner, password shown once, plan optional |
+| Subscription | Stop and restart syncing with a reason; assign a plan; set the renewal date — see [Subscription plans](#subscription-plans) |
 | Support | Run a sync now; see why an account is stuck |
 
 Status is the off switch that does not depend on the customer: only *trialing*
 and *active* sync, so suspending one stops it immediately. Changing pairing
 rules does not rewrite history — existing records stand and the new rules apply
 from the next run.
+
+#### Stopping an account for non-payment
+
+Each row in the console has **Deactivate**, and a deactivated one has
+**Activate**. Two clicks to stop (the second is where an optional reason gets
+typed), one to restart. No dialog: nothing in this app uses a modal, and a
+`confirm()` blocks the whole page.
+
+```
+POST /api/v1/admin/tenants/{id}/deactivate   {"reason": "unpaid invoice 4021"}
+POST /api/v1/admin/tenants/{id}/activate
+```
+
+Its own action rather than the Status dropdown in the form below, because this
+is the one taken when a subscription lapses: it deserves one click from the
+list, a reason attached, and one clear line in the audit trail instead of
+`status: active -> suspended` among a form's other changes.
+
+**It changes `status`, never `sync_enabled`.** Those are different questions and
+conflating them is the trap: `sync_enabled` is the customer's own switch, so a
+suspension built on it is one the customer simply turns back on. Keeping them
+apart also means reactivating hands back the setting they chose rather than
+switching syncing on for an account that had it off on purpose.
+
+**Nothing is destroyed and nothing is hidden.** The customer keeps their
+records, their dashboard and every screen; only the collection of new punches
+stops. That is what makes this safe to use on a billing decision that might be
+wrong — and it is why the gate is a status change rather than anything that
+touches data.
+
+Deactivating closes all three doors, which it did not always:
+
+| | Before | Now |
+| --- | --- | --- |
+| The scheduler | skipped the account | skips it |
+| The customer's **Sync now** | **ran the sync** | refused, 403 with the reason |
+| The console's **Sync now** | refused | refused |
+| `SyncEngine.run_cycle` | ran | refuses, and records a run saying why |
+
+The middle row was the hole: suspension stopped the clock without stopping the
+syncing, so an account stopped for non-payment kept syncing for as long as
+somebody kept pressing the button. The engine now checks it too, so a route
+added later that forgets still cannot sync a stopped account — there is exactly
+one place a cycle can start. It refuses as a `SyncAborted`, which records the
+run and its reason but is exempt from the failure streak: a stopped account is
+not a failing one and must not be slow-laned or badged degraded for it.
+
+**The customer is told.** They get a banner on the overview and in Settings, the
+sidebar pill reads *sync stopped*, and the schedule card says the account is
+stopped. That last one was actively misleading before: `next_run_at` is null for
+a suspended account, so the card fell through to "this account has sync turned
+off in Settings" and sent people to a screen where their own switch was plainly
+still on.
+
+**The reason is a staff note and stays one.** It is returned only to the
+console, never on `/tenant`, and it is deliberately kept out of the audit
+`detail` as well — that trail belongs to the customer and exists to be shown to
+them, so "chasing payment, third email" must not be sitting in it the first time
+someone adds that screen. It lives on the tenant row and in the server log.
 
 **Diagnostics are counts and error text, never the ledger.** Staff see how many
 punches are pending, in error, unmapped or stuck at the retry cap, plus each
@@ -222,8 +304,53 @@ console alone: no Overview, no Connections, a *platform staff* pill where the
 company name would be.
 
 A tenant is optional, not forbidden. Someone who genuinely is both a customer
-and staff keeps their account and gains the console on top; `--list` says which
-is which.
+and staff keeps their account — they just hold one hat at a time, which is what
+the two doors below are for; `--list` says who is which.
+
+#### Two doors, two kinds of session
+
+Staff sign in at **`/#/staff/login`**, customers at `/#/login`, and the token a
+door mints is scoped to that surface:
+
+| | Customer door | Console door |
+| --- | --- | --- |
+| Endpoint | `POST /auth/login` | `POST /auth/staff/login` |
+| Token scope | `tenant` | `staff` |
+| Reaches `/admin/*` | never | yes |
+| Reaches tenant routes | yes | never |
+| Access token life | 12 h | 1 h |
+| Refresh token life | 30 d | 1 d |
+
+**The scope comes from the door, not from the account.** Before the split, the
+flag on the user row decided what the console answered, so a support engineer
+signing in to look at their own attendance was handed a session that could also
+list every other customer. Now that same sign-in is tenant-scoped and the
+console refuses it — they have to go through the console door, which is also
+where the short session life applies. A refresh returns to the surface it
+started on, so a customer session can never renew itself into a console one.
+
+Two consequences worth knowing:
+
+- **The flag alone no longer opens the console.** After `grant_admin.py`, the
+  person must sign in *at the staff door*; an existing session will not do. If
+  they also have their own workspace, the sidebar there links across.
+- **A staff account with no workspace is turned away from the customer door**,
+  with the address of the right one, rather than being given a session that
+  authenticates and then fails on every screen.
+
+The console door answers a non-staff account exactly as it answers a wrong
+password. Saying "you are not staff" would turn it into a lookup for which
+accounts hold the flag — the shortlist most worth phishing — so the refusal is
+logged server-side instead. Rate limiting and lockout are shared with the
+customer door, so the console is not the softer target.
+
+None of this is what keeps anyone out: `get_platform_admin` and `get_principal`
+check every request server-side, and they are still the control. What the split
+buys is that a console credential is never typed into the customer form, that a
+cross-tenant token expires in an hour rather than twelve, and that
+`user_session.scope` can answer "which live sessions could reach other
+customers" during an incident — a question `tenant_id` cannot answer, because a
+dual-role person has a tenant either way.
 
 Reaching any of it needs `is_platform_admin`, which is **not** a role either.
 Roles (owner, admin, viewer) are positions inside one customer's account and
@@ -254,6 +381,32 @@ surprising.
 
 ### Proving it
 
+Two of these have their own proof, and neither needs Odoo or BioTime: each boots
+the app against a throwaway database and drives a real browser, because what
+they check are rendering decisions that fail silently.
+
+```bash
+python3 tools/login_doors_proof.py    # the two sign-in doors
+python3 tools/gate_proof.py           # stopping and restarting an account
+```
+
+`login_doors_proof.py` asserts that a customer is never shown the console, that
+a staff-only account is refused at the customer door and admitted at the other,
+that signing out of the console returns to the *console* login rather than the
+customer one, and that a dual-role user's customer session shows no console nav
+but does offer a link across to it.
+
+`gate_proof.py` stops an account from the console and then checks what the
+*customer* sees — the banner, the pill, the schedule card, the refused Sync now
+button, the untouched switch in their Settings — and that the staff reason never
+appears on their screen. Then it restarts the account and checks they are back
+to normal.
+
+`tests/test_login_separation.py` and `tests/test_subscription_gate.py` cover the
+API side of each, including that a customer-door token is refused by `/admin/*`
+even when the account is staff, and that a suspended customer's own Sync now is
+refused.
+
 ```bash
 python3 tools/schedule_proof.py --base http://127.0.0.1:8000 \
     --odoo-url https://your.odoo.com --odoo-db yourdb \
@@ -264,6 +417,172 @@ Creates an account, connects both sides, sets a one-minute interval — and then
 does nothing but watch. It fails unless it sees a run tagged `schedule` land
 attendance in Odoo; a `manual` run would only prove the button works. Start the
 API with `SCHEDULER_TICK_SECONDS=5` so it finishes in a minute.
+
+## Subscription plans
+
+A plan is a tier with enforced limits, not a billing record. Nothing in this
+codebase charges a card — the platform's own choice is to drive syncing off an
+internal "paid through" date on the tenant (`subscription_renews_at`), and let
+staff move that date by whatever process they already use to get paid. Two
+limits are enforced today:
+
+| Limit | Enforced | Where |
+| --- | --- | --- |
+| `min_sync_interval_minutes` | On the **customer's own** settings save | `PATCH /api/v1/tenant` |
+| `max_employees` | On **new** badge-to-employee matches during a sync | `SyncEngine._resolve_mappings` |
+
+**Staff are never blocked by either.** The interval floor is a limit on
+self-service, not on the platform's own ability to make an exception — the
+console can set a tighter interval than a plan allows, the same way it can
+already change status or pairing rules directly. The employee cap only ever
+holds back a *new* match; a plan assigned or lowered after a tenant already
+has more mapped employees than its new cap allows does not unmap anyone —
+the badges already relying on it keep working, and only the next new one is
+held back, with a note explaining why instead of "no such employee".
+
+Manage plans with:
+
+```bash
+python3 tools/seed_plans.py     # create/update the starter Starter/Growth/Scale tiers
+```
+
+Safe to re-run — it upserts by name and never deletes a plan, because a
+tenant already on one must keep existing regardless of what the script's
+defaults currently say. Plans are not created through the API on purpose:
+deciding what to sell is a business decision, not a customer- or
+staff-reachable action. The console only *assigns* one (`plan_id` on
+`PATCH /api/v1/admin/tenants/{id}/config`) or lists what exists
+(`GET /api/v1/admin/plans`). Whichever plan has `is_default` set is what a
+self-signup and a staff-created account get when nothing else is specified.
+
+### Choosing a plan yourself
+
+A tenant is never stuck with whatever plan they were assigned. Two places:
+
+- **Signup** — `GET /api/v1/auth/plans` (public, no token needed) lists the
+  active plans. Two different questions, not one dropdown: `plan_id` picks
+  which plan (left unset, falls back to whichever is `is_default`), and
+  `skip_trial` decides whether there is a trial at all.
+  - `skip_trial: false` (the default) — status opens `trialing` for
+    `TRIAL_DAYS`, whatever `plan_id` says. Picking a plan here just commits
+    the trial to that plan's limits instead of the default's.
+  - `skip_trial: true` — status opens `active` immediately, for
+    `BILLING_PERIOD_DAYS` instead of a trial, and `plan_id` is then
+    required: "no trial, no chosen plan" is not a request this endpoint can
+    act on. There is still no billing integration behind this — nothing
+    processes a payment — `active` and a billing-cycle-length date are just
+    the bookkeeping for "treat this as already paid for", the same
+    fictional-but-useful stand-in `subscription_renews_at` already is
+    everywhere else in this feature.
+- **Settings, afterward** — `PATCH /api/v1/tenant` takes the same `plan_id`.
+  Repeatable, any time, no confirmation step beyond the one click for an
+  account not yet on a paid plan — see below for what changes once one is.
+
+Both are self-service; staff's own `plan_id` on
+`PATCH /api/v1/admin/tenants/{id}/config` still exists, unchanged, for
+onboarding a customer directly or overriding their choice (and always
+applies immediately — see "Deferred switching" below). One thing a customer
+cannot do that staff can: clear their own plan back to none.
+`TenantUpdate.plan_id` refuses `null` — an active plan or nothing happens —
+because going unenforced is not a self-service action.
+
+A switch that takes effect (immediately or once deferred — next section —
+lands) is judged the same way a plan already assigned is: the employee cap
+only ever holds back a *new* match (see above — nothing here needed to
+change for that), and the interval floor is enforced the moment it lands. If
+the account's `sync_interval_minutes` is then under the new plan's floor, it
+is raised automatically rather than left holding a setting the plan it just
+joined would reject — the same fix already applied to a fresh signup, now
+applied everywhere a switch could reintroduce it.
+
+#### Deferred switching: not mid-period
+
+Self-service switching applies immediately **unless the account is already
+on a paid plan** — `status == active` and a `plan_id` already assigned, i.e.
+something has actually been paid for. In that case the new choice is queued
+in `Tenant.pending_plan_id` instead of landing on the spot, and only takes
+effect once the *current* plan's `subscription_renews_at` is reached — the
+same sweep that moves the renewal date (below) promotes it. A `trialing`
+account has paid for nothing yet, and a `past_due` one has already lapsed,
+so either still switches on the spot, exactly as if this did not exist.
+
+Choosing the plan already in effect while a switch is queued cancels it
+(`pending_plan_id` back to null) — that is the only "undo" this needs, since
+there is nothing else to roll back. Settings shows the pending choice and
+when it lands (`GET /api/v1/tenant`'s `pending_plan_id` / `pending_plan_name`
+— also on the staff console's tenant rows) so it is never a silent queue.
+Staff setting `plan_id` directly always supersedes and clears any pending
+switch — their override outranks a customer's still-queued one.
+
+### The automatic renewal-date check
+
+A scheduled sweep — `app.services.scheduling.sweep_subscriptions` — moves
+accounts across `subscription_renews_at` the same way staff already move them
+by hand:
+
+- `trialing` / `active` past its renewal date → `past_due`. **No grace
+  period**: the moment the date passes, syncing stops, exactly like a manual
+  deactivate. `past_due` was already excluded from `SYNCABLE_STATUSES`, so
+  the gate itself needed no change — this only automates *reaching* it.
+- `past_due` whose date has since moved into the future → `active`. Staff (or
+  a future billing integration) pushes the date forward; the next sweep
+  notices and lets the account back in.
+- `suspended` and `cancelled` are **never** touched, in either direction —
+  those are deliberate acts and must outlast the sweep, or the deactivate
+  button would become a temporary measure instead of the one it is documented
+  to be.
+
+**A null `subscription_renews_at` is never touched either — the single most
+important rule in this feature.** That is the state of every tenant that
+existed before this column did. If the sweep treated "no date set" as
+"already lapsed", turning it on would suspend every existing customer the
+first time it ran. An account only ever lapses because a real date passed.
+
+The same pass also promotes a queued plan switch (`pending_plan_id` — see
+"Deferred switching" above) the moment `subscription_renews_at` is reached,
+independently of whichever direction above the account also moves in at that
+same tick — including a tenant that is already `past_due` and stays that
+way, so a switch queued before a lapse is not lost by it. A tenant kept
+permanently `active` by staff extending the date *before* it is ever reached
+is the one case this cannot promote early: with nothing here to notice an
+extension that lands ahead of the deadline, the switch simply waits for
+whatever date is current when it is finally reached, later if the date keeps
+moving. Reactive renewals — staff renewing after noticing `past_due`, which
+is how this hand-operated system is actually used today — land the switch
+exactly on the original date, since the sweep already caught that moment
+before anyone intervened.
+
+It runs on its own hourly slot, in whichever scheduler is active —
+`app.services.scheduler.Scheduler._run_subscription_sweep` in-process, or the
+`sweep-subscriptions` beat task under Celery — sharing the exact same
+function either way, the same guarantee the due-tenant sweep already makes.
+
+### The warning, instead of a grace period
+
+The literal ask this answers: a warning for subscriptions ending shortly, not
+a delay after they do. Once `subscription_renews_at` is within
+`SUBSCRIPTION_WARNING_DAYS` (default 7) and the account is still `trialing`
+or `active`, `renewal_warning` appears on `GET /api/v1/dashboard` (rendered as
+a banner on the customer's Overview page, and inline on the Settings "Plan"
+card) and on the staff console's `GET /api/v1/admin/tenants[/​{id}]` (a
+"renewing soon" tag on the row). It is `null` once an account has actually
+lapsed — the louder "stopped syncing" messaging already covers that case, and
+showing both would bury the one that matters.
+
+Inside `SUBSCRIPTION_URGENT_DAYS` (default 3) the *same* warning carries
+`urgent: true` instead of becoming a second message — the customer's Overview
+banner and the Settings Plan card render it in the "bad" tone instead of
+"warn" at that point, and the console's row tag reads "renewing very soon".
+One `trialing` or `active` account is judged by one date either way, so a
+trial ending in 2 days and a paid plan ending in 2 days read identically.
+
+### Configuration
+
+| Variable | Default | |
+| --- | --- | --- |
+| `TRIAL_DAYS` | `10` | Initial `subscription_renews_at` for a trial signup |
+| `BILLING_PERIOD_DAYS` | `30` | Initial `subscription_renews_at` for a signup that skips the trial (`SignupRequest.skip_trial`) — staff onboarding still always starts a trial, on `TRIAL_DAYS`, whichever plan it assigns |
+| `SUBSCRIPTION_WARNING_DAYS` | `7` | How close to the renewal date before the warning appears |
 
 ## How a sync run works
 
@@ -395,9 +714,17 @@ last login, and `--check` verifies a password against the stored hash so "wrong
 password" is separated from "something between the browser and the database is
 broken". Hashes are never printed.
 
-Login refuses for four reasons, and they answer differently: **503** with a
+Login refuses for five reasons, and they answer differently: **503** with a
 missing column, **429** while locked out after 8 failed attempts (15 minutes),
-**403** if the account is disabled, **401** for a genuine mismatch.
+**403** if the account is disabled, **403** at the customer door for a staff
+account with no workspace of its own (see [two doors](#two-doors-two-kinds-of-session)),
+**401** for a genuine mismatch.
+
+One to watch for on the console door: a staff member who mistypes their email
+gets the same **401** as someone whose account simply is not staff, because the
+door deliberately does not distinguish the two. If a real staff sign-in is
+refused, check `--list` before suspecting the password — and the server log,
+which records the non-staff refusal by name.
 
 ### When a device platform is unreachable
 
@@ -473,6 +800,41 @@ production. Things it catches that guessing does not:
   really is unreachable. It says so.
 - **A bad password, not a bad network.** Reaching the auth layer at all proves
   the network is fine.
+
+#### Generating the punches it serves
+
+```bash
+python3 tools/generate_punches.py
+python3 tools/generate_punches.py --days 10 --emp-codes 1001,0042,A7,9001
+python3 tools/generate_punches.py --tz Asia/Kolkata --check-in 08:30 --check-out 17:30
+```
+
+Writes a `punches.json` timed **relative to right now**, not to fixed clock
+values — which matters more than it sounds like it should. A punch hand-typed
+for 17:00 today, written at 15:00, sits in the future relative to any sync that
+runs before 17:00, and BioTime's own fetch window silently drops anything past
+"now" (`app/services/sync_engine.py`'s `end_utc` is capped at `utcnow + 5
+minutes` of clock-skew tolerance). The punch is simply never fetched — no error,
+no log line — and it reads exactly like a pairing bug instead of a clock
+problem. That is how "attendance records were matched only for check-ins"
+happens: the check-in was in the past, the check-out was still in the future
+when the sync ran.
+
+Re-run it whenever the file feels stale rather than keeping one around; that is
+the intended use, not a one-time fixture. Defaults to the three badges
+`tools/mock_biotime.py` already knows by name (Ahmed Sharma, Sara Tanaka, Jane
+Haddad) across the last 5 weekdays, with today's shift left open — check-in
+written, no check-out — whenever the current time is still before the
+configured check-out. That is deliberate: an in-progress shift is a real state
+worth having in the fixture, and it is a genuine test of the pairing engine's
+open-shift handling rather than an edge case to avoid.
+
+**`--tz` must match the *device source's* configured server timezone in
+BioBridge** (Connections screen), not your own machine's — `punch_time` is a
+naive local string, interpreted in whatever zone the source is set to. Getting
+this wrong does not error, it just shifts every punch by the difference and can
+push some of them outside the fetch window, which again looks like a pairing
+bug rather than a mismatched setting.
 
 #### Running the mock on the right port
 
