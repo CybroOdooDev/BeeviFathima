@@ -82,6 +82,12 @@ class FakeOdoo:
                 return rec["id"]
         return None
 
+    def attendance_closed_at(self, employee_id, check_out):
+        for rec in self.attendances.values():
+            if rec["employee_id"] == employee_id and rec["check_out"] == check_out:
+                return {"id": rec["id"], "check_in": rec["check_in"].strftime("%Y-%m-%d %H:%M:%S")}
+        return None
+
     def create_attendance(self, employee_id, check_in, check_out=None, biotime_ref=None):
         # Odoo allows at most one open record per employee.
         if check_out is None:

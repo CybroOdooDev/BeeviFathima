@@ -9,7 +9,6 @@ import { api, auth, loadSession } from './api.js';
 import { $, esc, toast } from './ui.js';
 import { renderLogin, renderSignup, renderStaffLogin } from './pages/auth.js';
 import { render as renderOverview } from './pages/overview.js';
-import { render as renderSetup } from './pages/setup.js';
 import { renderActivity, renderAttendance, renderEmployees } from './pages/data.js';
 import { render as renderSettings } from './pages/settings.js';
 import { render as renderPlatform } from './pages/platform.js';
@@ -47,7 +46,6 @@ const NAV = [
     tenantOnly: true,
     items: [
       { path: '/employees', title: 'Employees', badge: 'unmapped' },
-      { path: '/setup', title: 'Connections' },
       { path: '/settings', title: 'Settings' },
     ],
   },
@@ -61,13 +59,30 @@ const NAV = [
   },
 ];
 
+/** A path that has moved: what to swap the hash to instead of rendering.
+ * Handled as a redirect *before* any route renders (see resolve()) — doing
+ * it from inside a page's own render() raced the router's `running` guard
+ * against a hashchange fired mid-render, which silently dropped it. */
+const REDIRECTS = {
+  // Connections used to be its own page at /setup. It is now the Odoo and
+  // Biometric submenus under Settings — this keeps an old bookmark working
+  // instead of landing on "page not found".
+  '/setup': '/settings/odoo',
+  // A bare /settings has no section of its own — land on the first one.
+  '/settings': '/settings/general',
+};
+
 const ROUTES = {
   '/': { title: 'Overview', render: renderOverview },
   '/attendance': { title: 'Attendance', render: renderAttendance },
   '/activity': { title: 'Activity', render: renderActivity },
   '/employees': { title: 'Employees', render: renderEmployees },
-  '/setup': { title: 'Connections', render: renderSetup },
-  '/settings': { title: 'Settings', render: renderSettings },
+  '/settings/general': { title: 'Settings', render: renderSettings },
+  '/settings/pairing': { title: 'Settings', render: renderSettings },
+  '/settings/hours': { title: 'Settings', render: renderSettings },
+  '/settings/plan': { title: 'Settings', render: renderSettings },
+  '/settings/odoo': { title: 'Settings', render: renderSettings },
+  '/settings/biometric': { title: 'Settings', render: renderSettings },
   '/platform': { title: 'All accounts', render: renderPlatform },
 };
 
@@ -91,7 +106,10 @@ function mountShell() {
   root.innerHTML = `
     <div class="shell">
       <aside class="sidebar" id="sidebar">
-        <div class="brand"><span class="brand-dot"></span>BioBridge</div>
+        <div class="brand">
+          <span class="brand-mark">B</span>
+          <span class="brand-word"><b>Bio</b><span>Bridge</span></span>
+        </div>
         <nav id="sidenav"></nav>
         <div class="side-foot">
           <div class="side-user" id="sideUser"></div>
@@ -240,6 +258,11 @@ async function resolve() {
     // showing an error page on the way in.
     if (!auth.tenant && auth.isPlatformAdmin && route.path !== '/platform') {
       window.location.hash = '#/platform';
+      return;
+    }
+
+    if (REDIRECTS[route.path]) {
+      window.location.hash = `#${REDIRECTS[route.path]}`;
       return;
     }
 

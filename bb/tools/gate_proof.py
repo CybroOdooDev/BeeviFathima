@@ -72,6 +72,11 @@ def boot(db_path: str, port: int) -> subprocess.Popen:
         "JWT_SECRET": secrets.token_urlsafe(48),
         "MASTER_ENCRYPTION_KEY": secrets.token_urlsafe(48),
         "SCHEDULER_MODE": "off",
+        # This proof seeds owner@acme.example.com — a real MX lookup would
+        # reject it (.example is RFC 2606 reserved, no mail exchanger exists)
+        # and this run has no network access to depend on regardless. See
+        # app.services.email_check.
+        "VERIFY_EMAIL_DELIVERABILITY": "false",
     }
     root = pathlib.Path(__file__).resolve().parent.parent
     subprocess.run([sys.executable, "tools/init_db.py"], cwd=root, env=env, check=True,

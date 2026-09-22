@@ -704,6 +704,17 @@ class SyncEngine:
                         odoo.close_attendance(existing, interval.check_out)
                         self.run.attendances_closed += 1
                     attendance_id = existing
+                elif recovered_id := self._recover_from_lost_close(
+                    odoo, employee_id, interval, by_id
+                ):
+                    # interval.check_in/check_out were just corrected in place
+                    # to the real shift's times — see the method's docstring.
+                    attendance_id = recovered_id
+                    self._log(
+                        f"{mapping.emp_code}: recovered a check-out whose local "
+                        f"state was lost after an earlier attempt already closed "
+                        f"attendance {attendance_id} in Odoo — nothing to write",
+                    )
                 else:
                     attendance_id = odoo.create_attendance(
                         employee_id,
@@ -732,6 +743,61 @@ class SyncEngine:
         mapping.last_synced_at = datetime.now(timezone.utc)
         if punches:
             mapping.last_punch_at = max(p.punch_time_utc for p in punches)
+
+    def _recover_from_lost_close(
+        self,
+        odoo: OdooClient,
+        employee_id: int,
+        interval,
+        by_id: dict[str, PunchRecord],
+    ) -> int | None:
+        """Tell a genuinely new shift apart from a check-out replaying after a
+        crash between its Odoo write and the local commit that would have
+        marked it synced.
+
+        By the time this runs, two things are already true: there was no
+        open shift in Odoo to close (``_current_open_shift`` just checked),
+        and ``attendance_exists`` found nothing at this ``check_in`` either.
+        For an ordinary new shift that is simply the answer — create it —
+        and this function is not even called (see the ``elif`` at the call
+        site, which only reaches here when both of those came up empty).
+
+        The one case that still isn't safe to create: pairing has no memory
+        across a crash, so a check-out punch that already closed a shift in
+        Odoo, but whose "synced" state locally was lost before it committed,
+        comes back on retry looking exactly like a lone, unrelated check-in
+        — every pairing mode reads it that way once there is no open shift
+        left to attach it to. Left alone, that opens a phantom record next
+        to the real, already-correctly-closed one.
+
+        The tell, checked first and entirely locally (no Odoo call, so an
+        ordinary create pays nothing extra for this): the punch pairing
+        used as this interval's check-in was itself recorded with direction
+        "out". A real shift's opening punch is never that — either "in", or
+        "unknown" on a device that does not report state at all, which is
+        deliberately left alone here rather than risk a false positive and
+        silently drop what might be a genuine new shift.
+
+        Only then is Odoo asked whether some record already carries this
+        exact check-out. A match means the punch already did its job; this
+        rewrites ``interval`` in place to the real shift's actual times
+        (Odoo's, not the misread ones) so everything downstream — the local
+        mirror, lateness scoring, the open-shift carried into next cycle —
+        reflects the real shift rather than the phantom reading, and
+        returns that record's id so the caller writes nothing further.
+        """
+        check_in_punch = by_id.get(interval.check_in_punch_id or "")
+        if check_in_punch is None or check_in_punch.direction != Direction.outward.value:
+            return None
+
+        real = odoo.attendance_closed_at(employee_id, interval.check_in)
+        if real is None:
+            return None
+
+        real_check_out = interval.check_in
+        interval.check_in = parse_dt(real.get("check_in")) or real_check_out
+        interval.check_out = real_check_out
+        return real["id"]
 
     def _current_open_shift(self, odoo: OdooClient, mapping: EmployeeMapping) -> OpenShift | None:
         """Reconcile our stored open shift against Odoo's actual state.

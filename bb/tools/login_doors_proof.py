@@ -76,6 +76,10 @@ def boot(db_path: str, port: int) -> subprocess.Popen:
         # No clock: this proof is about sign-in, and a scheduler ticking in the
         # background would only add noise to the console log we assert on.
         "SCHEDULER_MODE": "off",
+        # Seeded accounts use *.example.com — reserved, no real mail exchanger
+        # — and this run has no network access to depend on regardless. See
+        # app.services.email_check.
+        "VERIFY_EMAIL_DELIVERABILITY": "false",
     }
     root = pathlib.Path(__file__).resolve().parent.parent
     subprocess.run([sys.executable, "tools/init_db.py"], cwd=root, env=env, check=True,

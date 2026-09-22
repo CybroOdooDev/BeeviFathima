@@ -16,7 +16,15 @@ _engine_kwargs: dict = {"pool_pre_ping": True, "future": True}
 if settings.database_url.startswith("sqlite"):
     # SQLite is the development and test backend; the pool options below are
     # meaningless there and raise if passed.
-    _connect_args = {"check_same_thread": False}
+    #
+    # ``timeout`` is sqlite3's own lock wait, not a pool setting — it defaults
+    # to 5s, which a request that holds the row open across a live outbound
+    # probe (testing an Odoo or biometric connection) can exceed under any
+    # concurrent write, turning an ordinary second request into "database is
+    # locked" instead of a short wait. Raised rather than left at the
+    # default now that a tenant can hold several biometric connections and
+    # add or test them close together.
+    _connect_args = {"check_same_thread": False, "timeout": 20}
     _engine_kwargs = {"future": True}
 else:
     _engine_kwargs.update(pool_size=10, max_overflow=20)

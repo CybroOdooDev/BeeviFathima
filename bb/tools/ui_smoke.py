@@ -100,16 +100,17 @@ def main():
         check("it warns that nothing is connected",
               "Finish connecting" in page.content())
 
-        # --- connections ----------------------------------------------------
+        # --- connections ------------------------------------------------------
+        # Connections now live under Settings, as the Odoo and Biometric
+        # submenus, rather than their own top-level nav item.
         print("\n--- connections ---")
-        page.click("#sidenav >> text=Connections")
+        page.click("#sidenav >> text=Settings")
+        page.wait_for_selector(".tabs", timeout=10000)
+        page.click(".tabs >> text=Odoo")
         page.wait_for_selector("#odooForm", timeout=10000)
-        check("the connections page renders both forms",
-              page.locator("#odooForm").is_visible() and page.locator("#sourceForm").is_visible())
+        check("the Odoo submenu renders its form", page.locator("#odooForm").is_visible())
         check("the Odoo URL field warns about the path suffix",
               "no /odoo or /web on the end" in page.content())
-        check("the timezone field warns it shifts attendance",
-              "shifts every attendance record by hours" in page.content())
         snap(page, "03-connections-empty")
 
         page.fill("#odooForm #url", args.odoo_url)
@@ -121,15 +122,22 @@ def main():
         check("Odoo saved and reports connected",
               "connected" in page.locator("#odooForm").locator("xpath=..").inner_text().lower())
 
+        page.click(".tabs >> text=Biometric")
+        page.wait_for_selector("#addPlatform", timeout=10000)
+        page.click("#addPlatform")
+        page.wait_for_selector("#sourceForm", timeout=10000)
+        check("the timezone field warns it shifts attendance",
+              "shifts every attendance record by hours" in page.content())
+        page.fill("#sourceForm #name", "Primary BioTime")
         page.fill("#sourceForm #base_url", args.biotime)
         page.fill("#sourceForm #username", "mock")
         page.fill("#sourceForm #password", "mock")
         page.fill("#sourceForm #server_timezone", "Asia/Dubai")
-        page.click("#saveSource")
-        page.wait_for_selector("#discover", timeout=20000)
-        check("device platform saved", page.locator("#discover").is_visible())
+        page.click("#sourceForm #saveSource")
+        page.wait_for_selector("[data-discover]", timeout=20000)
+        check("the platform connection saved", page.locator("[data-discover]").count() >= 1)
 
-        page.click("#discover")
+        page.locator("[data-discover]").first.click()
         page.wait_for_timeout(2500)
         check("terminals imported", page.locator("[data-toggle]").count() >= 1,
               f"{page.locator('[data-toggle]').count()} device(s)")

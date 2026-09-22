@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import Principal, audit, get_principal, require_writer
@@ -40,6 +41,25 @@ from app.services.connections import (
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["connections"])
+
+
+def _dupe_name_guard(db: Session, name: str, commit: bool = False):
+    """Turn a name collision into the same friendly 400 whether it was caught
+    by the pre-check (the common case) or not.
+
+    The pre-check queries before writing, but query-then-write is not atomic:
+    two requests racing on the same name can both pass it and only collide at
+    the database's own unique constraint. Catching that here is the backstop,
+    not the primary mechanism — it just means a genuine race gets the same
+    clear message instead of a raw 500.
+    """
+    try:
+        db.commit() if commit else db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, f"A connection named '{name}' already exists."
+        ) from None
 
 
 # ===========================================================================
@@ -111,6 +131,15 @@ def create_odoo(
     principal: Principal = Depends(require_writer),
     db: Session = Depends(get_db),
 ) -> OdooConnection:
+    if db.scalar(
+        select(OdooConnection).where(
+            OdooConnection.tenant_id == principal.tenant.id,
+            OdooConnection.name == payload.name,
+        )
+    ):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, f"A connection named '{payload.name}' already exists."
+        )
     conn = OdooConnection(
         tenant_id=principal.tenant.id,
         name=payload.name,
@@ -120,7 +149,7 @@ def create_odoo(
         api_key_enc=encrypt(payload.api_key, principal.tenant.crypto_key),
     )
     db.add(conn)
-    db.flush()
+    _dupe_name_guard(db, payload.name)
     _probe_odoo(principal, conn)
     audit(db, principal, "odoo.create", conn.id, payload.url, request)
     db.commit()
@@ -146,7 +175,7 @@ def update_odoo(
         conn.uid_cache = None  # a new key means a new session
     conn.status = ConnectionStatus.unverified.value
     audit(db, principal, "odoo.update", conn.id, ",".join(data), request)
-    db.commit()
+    _dupe_name_guard(db, data.get("name", conn.name), commit=True)
     db.refresh(conn)
     return conn
 
@@ -163,6 +192,21 @@ def test_odoo(
     return result
 
 
+@router.delete(
+    "/odoo-connections/{conn_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None
+)
+def delete_odoo(
+    conn_id: str,
+    request: Request,
+    principal: Principal = Depends(require_writer),
+    db: Session = Depends(get_db),
+) -> None:
+    conn = _get_odoo(db, principal, conn_id)
+    audit(db, principal, "odoo.delete", conn.id, conn.name, request)
+    db.delete(conn)
+    db.commit()
+
+
 # ===========================================================================
 # Device sources
 # ===========================================================================
@@ -175,6 +219,36 @@ def list_providers(_: Principal = Depends(get_principal)) -> list[dict]:
     than offering a button that will fail.
     """
     return available_providers()
+
+
+_MODE_LABEL = {"platform": "platform server", "device": "individual device"}
+
+
+def _enforce_biometric_mode(db: Session, principal: Principal, kind: str) -> None:
+    """A tenant adds one kind of biometric connection at a time.
+
+    ``Tenant.biometric_mode`` is the record of that choice. Unset means
+    undecided — the frontend asks before offering either "+ Add" button, but
+    a direct API call gets the same gate rather than a free pass: the first
+    call adopts ``kind`` (or, if this tenant already has a connection from
+    before this field existed, that connection's kind) as the mode, and every
+    call after either matches it or is refused.
+    """
+    tenant = principal.tenant
+    if tenant.biometric_mode is None:
+        inferred = db.scalar(
+            select(DeviceSource.connection_kind)
+            .where(DeviceSource.tenant_id == tenant.id)
+            .order_by(DeviceSource.created_at)
+            .limit(1)
+        )
+        tenant.biometric_mode = inferred or kind
+    if kind != tenant.biometric_mode:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"This account is set up for {_MODE_LABEL[tenant.biometric_mode]} connections. "
+            f"Switch modes in Settings → Biometric before adding a {_MODE_LABEL[kind]} connection.",
+        )
 
 
 def _get_source(db: Session, principal: Principal, source_id: str) -> DeviceSource:
@@ -235,10 +309,23 @@ def create_source(
     except ProviderError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
 
+    _enforce_biometric_mode(db, principal, payload.connection_kind)
+
+    if db.scalar(
+        select(DeviceSource).where(
+            DeviceSource.tenant_id == principal.tenant.id,
+            DeviceSource.name == payload.name,
+        )
+    ):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, f"A connection named '{payload.name}' already exists."
+        )
+
     source = DeviceSource(
         tenant_id=principal.tenant.id,
         name=payload.name,
         provider=payload.provider,
+        connection_kind=payload.connection_kind,
         config=payload.config or {},
         base_url=payload.base_url,
         username=payload.username,
@@ -248,7 +335,7 @@ def create_source(
         verify_ssl=payload.verify_ssl,
     )
     db.add(source)
-    db.flush()
+    _dupe_name_guard(db, payload.name)
     _probe_source(principal, source)
     audit(db, principal, "source.create", source.id, payload.base_url, request)
     db.commit()
@@ -267,6 +354,19 @@ def update_source(
     source = _get_source(db, principal, source_id)
     data = payload.model_dump(exclude_unset=True)
     password = data.pop("password", None)
+    if "name" in data and data["name"] != source.name:
+        clash = db.scalar(
+            select(DeviceSource).where(
+                DeviceSource.tenant_id == principal.tenant.id,
+                DeviceSource.name == data["name"],
+                DeviceSource.id != source.id,
+            )
+        )
+        if clash:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"A connection named '{data['name']}' already exists.",
+            )
     for key, value in data.items():
         setattr(source, key, value)
     if password:
@@ -274,7 +374,7 @@ def update_source(
         source.token_enc = None  # the cached token was minted with the old one
     source.status = ConnectionStatus.unverified.value
     audit(db, principal, "source.update", source.id, ",".join(data), request)
-    db.commit()
+    _dupe_name_guard(db, data.get("name", source.name), commit=True)
     db.refresh(source)
     return source
 
@@ -289,6 +389,21 @@ def test_source(
     result = _probe_source(principal, source)
     db.commit()
     return result
+
+
+@router.delete(
+    "/sources/{source_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None
+)
+def delete_source(
+    source_id: str,
+    request: Request,
+    principal: Principal = Depends(require_writer),
+    db: Session = Depends(get_db),
+) -> None:
+    source = _get_source(db, principal, source_id)
+    audit(db, principal, "source.delete", source.id, source.name, request)
+    db.delete(source)
+    db.commit()
 
 
 @router.post("/sources/{source_id}/discover-devices", response_model=list[DeviceOut])

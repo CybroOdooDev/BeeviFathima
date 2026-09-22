@@ -171,11 +171,11 @@ export async function render(mount) {
         <table>
           <tbody>
             <tr><td>Odoo</td><td style="text-align:right">${pill(health.odoo)}</td></tr>
-            <tr><td>Device platform</td><td style="text-align:right">${pill(health.source)}</td></tr>
+            <tr><td>Biometric</td><td style="text-align:right">${pill(health.source)}</td></tr>
           </tbody>
         </table>
         <div class="row" style="margin-top:14px">
-          <a class="btn" href="#/setup">Manage connections</a>
+          <a class="btn" href="#/settings/odoo">Manage connections</a>
         </div>
       </div>
 

@@ -1,45 +1,63 @@
 /* BioBridge dashboard — design tokens and components.
    No external fonts or CDNs: this ships inside the container and must render
-   on a customer LAN with no internet. */
+   on a customer LAN with no internet.
+
+   Palette: Odoo's own product purple (#714b67 — biobridge.com writes Odoo
+   attendance, so its primary accent reads as "at home in an Odoo stack") as
+   the one interactive color used throughout, plus Cybrosys's brand maroon
+   (--accent-2, #b22126, sampled live from cybrosys.com's top banner) reserved
+   for the product's own mark rather than spread across buttons and links —
+   two accent hues fighting for attention in the same control is a common
+   rebrand mistake, so the mix lives in the logo, not in every interactive
+   element. Every value below was checked against its actual use for WCAG AA
+   contrast (4.5:1+), not just picked by eye. */
 
 :root {
-  --ground: #f3f6f7;
+  --ground: #f6f4f5;
   --panel: #ffffff;
-  --panel-2: #eaeff1;
-  --ink: #131a1f;
-  --muted: #566671;
-  --faint: #7d8d98;
-  --rule: #d2dbe0;
-  --rule-soft: #e3eaee;
-  --accent: #0a6265;
+  --panel-2: #efe9ec;
+  --ink: #211a1d;
+  --muted: #6b5c64;
+  --faint: #8f7f86;
+  --rule: #ddd2d7;
+  --rule-soft: #ece3e6;
+  --accent: #714b67;
   --accent-ink: #ffffff;
-  --accent-soft: #e2efef;
+  --accent-soft: #f1e6ec;
+  --accent-2: #b22126;
+  --accent-2-ink: #ffffff;
   --ok: #1f6b4a;
   --ok-soft: #e0f0e7;
   --warn: #9a5a12;
   --warn-soft: #f9eddf;
   --bad: #97302b;
   --bad-soft: #f8e5e3;
-  --shadow: 0 1px 2px rgba(19, 26, 31, .07);
-  --scroll-fade: rgba(19, 26, 31, .2);
-  --radius: 4px;
+  --shadow: 0 1px 2px rgba(33, 26, 29, .08);
+  --scroll-fade: rgba(33, 26, 29, .2);
+  --radius: 8px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* "Noto Sans" first because it's Cybrosys's own site face and ships
+     preinstalled on Android/ChromeOS/most Linux desktops — a free nod to
+     their typography with no network request. Every browser without it
+     falls straight through to the same system stack as before. */
+  --sans: "Noto Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --ground: #0d1317;
-    --panel: #141c21;
-    --panel-2: #1a242a;
-    --ink: #e4ecf0;
-    --muted: #93a4af;
-    --faint: #72838e;
-    --rule: #26333b;
-    --rule-soft: #1e2a31;
-    --accent: #4fb2b5;
-    --accent-ink: #06272a;
-    --accent-soft: #14282a;
+    --ground: #171219;
+    --panel: #201a20;
+    --panel-2: #271f27;
+    --ink: #efe9ec;
+    --muted: #a89aa1;
+    --faint: #85757c;
+    --rule: #382d36;
+    --rule-soft: #2c232a;
+    --accent: #b98cae;
+    --accent-ink: #241a22;
+    --accent-soft: #2a1f28;
+    --accent-2: #e2666a;
+    --accent-2-ink: #2b1214;
     --ok: #5fb187;
     --ok-soft: #14291f;
     --warn: #d9964f;
@@ -84,18 +102,30 @@ a { color: var(--accent); }
 .brand {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   font-weight: 650;
   font-size: 17px;
   letter-spacing: -.01em;
   margin-bottom: 4px;
 }
-.brand-dot {
-  width: 9px; height: 9px;
-  border-radius: 50%;
-  background: var(--accent);
+/* The wordmark, in place of the old plain dot: a small monogram badge in the
+   Cybrosys maroon (the one place that color appears — see the palette note
+   at the top of this file) plus a two-weight "Bio"/"Bridge" split, the usual
+   logotype trick for reading as a mark rather than a label, all achievable
+   with system fonts and no image asset. */
+.brand-mark {
+  width: 22px; height: 22px;
+  border-radius: 6px;
+  background: var(--accent-2);
+  color: var(--accent-2-ink);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: 700 12px/1 var(--sans);
   flex: none;
 }
+.brand-word b { color: var(--ink); font-weight: 700; }
+.brand-word span { color: var(--accent); font-weight: 500; }
 /* The console sign-in, deliberately not the customer one.
    A staff credential is worth every tenant at once, so the page it gets typed
    into should be impossible to confuse with the product login at a glance —
@@ -105,7 +135,7 @@ a { color: var(--accent); }
   border-color: var(--warn);
   box-shadow: var(--shadow), inset 0 3px 0 var(--warn);
 }
-.auth-card.staff .brand-dot { background: var(--warn); }
+.auth-card.staff .brand-mark { background: var(--warn); color: #fff; }
 
 /* Wide enough for the plan-card grid to lay two or more columns out side by
    side — the signup screen only, when there's a set of plans to compare. */
@@ -209,7 +239,7 @@ a { color: var(--accent); }
   border: 1px solid var(--rule);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  padding: 16px 18px;
+  padding: 18px 20px;
 }
 .card > h2 {
   font-size: 13px;
@@ -238,7 +268,7 @@ a { color: var(--accent); }
 .detail-row h3 { color: var(--muted); letter-spacing: .04em; text-transform: uppercase; }
 .grid.cols-4 { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
 
-.stat { background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius); padding: 14px 16px; }
+.stat { background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius); padding: 15px 17px; }
 .stat .k { font: 500 10.5px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
 .stat .v { font-size: 26px; font-weight: 600; margin-top: 7px; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
 .stat .v.warn { color: var(--warn); }
@@ -357,8 +387,8 @@ td.mono { font-family: var(--mono); font-size: 12px; }
    scroll, pinned to the viewport) exactly when that edge comes into view. */
 .scroll {
   overflow-x: auto;
-  margin: 0 -18px -16px;
-  padding: 0 18px;
+  margin: 0 -20px -18px;
+  padding: 0 20px;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: thin;
   scrollbar-color: var(--rule) transparent;

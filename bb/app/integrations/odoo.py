@@ -350,6 +350,27 @@ class OdooClient:
         )
         return rows[0]["id"] if rows else None
 
+    def attendance_closed_at(self, employee_id: int, check_out: datetime) -> dict[str, Any] | None:
+        """The record, if any, already closed with exactly this check-out.
+
+        Guards a narrower, nastier case than ``attendance_exists``: a
+        check-out punch whose Odoo write (closing some shift) went through,
+        but whose local commit marking that punch synced was lost before it
+        landed — a crash between the two. Replayed with no open shift left
+        to close (Odoo already shows it closed), that punch reads as an
+        unrelated fresh check-in and would open a phantom record right next
+        to the real, already-correct one. A match here means the punch
+        already did its job in an earlier attempt; see
+        ``SyncEngine._recover_from_lost_close``.
+        """
+        rows = self.execute(
+            "hr.attendance",
+            "search_read",
+            [[("employee_id", "=", employee_id), ("check_out", "=", fmt_dt(check_out))]],
+            {"fields": ["id", "check_in"], "limit": 1},
+        )
+        return rows[0] if rows else None
+
     def create_attendance(
         self,
         employee_id: int,

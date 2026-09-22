@@ -14,6 +14,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -72,6 +73,20 @@ class DeviceSource(Base, UUIDPk, Timestamped):
     #: Registry slug — see app/integrations/providers/.
     provider: Mapped[str] = mapped_column(String(40), default="biotime", nullable=False)
     config: Mapped[dict | None] = mapped_column(JSON, default=dict)
+
+    #: "platform" or "device" — purely how this connection is framed to the
+    #: tenant (a shared server vs. one standalone terminal). Both values use
+    #: the exact same integration underneath; nothing here branches on it.
+    #: A separate wire protocol for standalone devices is a future addition,
+    #: not this field's job — see app/integrations/base.py.
+    #:
+    #: ``server_default`` as well as ``default``: this is a NOT NULL column
+    #: added after the table already existed, so tools/migrate.py needs a
+    #: default it can put in the ALTER TABLE itself, to backfill the rows
+    #: already there — the Python-side default only applies to new inserts.
+    connection_kind: Mapped[str] = mapped_column(
+        String(20), default="platform", server_default=text("'platform'"), nullable=False
+    )
 
     base_url: Mapped[str] = mapped_column(String(500), nullable=False)
     username: Mapped[str] = mapped_column(String(255), nullable=False)

@@ -218,7 +218,11 @@ def _proof(client: Client, args) -> int:
 
     # --- a tenant with both sides connected ---------------------------------
     print("\n--- setup ---")
-    email = f"sched{int(time.time())}@example.com"
+    # A real, deliverable domain: this script targets a server the operator
+    # already has running (--base) and may have email genuineness checking
+    # on (see app.services.email_check) — .example is reserved and would be
+    # rejected there.
+    email = f"sched{int(time.time())}@gmail.com"
     tokens = client.post(
         "/auth/signup",
         {

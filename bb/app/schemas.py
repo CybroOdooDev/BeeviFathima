@@ -77,6 +77,10 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class VerifyEmailRequest(BaseModel):
+    token: str
+
+
 class TokenPair(BaseModel):
     access_token: str
     refresh_token: str | None = None
@@ -97,6 +101,11 @@ class UserOut(ORMModel):
     #: Read-only everywhere. The dashboard uses it to decide whether to show the
     #: Platform section; the server never takes it from a request.
     is_platform_admin: bool = False
+    #: Null until the person has clicked their confirmation link — see
+    #: app.services.email_verification. The dashboard uses this to show a
+    #: "confirm your email" banner and the resend action; nothing server-side
+    #: currently blocks on it.
+    email_verified_at: datetime | None = None
 
 
 # --- platform staff ---------------------------------------------------------
@@ -281,6 +290,9 @@ class TenantOut(ORMModel):
     work_start_time: str
     late_grace_minutes: int
     consecutive_failures: int
+    #: "platform", "device", or null if this tenant has not chosen yet — see
+    #: Tenant.biometric_mode.
+    biometric_mode: str | None = None
 
     #: Why the dashboard is not updating, when it is not the customer's own
     #: doing. ``syncable`` is false while the platform has the account stopped;
@@ -322,6 +334,10 @@ class TenantUpdate(BaseModel):
     auto_create_employees: bool | None = None
     work_start_time: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}$")
     late_grace_minutes: int | None = Field(default=None, ge=0, le=240)
+    #: Which kind of biometric connection this tenant adds from now on — see
+    #: Tenant.biometric_mode. Switching never touches existing connections of
+    #: the other kind; it only changes what "+ Add" is offered next.
+    biometric_mode: Literal["platform", "device"] | None = None
     #: Self-service plan switch — repeatable, any time. Deliberately not
     #: nullable the way the staff console's TenantConfigUpdate.plan_id is:
     #: a customer can move to another active plan but cannot clear their own
@@ -385,6 +401,10 @@ class OdooConnectionOut(ORMModel):
 class SourceIn(BaseModel):
     name: str = "Primary BioTime"
     provider: str = "biotime"
+    #: "platform" (a shared server) or "device" (one standalone terminal) —
+    #: a UI framing only; both are built and probed identically. See
+    #: app.models.connection.DeviceSource.connection_kind.
+    connection_kind: Literal["platform", "device"] = "platform"
     base_url: str
     username: str
     password: str
@@ -419,6 +439,7 @@ class SourceOut(ORMModel):
     id: str
     name: str
     provider: str
+    connection_kind: str
     base_url: str
     username: str
     auth_type: str
@@ -433,6 +454,7 @@ class SourceOut(ORMModel):
 
 class DeviceOut(ORMModel):
     id: str
+    source_id: str
     serial_number: str
     alias: str | None
     area: str | None

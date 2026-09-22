@@ -88,6 +88,16 @@ class Tenant(Base, UUIDPk, Timestamped):
     work_start_time: Mapped[str] = mapped_column(String(5), default="09:00")
     late_grace_minutes: Mapped[int] = mapped_column(Integer, default=10)
 
+    #: "platform" (one or more shared servers, such as BioTime) or "device"
+    #: (several standalone terminals, no shared server) — which kind of
+    #: DeviceSource this tenant is allowed to add. Null means undecided: the
+    #: Biometric submenu asks before offering either "+ Add" button, unless
+    #: this tenant already has a connection to infer it from (every tenant
+    #: from before this field existed has only ever had "platform" ones).
+    #: Adopted automatically the first time app.api.v1.connections.create_source
+    #: sees it unset, so a direct API call is gated exactly like the UI.
+    biometric_mode: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
     consecutive_failures: Mapped[int] = mapped_column(Integer, default=0)
 
     #: The tier this account is sold under, and what it is allowed to do.
@@ -215,6 +225,20 @@ class User(Base, UUIDPk, Timestamped):
         Boolean, default=False, server_default=text("0"), nullable=False
     )
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    #: Set once the person has clicked the link sent to this address. Null
+    #: means unverified — including for every account created before this
+    #: column existed, which is the correct backfilled state: they were never
+    #: asked to prove it either. Nothing currently blocks on this being null;
+    #: it is tracked so the dashboard can say so and so a later gate has
+    #: something to check.
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: Hash of the one live email-verification token, if any — same shape as
+    #: UserSession.token_hash, so a stolen database yields no usable
+    #: verification link, same as it yields no usable session. Cleared the
+    #: moment the token is used or a fresh one is requested.
+    email_verify_token_hash: Mapped[str | None] = mapped_column(String(64))
+    email_verify_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     failed_login_count: Mapped[int] = mapped_column(Integer, default=0)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

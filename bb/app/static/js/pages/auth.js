@@ -11,7 +11,8 @@ function shell(inner, { staff = false, wide = false } = {}) {
     <div class="auth-wrap">
       <div class="auth-card${staff ? ' staff' : ''}${wide ? ' wide' : ''}">
         <div class="brand">
-          <span class="brand-dot"></span>BioBridge
+          <span class="brand-mark">B</span>
+          <span class="brand-word"><b>Bio</b><span>Bridge</span></span>
           ${staff ? '<span class="pill warn">staff console</span>' : ''}
         </div>
         ${inner}
