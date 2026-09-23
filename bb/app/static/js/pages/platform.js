@@ -10,7 +10,7 @@
 import { api, auth } from '../api.js';
 import {
   $, $$, banner, busy, empty, esc, field, fmtAgo, fmtIn, guard, loading, pill,
-  readForm, toast,
+  readForm, timezoneNames, toast,
 } from '../ui.js';
 
 const STATUSES = [
@@ -120,7 +120,7 @@ export async function render(mount, route) {
           ${field({ name: 'owner_email', label: 'Owner email', type: 'email',
                     required: true, placeholder: 'boss@muscat.com' })}
           ${field({ name: 'timezone', label: 'Timezone', required: true,
-                    value: 'Asia/Dubai',
+                    value: 'Asia/Dubai', datalist: timezoneNames(),
                     help: 'Used to render their attendance. Not the device zone.' })}
           ${field({ name: 'sync_interval_minutes', label: 'Sync every (minutes)',
                     type: 'number', required: true, value: 15 })}
@@ -263,7 +263,7 @@ function rowFor(t, open, linkFor, plans) {
                         help: 'Suspended and cancelled stop this account syncing, '
                             + 'whatever its own settings say.' })}
               ${field({ name: 'timezone', label: 'Display timezone', value: t.timezone,
-                        required: true })}
+                        required: true, datalist: timezoneNames() })}
               ${field({ name: 'work_start_time', label: 'Work starts',
                         value: t.work_start_time, required: true, placeholder: '09:00' })}
               ${field({ name: 'late_grace_minutes', label: 'Grace (minutes)',

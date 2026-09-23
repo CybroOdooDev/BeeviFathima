@@ -153,6 +153,7 @@ class BioTimeProvider(AttendanceProvider):
         {
             Capability.READ_PUNCHES,
             Capability.READ_EMPLOYEES,
+            Capability.WRITE_EMPLOYEES,
             Capability.LIST_TERMINALS,
         }
     )
@@ -164,7 +165,7 @@ class BioTimeProvider(AttendanceProvider):
         {"name": "auth_type", "label": "Auth style", "type": "select", "required": False,
          "default": "token", "choices": ["token", "jwt"],
          "help": "BioTime 8.5+ usually needs jwt; older builds use token."},
-        {"name": "timezone", "label": "Server timezone", "type": "timezone",
+        {"name": "server_timezone", "label": "Server timezone", "type": "timezone",
          "required": True, "default": "UTC",
          "help": "BioTime stores punch times as local wall-clock with no offset, "
                  "so this must match the server or every punch shifts."},
@@ -285,6 +286,29 @@ class BioTimeProvider(AttendanceProvider):
         except ValueError as exc:
             raise BioTimeError(f"BioTime returned non-JSON for {path}") from exc
 
+    def _post(self, path: str, json_body: dict[str, Any]) -> dict[str, Any]:
+        response = self._request("POST", path, json=json_body, headers=self._auth_header())
+
+        # Same expired-token retry-once shape as _get — a long reconciliation
+        # run can easily outlive the token too.
+        if response.status_code in (401, 403):
+            log.info("BioTime token rejected; re-authenticating")
+            self._token = None
+            response = self._request("POST", path, json=json_body, headers=self._auth_header())
+
+        if response.status_code == 404:
+            raise BioTimeError(
+                f"BioTime has no endpoint at {path} — check the URL and the BioTime version."
+            )
+        if response.status_code >= 400:
+            raise BioTimeError(
+                f"BioTime POST {path} -> HTTP {response.status_code}: {response.text[:300]}"
+            )
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise BioTimeError(f"BioTime returned non-JSON for {path}") from exc
+
     def _paginate(
         self, path: str, params: dict[str, Any] | None = None
     ) -> Iterator[dict[str, Any]]:
@@ -396,6 +420,50 @@ class BioTimeProvider(AttendanceProvider):
                 is_active=bool(row.get("enable_attendance", True)),
                 raw=row,
             )
+
+    def create_employee(self, record: EmployeeRecord) -> EmployeeRecord:
+        """Create a BioTime personnel record for an Odoo employee that has
+        none here yet — identity only, same as every other vendor: BioTime
+        has no remote-enrollment concept for a fingerprint or face either,
+        just a personnel row a person can then clock against once they're
+        added at a terminal or via BioTime's own enrollment tooling.
+        """
+        emp_code = (record.emp_code or "").strip()
+        if not emp_code:
+            raise BioTimeError("Cannot create a BioTime employee with no employee code.")
+
+        body = {
+            "emp_code": emp_code,
+            "first_name": record.first_name or emp_code,
+            "last_name": record.last_name or "",
+            "enable_attendance": record.is_active,
+        }
+        try:
+            row = self._post("/personnel/api/employees/", body)
+        except BioTimeError as exc:
+            lowered = str(exc).lower()
+            if "emp_code" in lowered and ("exist" in lowered or "unique" in lowered):
+                # Someone already created this emp_code between our read and
+                # this write — or a previous, partially-failed reconciliation
+                # run already got this far. Look it up rather than treating a
+                # duplicate as a hard failure, so a retried run is idempotent.
+                for existing in self.fetch_employees():
+                    if existing.emp_code == emp_code:
+                        return existing
+            raise
+
+        department = row.get("department")
+        if isinstance(department, dict):
+            department = department.get("dept_name")
+        return EmployeeRecord(
+            external_id=str(row["id"]) if row.get("id") is not None else None,
+            emp_code=str(row.get("emp_code") or emp_code).strip(),
+            first_name=str(row.get("first_name") or record.first_name or ""),
+            last_name=str(row.get("last_name") or record.last_name or ""),
+            department=department,
+            is_active=bool(row.get("enable_attendance", True)),
+            raw=row,
+        )
 
     def fetch_terminals(self) -> Iterator[TerminalRecord]:
         for row in self._paginate("/iclock/api/terminals/"):

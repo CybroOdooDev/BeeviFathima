@@ -7,10 +7,13 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import select
 
+from app.integrations.base import EmployeeRecord
 from app.models import (
     AttendanceRecord,
+    DeviceSource,
     EmployeeMapping,
     MappingStatus,
+    OdooConnection,
     PunchRecord,
     PunchState,
     SubscriptionPlan,
@@ -369,3 +372,161 @@ def test_a_re_read_punch_stays_with_the_run_that_first_saw_it(
     assert by_external["2"] == first.id
     assert by_external["3"] == second.id
     assert second.punches_new == 1, "only the new one counts as new"
+
+
+# --------------------------------------------------------------------------- #
+# Companion add-on: device tracking (odoo_addon/biobridge_attendance/)
+# --------------------------------------------------------------------------- #
+def test_device_is_registered_and_linked_when_the_addon_is_present(
+    db, tenant, local_day, monkeypatch
+):
+    """With has_device_tracking on, the terminal a shift's punches came from
+    is upserted into Odoo's biobridge.device and its id lands on the
+    attendance record — end to end, this is the feature the fixture's own
+    Device('GATE-01') exists for. One terminal closing two different
+    employees' shifts in the same cycle must still upsert it only once."""
+    conn = db.scalar(select(OdooConnection).where(OdooConnection.tenant_id == tenant.id))
+    conn.has_device_tracking = True
+    db.commit()
+
+    odoo = FakeOdoo()
+    rows = [
+        punch(1, "1001", local_day.replace(hour=8)),
+        punch(2, "1001", local_day.replace(hour=17)),
+        punch(3, "1002", local_day.replace(hour=8)),
+        punch(4, "1002", local_day.replace(hour=17)),
+    ]
+    run(db, tenant, odoo, rows, monkeypatch)
+
+    assert len(odoo.attendances) == 2
+    assert odoo.devices == {"GATE-01": 501}
+    assert all(r["device_id"] == 501 for r in odoo.attendances.values())
+    assert odoo.calls.count("upsert_device:GATE-01") == 1, "cached, not upserted per interval"
+
+
+def test_device_id_omitted_when_the_addon_is_absent(db, tenant, local_day, monkeypatch):
+    """The default, unflagged connection: no upsert call, no device_id sent —
+    this is what keeps a plain Odoo (no biobridge_attendance installed)
+    working exactly as before this feature existed."""
+    odoo = FakeOdoo()
+    run(db, tenant, odoo, [punch(1, "1001", local_day.replace(hour=8))], monkeypatch)
+
+    assert odoo.devices == {}
+    assert not any(c.startswith("upsert_device") for c in odoo.calls)
+    record = next(iter(odoo.attendances.values()))
+    assert record["device_id"] is None
+
+
+# --------------------------------------------------------------------------- #
+# Roster provisioning: Odoo's employees -> the provider (auto_provision_employees)
+# --------------------------------------------------------------------------- #
+def _provisioning_source(db, tenant) -> DeviceSource:
+    source = db.scalar(select(DeviceSource).where(DeviceSource.tenant_id == tenant.id))
+    source.auto_provision_employees = True
+    db.commit()
+    return source
+
+
+def test_provisions_active_odoo_employees_missing_on_the_provider(
+    db, tenant, monkeypatch
+):
+    _provisioning_source(db, tenant)
+
+    odoo = FakeOdoo()
+    odoo.roster = [
+        {"id": 1, "name": "New Hire", "barcode": "9001", "active": True},
+    ]
+    provider = FakeProvider([])
+    monkeypatch.setattr(engine_mod, "build_odoo_client", lambda t, c: odoo)
+    monkeypatch.setattr(engine_mod, "build_source_provider", lambda t, s: provider)
+
+    result = engine_mod.SyncEngine(db, tenant, "test").run_cycle()
+
+    assert [e.emp_code for e in provider.created_employees] == ["9001"]
+    assert provider.created_employees[0].first_name == "New"
+    assert provider.created_employees[0].last_name == "Hire"
+    assert result.employees_provisioned == 1
+
+
+def test_inactive_odoo_employees_are_not_provisioned(db, tenant, monkeypatch):
+    _provisioning_source(db, tenant)
+
+    odoo = FakeOdoo()
+    odoo.roster = [{"id": 1, "name": "Left The Company", "barcode": "9002", "active": False}]
+    provider = FakeProvider([])
+    monkeypatch.setattr(engine_mod, "build_odoo_client", lambda t, c: odoo)
+    monkeypatch.setattr(engine_mod, "build_source_provider", lambda t, s: provider)
+
+    result = engine_mod.SyncEngine(db, tenant, "test").run_cycle()
+
+    assert provider.created_employees == []
+    assert result.employees_provisioned == 0
+
+
+def test_employees_already_on_the_provider_are_not_recreated(db, tenant, monkeypatch):
+    _provisioning_source(db, tenant)
+
+    odoo = FakeOdoo()
+    odoo.roster = [{"id": 1, "name": "Already There", "barcode": "9003", "active": True}]
+    existing = EmployeeRecord(external_id="1", emp_code="9003", first_name="Already", last_name="There")
+    provider = FakeProvider([], employees=[existing])
+    monkeypatch.setattr(engine_mod, "build_odoo_client", lambda t, c: odoo)
+    monkeypatch.setattr(engine_mod, "build_source_provider", lambda t, s: provider)
+
+    engine_mod.SyncEngine(db, tenant, "test").run_cycle()
+
+    assert provider.created_employees == []
+
+
+def test_provisioning_is_off_by_default(db, tenant, local_day, monkeypatch):
+    """The flag has to be turned on per source — this is the fixture's
+    DeviceSource with auto_provision_employees left at its default."""
+    odoo = FakeOdoo()
+    odoo.roster = [{"id": 1, "name": "New Hire", "barcode": "9004", "active": True}]
+    provider = FakeProvider([punch(1, "1001", local_day.replace(hour=8))])
+    monkeypatch.setattr(engine_mod, "build_odoo_client", lambda t, c: odoo)
+    monkeypatch.setattr(engine_mod, "build_source_provider", lambda t, s: provider)
+
+    result = engine_mod.SyncEngine(db, tenant, "test").run_cycle()
+
+    assert provider.created_employees == []
+    assert result.employees_provisioned == 0
+
+
+def test_provisioning_skips_a_provider_with_no_employee_capability(db, tenant, monkeypatch):
+    _provisioning_source(db, tenant)
+
+    odoo = FakeOdoo()
+    odoo.roster = [{"id": 1, "name": "New Hire", "barcode": "9005", "active": True}]
+    provider = FakeProvider([], supports_employees=False)
+    monkeypatch.setattr(engine_mod, "build_odoo_client", lambda t, c: odoo)
+    monkeypatch.setattr(engine_mod, "build_source_provider", lambda t, s: provider)
+
+    result = engine_mod.SyncEngine(db, tenant, "test").run_cycle()
+
+    assert provider.created_employees == []
+    assert result.employees_provisioned == 0
+    assert result.status != "failed", "an unsupported capability must not fail the run"
+
+
+def test_a_bad_odoo_roster_read_does_not_fail_the_run(db, tenant, local_day, monkeypatch):
+    """The point of running this before mapping, not depending on it: a
+    roster-read failure is logged and skipped, not fatal — punches already
+    captured this cycle still get ingested and pushed."""
+    from app.integrations.odoo import OdooError
+
+    _provisioning_source(db, tenant)
+
+    class BrokenRosterOdoo(FakeOdoo):
+        def list_employees(self, limit=0):
+            raise OdooError("temporary Odoo hiccup")
+
+    odoo = BrokenRosterOdoo()
+    provider = FakeProvider([punch(1, "1001", local_day.replace(hour=8))])
+    monkeypatch.setattr(engine_mod, "build_odoo_client", lambda t, c: odoo)
+    monkeypatch.setattr(engine_mod, "build_source_provider", lambda t, s: provider)
+
+    result = engine_mod.SyncEngine(db, tenant, "test").run_cycle()
+
+    assert result.employees_provisioned == 0
+    assert len(odoo.attendances) == 1, "the rest of the cycle still ran"

@@ -587,8 +587,10 @@ trial ending in 2 days and a paid plan ending in 2 days read identically.
 ## How a sync run works
 
 ```
-fetch → ingest → normalise → register → map → pair → push → record
+fetch → ingest → normalise → register → (provision) → map → pair → push → record
 ```
+
+`provision` is opt-in per source — see "Employee mapping" below.
 
 Two invariants make a run safe to interrupt:
 
@@ -622,6 +624,88 @@ result = pair_punches(punches, config, open_shift=OpenShift(id, check_in))
 `tests/test_pairing.py::test_lone_checkout_closes_the_open_shift_instead_of_opening_one`
 is the test that pins it.
 
+## Employee mapping
+
+Odoo is the roster of record. A punch's badge (`emp_code`) is matched to an
+`hr.employee` by trying `barcode` → `pin` → `registration_number` →
+`work_email`, in that order, against whichever of those fields actually
+exist on the customer's Odoo (`OdooClient.find_employee` /
+`MATCH_FIELDS`). A match is cached on `EmployeeMapping`; ambiguous matches
+(two employees sharing the same field value) and unmatched badges are
+surfaced for a human to resolve by hand, or, if `tenant.auto_create_employees`
+is on, an unmatched badge creates a new `hr.employee`.
+
+That direction — device badge to Odoo — always assumed the person already
+existed on the device. Going the other way — Odoo employee to device — is
+`DeviceSource.auto_provision_employees`, off by default per source. When
+on, `SyncEngine._provision_employees` runs once per cycle, ahead of
+mapping and independent of the punch stream: it reads Odoo's active
+roster, picks each employee's matching identifier with the same
+`MATCH_FIELDS` priority (`OdooClient.employee_code_for`, the mirror of
+`find_employee`), and calls the provider's `create_employee` for anyone
+missing there. The matching key never changes per vendor — only the create
+call does, which is why enabling this for BioTime and ZKTeco needed no
+change to the matching logic itself, just each provider implementing
+`fetch_employees`/`create_employee` (`Capability.READ_EMPLOYEES` /
+`WRITE_EMPLOYEES`).
+
+**This provisions identity only, never a biometric template.** No vendor's
+protocol lets a fingerprint or face be pushed to a device remotely —
+BioTime's REST API doesn't expose it and neither does ZKTeco's wire
+protocol. `create_employee` creates the record (id/name, and for ZKTeco a
+device `uid` slot) a person can then clock against once someone enrolls
+their fingerprint or face locally at the terminal, or issues a card/PIN.
+"Seamless" here means the roster entry is waiting for them before their
+first day, not that enrollment itself is remote — that step needs a human
+at the physical device, for every vendor.
+
+ZKTeco standalone terminals have one additional constraint worth knowing:
+the attendance-log wire record truncates a user id to 9 bytes, while the
+live user table allows 24. `ZKDeviceProvider.create_employee` refuses to
+provision an `emp_code` longer than 9 characters, because a longer one
+would enroll fine and then silently fail to match every future punch back
+to that person.
+
+## Multi-company Odoo isolation
+
+A customer's own `tenant_id` isolates two BioBridge tenants from each
+other in BioBridge's own database, always, regardless of what's on the
+Odoo side. That says nothing about a customer running Odoo's *own*
+multi-company feature — several companies inside one Odoo instance, each
+with its own employees, its own device platform, sold to BioBridge as
+what looks like two unrelated tenants but is actually one Odoo database
+underneath. Left alone, `OdooClient` has no idea that distinction exists:
+every `search_read` it issues is scoped only by whatever companies the
+authenticated Odoo API user happens to be a member of, which for a shared
+integration user is often "all of them."
+
+`OdooConnection.company_id` closes that gap — the res.company id this one
+connection is pinned to, set from the company list Test Connection returns
+(`OdooClient.list_companies`, and `ping()` refuses to proceed if the
+configured id isn't actually visible to that login). Once set,
+`OdooClient.execute` puts it in `allowed_company_ids` on *every* call, not
+just the ones this file happens to add a domain filter to — that context
+is what makes Odoo's own multi-company record rules apply, and it holds
+even for a call with no domain at all (`close_attendance` writes by id).
+`find_employee`, `list_employees`, `create_employee` and the attendance
+lookups add an explicit `company_id` domain condition too, as
+defense-in-depth alongside the context, guarded by `fields_of` the same
+way every other optional field in this client is.
+
+One exception needed its own fix rather than inheriting the guarantee for
+free: `x_biobridge_device` (bootstrap-mode device tracking, `## Employee
+mapping` above's sibling — see `ensure_device_tracking_bootstrap`) is a
+plain custom model BioBridge creates over the API, with no multi-company
+rule of its own the way the real add-on's `biobridge.device` has. Company
+scoping there is a genuine, load-bearing field (`x_company_id`), added
+during bootstrap and backfilled automatically the next time an existing
+bootstrap connection re-runs "Set up device tracking" (bootstrap stopped
+being a no-op once device tracking already exists — see the docstring).
+
+Leaving `company_id` unset is still the right choice for an ordinary
+single-company Odoo — there's nothing to isolate from, and every existing
+connection predates this field and keeps working exactly as before.
+
 ## Layout
 
 ```
@@ -631,7 +715,8 @@ app/
   models/        tenant · users · sessions · connections · devices · ledger
   integrations/
     base.py      the seam: AttendanceProvider, PunchEvent, Capability, registry
-    providers/   biotime — add a vendor here, nothing above changes
+    providers/   biotime, zkteco (standalone terminals) — add a vendor here,
+                 nothing above changes
     odoo.py      XML-RPC client with timeouts and actionable transport errors
   services/
     timeutils.py every timezone conversion, and nowhere else
@@ -674,8 +759,18 @@ The access token is held in memory only; the refresh token sits in
 
 Every screen states what it is about to do before it does it — the Odoo URL
 field warns about the `/odoo` suffix that causes most failed connections, and the
-server-timezone field warns that a wrong value shifts every attendance by hours
-with no error anywhere.
+server-timezone field warns that a wrong value shifts every attendance by hours.
+
+Every timezone field (a source's server/device timezone, a tenant's own display
+timezone, both places it's set during signup or onboarding) is a plain text
+input with an `<input list>`/`<datalist>` of every IANA zone name
+(`Intl.supportedValuesOf('timeZone')`, "UTC" added back in since that API's own
+list omits it) for autocomplete-as-you-type — still free text, not a strict
+`<select>`, so an older browser without that API just loses the suggestions,
+not the field. What actually stops a bad value is the server: every schema with
+a timezone field (`app/schemas.py`'s `_validate_timezone`) rejects anything that
+isn't a real zone `zoneinfo` recognizes, so a typo is a 422 at save time instead
+of a silent fall-back to UTC three steps later in `app/services/timeutils.py`.
 
 ### What did this sync fetch?
 
@@ -997,7 +1092,10 @@ still the development defaults, or `CORS_ORIGINS` is `*`.
 ## Not in this pass
 
 Deliberately scoped out, each additive: Stripe billing and plan limits, alert
-rules and notifications, the staff/platform console, the reverse direction
-(provisioning Odoo employees into BioTime), and a second provider. The seams for
-all of them are in place — `Capability`, the provider registry, the audit log and
-the role model.
+rules and notifications, and the staff/platform console. The seams for all of
+them are in place — the audit log and the role model.
+
+Two items formerly listed here are done: a second provider (ZKTeco standalone
+terminals — see `app/integrations/providers/zkteco.py`) and the reverse
+mapping direction, provisioning Odoo's roster onto a provider — see
+"Employee mapping" below.

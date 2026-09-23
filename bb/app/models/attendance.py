@@ -16,6 +16,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -210,6 +211,12 @@ class SyncRun(Base, UUIDPk, Timestamped):
     attendances_created: Mapped[int] = mapped_column(Integer, default=0)
     attendances_closed: Mapped[int] = mapped_column(Integer, default=0)
     employees_matched: Mapped[int] = mapped_column(Integer, default=0)
+    #: Odoo employees newly provisioned onto a device/platform this run, via
+    #: DeviceSource.auto_provision_employees — see SyncEngine._provision_employees.
+    #: server_default: added to a table that may already have rows.
+    employees_provisioned: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0")
+    )
     error_count: Mapped[int] = mapped_column(Integer, default=0)
 
     error_message: Mapped[str | None] = mapped_column(Text)

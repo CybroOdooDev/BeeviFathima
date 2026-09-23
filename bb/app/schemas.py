@@ -9,12 +9,33 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 class ORMModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+
+
+def _validate_timezone(value: str) -> str:
+    """Reject anything that is not a real IANA zone name.
+
+    Without this, a typo (or "Asia/Dubi", or a display name copied from
+    somewhere that isn't a zone name at all) is accepted silently and only
+    misbehaves later: app.services.timeutils.get_zone() falls back to UTC
+    with no error, which is exactly the "plausible and several hours out"
+    failure that module's own docstring warns about — catching it here, at
+    the point of saving, is far cheaper than debugging a shifted attendance
+    record afterward.
+    """
+    try:
+        ZoneInfo(value)
+    except (ZoneInfoNotFoundError, ValueError, KeyError):
+        raise ValueError(
+            f"{value!r} is not a recognized IANA timezone name, e.g. 'Asia/Dubai' or 'UTC'"
+        ) from None
+    return value
 
 
 # --- subscription plans ------------------------------------------------------
@@ -70,6 +91,11 @@ class SignupRequest(BaseModel):
     #: — and requires plan_id, since "no trial, no chosen plan" is not a
     #: real choice. See app.api.v1.auth.signup.
     skip_trial: bool = False
+
+    @field_validator("timezone")
+    @classmethod
+    def _check_timezone(cls, value: str) -> str:
+        return _validate_timezone(value)
 
 
 class LoginRequest(BaseModel):
@@ -218,6 +244,11 @@ class TenantConfigUpdate(BaseModel):
     #: has no "past due" moment to reach.
     subscription_renews_at: datetime | None = None
 
+    @field_validator("timezone")
+    @classmethod
+    def _check_timezone(cls, value: str | None) -> str | None:
+        return _validate_timezone(value) if value else value
+
 
 class TenantCreateIn(BaseModel):
     """Staff onboarding a customer, instead of the customer self-registering."""
@@ -235,6 +266,11 @@ class TenantCreateIn(BaseModel):
     #: staff clears it afterwards from the account's own config form) — this
     #: field just is not how that is requested at creation time.
     plan_id: str | None = Field(default=None)
+
+    @field_validator("timezone")
+    @classmethod
+    def _check_timezone(cls, value: str) -> str:
+        return _validate_timezone(value)
 
 
 class TenantCreateOut(BaseModel):
@@ -348,11 +384,30 @@ class TenantUpdate(BaseModel):
     #: auto-raise-the-floor behaviour signup also uses.
     plan_id: str | None = None
 
+    @field_validator("timezone")
+    @classmethod
+    def _check_timezone(cls, value: str | None) -> str | None:
+        return _validate_timezone(value) if value else value
+
 
 # --- connections ------------------------------------------------------------
 def _validate_url(value: str) -> str:
     if not value.startswith(("http://", "https://")):
         raise ValueError("URL must start with http:// or https://")
+    return value.rstrip("/")
+
+
+def _validate_source_address(value: str) -> str:
+    """Looser than ``_validate_url``: a source's address isn't always HTTP.
+
+    A platform/BioTime-style source is still a real URL. A standalone
+    device connection (``zk://host[:port]``) is not HTTP at all — the
+    provider itself parses the host and port back out of it — so this only
+    rejects the genuinely malformed case (no scheme, or an unknown one)
+    rather than requiring http(s).
+    """
+    if not value.startswith(("http://", "https://", "zk://")):
+        raise ValueError("Address must start with http://, https://, or zk://")
     return value.rstrip("/")
 
 
@@ -362,6 +417,10 @@ class OdooConnectionIn(BaseModel):
     db_name: str
     username: str
     api_key: str
+    #: res.company id to pin this connection to — leave unset for a
+    #: single-company Odoo. Required for real isolation on a multi-company
+    #: one; see OdooConnection.company_id.
+    company_id: int | None = None
 
     @field_validator("url")
     @classmethod
@@ -376,6 +435,7 @@ class OdooConnectionUpdate(BaseModel):
     username: str | None = None
     api_key: str | None = None
     is_active: bool | None = None
+    company_id: int | None = None
 
     @field_validator("url")
     @classmethod
@@ -391,6 +451,10 @@ class OdooConnectionOut(ORMModel):
     username: str
     odoo_version: str | None
     has_companion_addon: bool
+    has_device_tracking: bool
+    device_tracking_mode: str | None
+    company_id: int | None
+    company_name: str | None
     status: str
     status_message: str | None
     last_checked_at: datetime | None
@@ -406,17 +470,29 @@ class SourceIn(BaseModel):
     #: app.models.connection.DeviceSource.connection_kind.
     connection_kind: Literal["platform", "device"] = "platform"
     base_url: str
-    username: str
-    password: str
+    #: Not every provider has a meaningful username (a standalone device has
+    #: none) — left optional here; whether it's actually required for the
+    #: chosen provider is enforced against that provider's own config_fields.
+    username: str = ""
+    password: str = ""
     auth_type: Literal["token", "jwt"] = "token"
     server_timezone: str = "UTC"
     verify_ssl: bool = True
     config: dict[str, Any] = Field(default_factory=dict)
+    #: Off by default — see DeviceSource.auto_provision_employees. A tenant
+    #: opts a source into this explicitly, same as auto_create_employees on
+    #: the Odoo side of the mapping.
+    auto_provision_employees: bool = False
 
     @field_validator("base_url")
     @classmethod
     def _check(cls, value: str) -> str:
-        return _validate_url(value)
+        return _validate_source_address(value)
+
+    @field_validator("server_timezone")
+    @classmethod
+    def _check_timezone(cls, value: str) -> str:
+        return _validate_timezone(value)
 
 
 class SourceUpdate(BaseModel):
@@ -428,11 +504,17 @@ class SourceUpdate(BaseModel):
     server_timezone: str | None = None
     verify_ssl: bool | None = None
     is_active: bool | None = None
+    auto_provision_employees: bool | None = None
 
     @field_validator("base_url")
     @classmethod
     def _check(cls, value: str | None) -> str | None:
-        return _validate_url(value) if value else value
+        return _validate_source_address(value) if value else value
+
+    @field_validator("server_timezone")
+    @classmethod
+    def _check_timezone(cls, value: str | None) -> str | None:
+        return _validate_timezone(value) if value else value
 
 
 class SourceOut(ORMModel):
@@ -450,6 +532,7 @@ class SourceOut(ORMModel):
     status_message: str | None
     last_checked_at: datetime | None
     is_active: bool
+    auto_provision_employees: bool
 
 
 class DeviceOut(ORMModel):

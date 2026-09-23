@@ -9,7 +9,7 @@
 
 import { api, auth } from '../api.js';
 import {
-  $, banner, busy, empty, esc, field, fmtAgo, fmtIn, guard, loading, pill, readForm, toast,
+  $, banner, busy, empty, esc, field, fmtAgo, fmtIn, guard, loading, pill, readForm, timezoneNames, toast,
 } from '../ui.js';
 
 const SECTIONS = [
@@ -133,6 +133,7 @@ async function renderGeneral(mount) {
         ${field({
           name: 'timezone', label: 'Display timezone', value: tenant.timezone, required: true,
           help: 'Used to render attendance for your team. Separate from each biometric connection’s own device timezone.',
+          datalist: timezoneNames(),
         })}
         ${field({
           name: 'sync_interval_minutes', label: 'Sync every (minutes)', type: 'number',
@@ -315,6 +316,13 @@ async function renderPlan(mount) {
  * ======================================================================== */
 
 let odooConfirmDelete = false;
+//: The company list from the most recent Test Connection, kept across the
+//: re-render that follows it (which re-fetches the connection fresh and
+//: would otherwise lose it) — cleared whenever it stops being about the
+//: connection currently on screen. Purely informational: it's how a
+//: customer with several Odoo companies finds the id to type into the
+//: field below, and how a misconfigured one gets diagnosed.
+let odooLastCompanies = null; // { connId, companies: [{id, name}] } | null
 
 async function renderOdoo(mount) {
   mount.innerHTML = loading();
@@ -322,12 +330,16 @@ async function renderOdoo(mount) {
   const odoo = odooList[0] || null;
   const readonly = !auth.canWrite;
 
+  if (!odoo || odooLastCompanies?.connId !== odoo.id) odooLastCompanies = null;
+
   mount.innerHTML = `
     ${readonly ? banner('Read-only', 'Your role cannot change connections.', 'warn') : ''}
 
     <div class="card">
       <h2>Odoo <span class="hint">where attendance is written</span></h2>
       ${odoo ? statusRow(odoo) : ''}
+      ${odoo && odoo.status === 'connected' ? deviceTrackingRow(odoo, readonly) : ''}
+      ${odoo && odoo.status === 'connected' ? companyScopeRow(odoo) : ''}
       <form id="odooForm" ${readonly ? 'inert' : ''}>
         ${field({
           name: 'url', label: 'Server URL', required: true,
@@ -348,6 +360,15 @@ async function renderOdoo(mount) {
             ? 'Stored encrypted and never shown again. Leave blank to keep the current one.'
             : 'Odoo → Preferences → Account Security → New API Key.',
         })}
+        ${field({
+          name: 'company_id', label: 'Odoo company ID', type: 'number',
+          value: odoo?.company_id ?? '',
+          help: 'Only matters if this Odoo has more than one company. Leave blank for '
+            + 'a single-company Odoo. Set on a multi-company one, or this connection can '
+            + 'see and write every company the API user has access to, not just one — '
+            + 'test the connection below to see the company IDs this login can reach.',
+          strongHelp: true,
+        })}
         <div class="row">
           <button class="primary" id="saveOdoo">${odoo ? 'Save changes' : 'Connect Odoo'}</button>
           ${odoo ? '<button type="button" id="testOdoo">Test connection</button>' : ''}
@@ -360,6 +381,7 @@ async function renderOdoo(mount) {
           ) : ''}
         </div>
       </form>
+      ${odooLastCompanies ? companiesHint(odoo, odooLastCompanies.companies) : ''}
     </div>`;
 
   if (readonly) return;
@@ -383,6 +405,9 @@ async function renderOdoo(mount) {
       guard(async () => {
         const result = await api.post(`/odoo-connections/${odoo.id}/test`);
         toast(result.message, result.ok ? 'ok' : 'bad');
+        odooLastCompanies = result.detail?.companies
+          ? { connId: odoo.id, companies: result.detail.companies }
+          : null;
         await renderOdoo(mount);
       })
     )
@@ -405,6 +430,80 @@ async function renderOdoo(mount) {
       }, 'Odoo connection removed')
     )
   );
+
+  $('#enableDeviceTracking', mount)?.addEventListener('click', (event) =>
+    busy(event.target, () =>
+      guard(async () => {
+        const result = await api.post(`/odoo-connections/${odoo.id}/device-tracking/bootstrap`);
+        toast(result.message, result.ok ? 'ok' : 'bad');
+        await renderOdoo(mount);
+      })
+    )
+  );
+}
+
+/* Whether attendance records show which terminal punched them, and the
+ * one-click way to turn it on when it's off. Two ways to get there —
+ * odoo.device_tracking_mode is "module" (odoo_addon/biobridge_attendance/
+ * installed — Odoo.sh/self-hosted only) or "bootstrap" (BioBridge created
+ * the field itself over the API, no add-on — the path that works on Odoo
+ * Online too). Both read the same on this card; only the button differs. */
+function deviceTrackingRow(odoo, readonly) {
+  if (odoo.has_device_tracking) {
+    const via = odoo.device_tracking_mode === 'module'
+      ? 'via the installed BioBridge Attendance Devices add-on'
+      : 'set up automatically, no Odoo add-on installed';
+    return `
+      <div class="row" style="margin-bottom:14px">
+        ${pill('active', 'Device tracking on')}
+        <span style="color:var(--muted);font-size:12.5px">${esc(via)}</span>
+      </div>`;
+  }
+  return `
+    <div class="row" style="margin-bottom:14px;align-items:center;gap:10px">
+      ${pill('pending', 'Device tracking off')}
+      <span class="hint">Attendance records won't show which terminal punched them.</span>
+      ${readonly ? '' : '<button type="button" class="sm" id="enableDeviceTracking">Enable device tracking</button>'}
+    </div>`;
+}
+
+/* Whether this connection is pinned to one Odoo company. Only matters on a
+ * multi-company Odoo — a single-company one has nothing to isolate from —
+ * but there's no way to tell from here whether it's multi-company without
+ * testing the connection, so this stays a neutral, low-key line rather
+ * than a warning by default. */
+function companyScopeRow(odoo) {
+  if (odoo.company_id == null) {
+    return `
+      <div class="row" style="margin-bottom:14px">
+        <span class="hint">Not scoped to a single Odoo company — sees every company this login can access.</span>
+      </div>`;
+  }
+  const label = odoo.company_name
+    ? `${odoo.company_name} (id ${odoo.company_id})`
+    : `company id ${odoo.company_id}`;
+  return `
+    <div class="row" style="margin-bottom:14px">
+      ${pill('active', 'Scoped')}
+      <span style="color:var(--muted);font-size:12.5px">${esc(label)}</span>
+    </div>`;
+}
+
+/* The company list a Test Connection just returned, shown once so a
+ * customer with several companies on this Odoo can read off the id to
+ * type into the field above — and, if the id they already set doesn't
+ * appear in this list, why the test just failed. */
+function companiesHint(odoo, companies) {
+  if (companies.length <= 1) return '';
+  const rows = companies
+    .map((c) => `<li><code>${esc(String(c.id))}</code> — ${esc(c.name)}</li>`)
+    .join('');
+  return `
+    <div class="note" style="margin-top:10px">
+      This Odoo login can see ${companies.length} companies — set <strong>Odoo company ID</strong>
+      above to isolate this connection to one of them:
+      <ul style="margin:6px 0 0 18px">${rows}</ul>
+    </div>`;
 }
 
 /* ===========================================================================
@@ -417,15 +516,17 @@ async function renderOdoo(mount) {
  * ======================================================================== */
 
 let addKind = null;         // null | 'platform' | 'device'
+let addProvider = null;     // provider slug picked for the form currently open
 let editingSourceId = null;
 let confirmDeleteId = null; // a source id pending removal confirmation
 let pickingMode = false;    // showing the mode picker to switch an existing choice
 
 const MODE_LABEL = { platform: 'Platform servers', device: 'Individual devices' };
+const PROVIDER_LABEL = { zk_device: 'ZKTeco protocol' };
 
 async function renderBiometric(mount) {
   mount.innerHTML = loading();
-  const [tenant, sources, devices, providers] = await Promise.all([
+  const [tenant, sources, devices, allProviders] = await Promise.all([
     api.get('/tenant'),
     api.get('/sources'),
     api.get('/devices').catch(() => []),
@@ -438,6 +539,10 @@ async function renderBiometric(mount) {
   // again.
   const mode = tenant.biometric_mode || sources[0]?.connection_kind || null;
   const showPicker = !mode || pickingMode;
+  // Only offer what makes sense in this mode — a standalone-device protocol
+  // has no business appearing while set up for a shared platform, and vice
+  // versa. See AttendanceProvider.kinds.
+  const providers = allProviders.filter((p) => (p.kinds || ['platform', 'device']).includes(mode));
 
   const devicesBySource = {};
   devices.forEach((d) => { (devicesBySource[d.source_id] ||= []).push(d); });
@@ -467,7 +572,7 @@ async function renderBiometric(mount) {
           <button type="button" id="addConnection" ${addKind ? 'disabled' : ''}>
             + Add ${mode === 'device' ? 'individual device' : 'platform connection'}</button>
         </div>
-        ${addKind ? sourceFormHtml(null, addKind, providers) : ''}
+        ${addKind ? sourceFormHtml(null, addKind, providers, addProvider) : ''}
       ` : ''}
     </div>`;
 
@@ -499,6 +604,7 @@ function modePicker(currentMode, readonly) {
 
 function sourceCard(source, devices, readonly) {
   const kindLabel = source.connection_kind === 'device' ? 'Individual device' : 'Platform';
+  const providerLabel = PROVIDER_LABEL[source.provider];
   const isEditing = editingSourceId === source.id;
   const isConfirming = confirmDeleteId === source.id;
 
@@ -509,6 +615,7 @@ function sourceCard(source, devices, readonly) {
           <div class="row" style="gap:8px;align-items:center">
             <strong>${esc(source.name)}</strong>
             <span class="pill mute">${esc(kindLabel)}</span>
+            ${providerLabel ? `<span class="pill mute">${esc(providerLabel)}</span>` : ''}
           </div>
           <div class="hint mono" style="margin-top:2px">${esc(source.base_url)}</div>
         </div>
@@ -561,17 +668,26 @@ function sourceCard(source, devices, readonly) {
     </div>`;
 }
 
-/** Shared by "add a new connection" and "edit an existing one" — same fields
- * either way, since both connection kinds use the same mechanism. Only the
- * labels and defaults change with `kind`. */
-function sourceFormHtml(source, kind, providers) {
+/** Shared by "add a new connection" and "edit an existing one". Both
+ * connection kinds — and, within "device", both providers — are built and
+ * tested through the same mechanism, but a standalone-device protocol like
+ * ZKTeco's has a genuinely different shape (a device address instead of a
+ * server URL, no username, an optional comm key instead of a password), so
+ * the field set itself now follows the chosen provider, not just `kind`. */
+function sourceFormHtml(source, kind, providers, currentProvider) {
   const isDevice = kind === 'device';
+  const provider = source ? source.provider : (currentProvider || providers[0]?.slug || 'biotime');
+  const isZk = provider === 'zk_device';
+  const addressValue = source
+    ? (isZk ? source.base_url.replace(/^zk:\/\//i, '') : source.base_url)
+    : '';
+
   return `
-    <form id="sourceForm" class="sourceForm" data-kind="${esc(kind)}"
+    <form id="sourceForm" class="sourceForm" data-kind="${esc(kind)}" data-provider="${esc(provider)}"
           ${source ? `data-editing="${esc(source.id)}"` : ''}
           style="margin-top:12px;padding-top:12px;border-top:1px solid var(--rule)">
       ${!source && providers.length > 1 ? field({
-        name: 'provider', label: 'Platform', required: true,
+        name: 'provider', label: 'Platform', required: true, value: provider,
         options: providers.map((p) => ({ value: p.slug, label: p.label })),
       }) : ''}
       ${field({
@@ -580,30 +696,35 @@ function sourceFormHtml(source, kind, providers) {
         help: 'Shown in this list — worth naming for the site or terminal it is.',
       })}
       ${field({
-        name: 'base_url', label: isDevice ? 'Device address' : 'Server URL', required: true,
-        value: source?.base_url || '',
-        placeholder: isDevice ? 'https://192.168.1.50:8081' : 'https://biotime.example.com:8081',
-        help: isDevice
+        name: 'base_url', label: isZk ? 'Device address' : isDevice ? 'Device address' : 'Server URL',
+        required: true, value: addressValue,
+        placeholder: isZk ? '192.168.1.50' : isDevice ? 'https://192.168.1.50:8081' : 'https://biotime.example.com:8081',
+        help: isZk
+          ? 'The device’s own IP, reachable from wherever BioBridge runs. A port is optional — defaults to 4370.'
+          : isDevice
           ? 'The device’s own address, reachable from wherever BioBridge runs.'
           : undefined,
       })}
-      ${field({ name: 'username', label: 'Username', required: true, value: source?.username || '' })}
+      ${!isZk ? field({ name: 'username', label: 'Username', required: true, value: source?.username || '' }) : ''}
       ${field({
-        name: 'password', label: 'Password', type: 'password', required: !source,
+        name: 'password', label: isZk ? 'Comm key' : 'Password', type: 'password',
+        required: !source && !isZk,
         placeholder: source ? 'unchanged' : '',
-        help: source ? 'Leave blank to keep the current one.' : '',
+        help: isZk
+          ? 'Only if the device has a communication password set. Leave blank for the factory default (no password).'
+          : source ? 'Leave blank to keep the current one.' : '',
       })}
       ${field({
         name: 'server_timezone', label: isDevice ? 'Device timezone' : 'Server timezone',
         required: true, value: source?.server_timezone || 'UTC',
         help: 'The zone the device itself runs in — not yours and not Odoo’s. Punch times arrive with no offset, so a wrong value shifts every attendance record by hours without any error.',
-        strongHelp: true,
+        strongHelp: true, datalist: timezoneNames(),
       })}
-      ${field({
+      ${!isZk ? field({
         name: 'auth_type', label: 'Auth style', value: source?.auth_type || 'token',
         options: ['token', 'jwt'],
         help: 'BioTime 8.5+ usually needs jwt; older builds use token.',
-      })}
+      }) : ''}
       <div class="row" style="margin-top:4px;gap:8px">
         <button class="primary sm" id="saveSource" type="submit">
           ${source ? 'Save changes' : isDevice ? 'Connect device' : 'Connect platform'}</button>
@@ -628,6 +749,7 @@ function wireBiometric(mount, mode) {
   $('#changeMode', mount)?.addEventListener('click', () => {
     pickingMode = true;
     addKind = null;
+    addProvider = null;
     editingSourceId = null;
     renderBiometric(mount);
   });
@@ -649,7 +771,13 @@ function wireBiometric(mount, mode) {
 
   $('#addConnection', mount)?.addEventListener('click', () => {
     addKind = mode;
+    addProvider = null;
     editingSourceId = null;
+    renderBiometric(mount);
+  });
+
+  mount.querySelector('select[name=provider]')?.addEventListener('change', (event) => {
+    addProvider = event.target.value;
     renderBiometric(mount);
   });
 
@@ -665,6 +793,7 @@ function wireBiometric(mount, mode) {
   mount.querySelectorAll('[data-cancel-form]').forEach((button) => {
     button.addEventListener('click', () => {
       addKind = null;
+      addProvider = null;
       editingSourceId = null;
       renderBiometric(mount);
     });
@@ -723,12 +852,23 @@ function wireBiometric(mount, mode) {
       const values = readForm(event.target);
       const editing = form.dataset.editing;
       if (editing && !values.password) delete values.password;
-      if (!editing) values.connection_kind = form.dataset.kind;
+      if (!editing) {
+        values.connection_kind = form.dataset.kind;
+        // Only rendered when there's a real choice — otherwise the one
+        // eligible provider for this kind still has to be sent explicitly.
+        values.provider = values.provider || form.dataset.provider;
+      }
+      // A standalone device's address isn't a URL the way a server's is;
+      // the backend expects it tagged so it knows not to treat it as HTTP.
+      if (form.dataset.provider === 'zk_device' && values.base_url && !/^zk:\/\//i.test(values.base_url)) {
+        values.base_url = `zk://${values.base_url}`;
+      }
       busy(form.querySelector('button[type=submit]'), () =>
         guard(async () => {
           if (editing) await api.patch(`/sources/${editing}`, values);
           else await api.post('/sources', values);
           addKind = null;
+          addProvider = null;
           editingSourceId = null;
           await renderBiometric(mount);
         }, editing ? 'Connection saved' : 'Connection added')

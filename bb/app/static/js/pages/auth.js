@@ -1,7 +1,7 @@
 /* Sign in and sign up. Rendered into #auth-root, outside the app shell. */
 
 import { api, auth } from '../api.js';
-import { $, $$, esc, field, planCards, readForm } from '../ui.js';
+import { $, $$, esc, field, planCards, readForm, timezoneNames } from '../ui.js';
 
 function shell(inner, { staff = false, wide = false } = {}) {
   $('#app-root').classList.add('hidden');
@@ -143,6 +143,7 @@ export async function renderSignup() {
       ${field({
         name: 'timezone', label: 'Your timezone', value: guess, required: true,
         help: 'Used to display attendance. The BioTime server has its own setting.',
+        datalist: timezoneNames(),
       })}
       ${modeField}
       ${planField}

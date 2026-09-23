@@ -93,11 +93,12 @@ export const banner = (title, body, kind = '') => `
 
 export const loading = () => '<div class="skeleton">Loading…</div>';
 
-export function field({ name, label, type = 'text', value = '', help, required, placeholder, options, strongHelp, boolean }) {
+export function field({ name, label, type = 'text', value = '', help, required, placeholder, options, strongHelp, boolean, datalist }) {
   // A select always yields a string, so a "false" option would PATCH the string
   // "false" — truthy everywhere on the server. data-bool tells readForm to
   // convert it. Explicit rather than sniffing the value, so a genuinely
   // string-valued "true" option never gets silently rewritten.
+  const listId = datalist && datalist.length ? `${esc(name)}-list` : null;
   const control = options
     ? `<select name="${esc(name)}" id="${esc(name)}"${boolean ? ' data-bool="1"' : ''}>${options
         .map((o) => {
@@ -108,13 +109,38 @@ export function field({ name, label, type = 'text', value = '', help, required, 
         .join('')}</select>`
     : `<input type="${esc(type)}" name="${esc(name)}" id="${esc(name)}"
          value="${esc(value)}" ${required ? 'required' : ''}
-         ${placeholder ? `placeholder="${esc(placeholder)}"` : ''}>`;
+         ${placeholder ? `placeholder="${esc(placeholder)}"` : ''}
+         ${listId ? `list="${listId}" autocomplete="off"` : ''}>
+       ${listId ? `<datalist id="${listId}">${datalist.map((v) => `<option value="${esc(v)}">`).join('')}</datalist>` : ''}`;
   return `
     <div class="field">
       <label for="${esc(name)}">${esc(label)}${required ? '' : ' <span class="opt">optional</span>'}</label>
       ${control}
       ${help ? `<div class="help ${strongHelp ? 'strong' : ''}">${esc(help)}</div>` : ''}
     </div>`;
+}
+
+// Suggestions only, not enforcement — the field stays a free-text input (a
+// <datalist> never blocks a value that isn't in it), so a browser without
+// Intl.supportedValuesOf (older Safari) just gets no suggestions rather than
+// an error. What actually rejects an unrecognized zone name is the server:
+// every schema with a timezone field validates it against the same IANA
+// database this list comes from (see app/schemas.py's _validate_timezone).
+let _tzNamesCache = null;
+export function timezoneNames() {
+  if (_tzNamesCache) return _tzNamesCache;
+  try {
+    const names = Intl.supportedValuesOf('timeZone');
+    // "UTC" itself is a valid IANA zone and every server-side default here
+    // is "UTC" — but it is missing from supportedValuesOf's own list (it
+    // only returns region/city-style names, e.g. "Etc/UTC"). Put the name
+    // people actually expect to type back in, first, rather than making the
+    // by-far-most-common choice the one this list fails to suggest.
+    _tzNamesCache = names.includes('UTC') ? names : ['UTC', ...names];
+  } catch {
+    _tzNamesCache = [];
+  }
+  return _tzNamesCache;
 }
 
 /**

@@ -281,4 +281,6 @@ def test_the_provider_catalogue_drives_the_setup_form(client):
 
     biotime = next(p for p in providers if p["slug"] == "biotime")
     assert "read_punches" in biotime["capabilities"]
-    assert any(f["name"] == "timezone" for f in biotime["config_fields"])
+    # Must match a real SourceIn/DeviceSource field name — this drives both
+    # the settings form and the server-side required-field check.
+    assert any(f["name"] == "server_timezone" for f in biotime["config_fields"])

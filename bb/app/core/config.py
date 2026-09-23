@@ -109,6 +109,19 @@ class Settings(BaseSettings):
     allow_private_network_targets: bool = True
     cors_origins: str = ""
 
+        # --- email genuineness -----------------------------------------------------
+    #: Whether a new account's email address gets a real MX/A lookup, not just
+    #: syntax checking, before the account is created. Off would let a signup
+    #: through on "asdf@asdf" — this is what stops it costing a database row.
+    #: The test suite turns this off globally (see tests/conftest.py) so it
+    #: never depends on outbound DNS; a dedicated test re-enables it against a
+    #: mocked resolver.
+    verify_email_deliverability: bool = True
+    #: How long a signup or staff-onboarded account has to click the
+    #: confirmation link before it goes stale and a fresh one has to be
+    #: requested (POST /auth/resend-verification).
+    email_verification_ttl_hours: int = 48
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

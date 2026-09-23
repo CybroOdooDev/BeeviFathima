@@ -11,7 +11,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.crypto import encrypt
-from app.integrations.base import PunchEvent
+from app.integrations.base import Capability, EmployeeRecord, PunchEvent
 from app.models import Base, Device, DeviceSource, OdooConnection, Tenant
 
 
@@ -35,6 +35,18 @@ def pytest_configure(config):
 TZ = "Asia/Dubai"  # UTC+4, no DST, so the offset arithmetic is checkable by eye
 
 
+@pytest.fixture(autouse=True)
+def _no_network_email_checks(monkeypatch):
+    """The MX/A lookup in app.services.email_check needs outbound DNS, which
+    this suite must not depend on. Every test gets syntax-only checking;
+    tests/test_email_genuineness.py exercises the deliverability path itself
+    against a mocked resolver rather than real DNS.
+    """
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "verify_email_deliverability", False)
+
+
 class FakeOdoo:
     """In-memory hr.attendance that honours Odoo's real constraints.
 
@@ -55,6 +67,13 @@ class FakeOdoo:
             else employees
         )
         self.calls: list[str] = []
+        self.devices: dict[str, int] = {}
+        self._next_device_id = 500
+        #: The Odoo-side roster, as list_employees() would return it — a
+        #: test sets this directly to drive _provision_employees. Empty by
+        #: default so every test not about that feature sees no roster and
+        #: it stays a no-op.
+        self.roster: list[dict] = []
 
     def authenticate(self) -> int:
         return self.uid
@@ -64,6 +83,20 @@ class FakeOdoo:
             emp_id, name = self.employees[emp_code]
             return emp_id, name, "barcode"
         return None, None, None
+
+    def list_employees(self, limit=0):
+        return self.roster
+
+    def employee_code_for(self, employee_row):
+        # Mirrors OdooClient.employee_code_for's MATCH_FIELDS priority
+        # order, reimplemented independently rather than imported — the
+        # point of a fake is to not share a bug with the thing it stands in
+        # for.
+        for field in ("barcode", "pin", "registration_number", "work_email"):
+            value = employee_row.get(field)
+            if value:
+                return str(value).strip()
+        return None
 
     def get_open_attendance(self, employee_id):
         for rec in sorted(
@@ -88,7 +121,9 @@ class FakeOdoo:
                 return {"id": rec["id"], "check_in": rec["check_in"].strftime("%Y-%m-%d %H:%M:%S")}
         return None
 
-    def create_attendance(self, employee_id, check_in, check_out=None, biotime_ref=None):
+    def create_attendance(
+        self, employee_id, check_in, check_out=None, biotime_ref=None, device_id=None
+    ):
         # Odoo allows at most one open record per employee.
         if check_out is None:
             for rec in self.attendances.values():
@@ -104,6 +139,7 @@ class FakeOdoo:
             "check_in": check_in,
             "check_out": check_out,
             "ref": biotime_ref,
+            "device_id": device_id,
         }
         self.calls.append(f"create:{self._next_id}")
         return self._next_id
@@ -120,6 +156,18 @@ class FakeOdoo:
     def fields_of(self, model):
         return {"check_in", "check_out", "employee_id"}
 
+    # Stands in for the optional biobridge_attendance add-on's model. Keyed
+    # on serial number, same identity BioBridge's own Device row uses, so a
+    # test can assert a terminal was only upserted once per run.
+    def upsert_device(
+        self, serial_number, name=None, location=None, terminal_model=None, ip_address=None
+    ):
+        self.calls.append(f"upsert_device:{serial_number}")
+        if serial_number not in self.devices:
+            self._next_device_id += 1
+            self.devices[serial_number] = self._next_device_id
+        return self.devices[serial_number]
+
 
 class FakeProvider:
     """Stands in at the provider seam, so the seam itself is exercised."""
@@ -127,8 +175,22 @@ class FakeProvider:
     label = "Fake"
     cached_token = "tok"
 
-    def __init__(self, rows: list[dict]) -> None:
+    def __init__(
+        self,
+        rows: list[dict],
+        employees: list[EmployeeRecord] | None = None,
+        supports_employees: bool = True,
+    ) -> None:
         self.rows = rows
+        #: What fetch_employees() already knows about, mutated in place by
+        #: create_employee() — a test reads this afterwards to see what
+        #: _provision_employees actually pushed.
+        self.employees: list[EmployeeRecord] = list(employees or [])
+        self.created_employees: list[EmployeeRecord] = []
+        #: Lets a test model a vendor with no employee-provisioning
+        #: capability at all, same as ZKDeviceProvider before this
+        #: session's work or any future read-only integration.
+        self.supports_employees = supports_employees
 
     def fetch_punches(self, since=None, until=None):
         for row in self.rows:
@@ -145,6 +207,26 @@ class FakeProvider:
                 terminal_sn=row.get("terminal_sn", "GATE-01"),
                 raw=row,
             )
+
+    def supports(self, capability) -> bool:
+        if capability in (Capability.READ_EMPLOYEES, Capability.WRITE_EMPLOYEES):
+            return self.supports_employees
+        return True
+
+    def fetch_employees(self):
+        yield from self.employees
+
+    def create_employee(self, record: EmployeeRecord) -> EmployeeRecord:
+        created = EmployeeRecord(
+            external_id=str(len(self.employees) + 1),
+            emp_code=record.emp_code,
+            first_name=record.first_name,
+            last_name=record.last_name,
+            is_active=True,
+        )
+        self.employees.append(created)
+        self.created_employees.append(created)
+        return created
 
     def close(self):
         pass

@@ -139,6 +139,14 @@ class AttendanceProvider(ABC):
     description: str = ""
     capabilities: frozenset[Capability] = frozenset({Capability.READ_PUNCHES})
 
+    #: Which connection_kind(s) this integration makes sense under (see
+    #: app.models.connection.DeviceSource.connection_kind). A shared server
+    #: like BioTime works framed either way, so it defaults to both; a
+    #: standalone-terminal protocol (one connection == one physical device)
+    #: only ever makes sense under "device", and declares that explicitly so
+    #: the connection picker does not offer it while in "platform" mode.
+    kinds: frozenset[str] = frozenset({"platform", "device"})
+
     #: Fields the setup form renders, so the UI hardcodes no vendor.
     config_fields: tuple[dict[str, Any], ...] = ()
 
@@ -231,6 +239,7 @@ def available_providers() -> list[dict[str, Any]]:
             "label": cls.label,
             "description": cls.description,
             "capabilities": sorted(c.value for c in cls.capabilities),
+            "kinds": sorted(cls.kinds),
             "config_fields": list(cls.config_fields),
         }
         for cls in sorted(_REGISTRY.values(), key=lambda c: c.label)

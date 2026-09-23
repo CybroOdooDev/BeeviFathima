@@ -46,6 +46,39 @@ class OdooConnection(Base, UUIDPk, Timestamped):
     uid_cache: Mapped[int | None] = mapped_column(Integer)
     #: Set by the connection probe when hr.attendance carries biotime_ref.
     has_companion_addon: Mapped[bool] = mapped_column(Boolean, default=False)
+    #: Set by the connection probe when hr.attendance carries device_id — i.e.
+    #: the optional biobridge_attendance Odoo add-on (odoo_addon/) is
+    #: installed there. Gates OdooClient.upsert_device()/create_attendance's
+    #: device_id: calling either against a plain Odoo, where the model and
+    #: field don't exist, would just raise. server_default alongside the
+    #: Python-side default — see connection_kind above for why both are
+    #: needed for a NOT NULL column added to a table that may already exist.
+    has_device_tracking: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
+    #: "module" (odoo_addon/biobridge_attendance/ installed — Odoo.sh/
+    #: self-hosted only) or "bootstrap" (BioBridge created x_biobridge_device
+    #: + x_device_id/x_device_location itself, purely over the external API —
+    #: see OdooClient.ensure_device_tracking_bootstrap; the path that reaches
+    #: Odoo Online). Null when has_device_tracking is False. Nullable rather
+    #: than NOT NULL-with-default: unlike has_device_tracking, "no mode yet"
+    #: genuinely has no sensible non-null value to backfill existing rows
+    #: with, and the column is only ever read alongside has_device_tracking.
+    device_tracking_mode: Mapped[str | None] = mapped_column(String(20))
+
+    #: The res.company id this connection is pinned to, or null for "every
+    #: company the Odoo user can see" — fine for a single-company Odoo,
+    #: dangerous for a multi-company one shared across several BioBridge
+    #: tenants (each tenant's own DeviceSource rows are already isolated by
+    #: tenant_id; this is what isolates the Odoo side of the same tenant's
+    #: connection). See OdooClient.execute's allowed_company_ids injection.
+    #: Nullable, no server_default: unlike has_device_tracking there is no
+    #: safe non-null value to backfill an existing single-company connection
+    #: with — null already means exactly what those rows need.
+    company_id: Mapped[int | None] = mapped_column(Integer)
+    #: Display cache only — filled from Test Connection's company list, never
+    #: authoritative, never read by anything that makes a security decision.
+    company_name: Mapped[str | None] = mapped_column(String(120))
 
     status: Mapped[str] = mapped_column(String(20), default=ConnectionStatus.unverified.value)
     status_message: Mapped[str | None] = mapped_column(Text)
@@ -107,6 +140,22 @@ class DeviceSource(Base, UUIDPk, Timestamped):
     status_message: Mapped[str | None] = mapped_column(Text)
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    #: Mirrors tenant.auto_create_employees but runs in the opposite
+    #: direction and is scoped to this one source: when on, the sync engine
+    #: pushes Odoo's roster at this platform/device, creating a provider-side
+    #: user for any Odoo employee it can't find there (see
+    #: app.services.sync_engine's reconciliation stage). Off by default —
+    #: provisioning identities onto a customer's biometric estate is not
+    #: something to start doing silently the moment this column exists.
+    #:
+    #: server_default alongside default for the same reason as
+    #: connection_kind above: this is a NOT NULL column added to a table
+    #: that may already have rows, so tools/migrate.py's ALTER TABLE needs a
+    #: DDL-level default to backfill them with.
+    auto_provision_employees: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
 
     devices: Mapped[list["Device"]] = relationship(
         back_populates="source", cascade="all, delete-orphan"

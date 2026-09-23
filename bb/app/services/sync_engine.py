@@ -4,6 +4,9 @@
     2 ingest     upsert into the ledger — replay-safe by construction
     3 normalise  local wall-clock -> naive UTC
     4 register   record every badge seen, before Odoo is involved at all
+      provision  (opt-in, per source) push Odoo's active roster at the
+                 provider, creating any employee it's missing — runs after
+                 register, ahead of map; see _provision_employees
     5 map        emp_code -> hr.employee, cached on the mapping row
     6 pair       punch stream -> intervals, carrying the open shift forward
     7 push       create and close hr.attendance within Odoo's constraints
@@ -28,7 +31,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.crypto import encrypt
-from app.integrations.base import ProviderError
+from app.integrations.base import Capability, EmployeeRecord, ProviderError, UnsupportedCapability
 from app.integrations.odoo import OdooClient, OdooError, parse_dt
 from app.models import (
     AttendanceRecord,
@@ -108,6 +111,10 @@ class SyncEngine:
             log=[],
         )
         self._log_lines: list[str] = []
+        #: device.id -> the id it was upserted to in Odoo's optional
+        #: biobridge.device model this cycle, or None once that lookup has
+        #: already failed once — see _odoo_device_id.
+        self._odoo_device_cache: dict[str, int | None] = {}
 
     # -- logging -----------------------------------------------------------
     def _log(self, message: str, level: str = "info") -> None:
@@ -211,6 +218,17 @@ class SyncEngine:
             odoo.authenticate()
             if odoo_conn.uid_cache != odoo.uid:
                 odoo_conn.uid_cache = odoo.uid
+
+            # Independent of the punch stream on purpose — an Odoo employee
+            # who has never punched anywhere yet is still eligible to be
+            # provisioned onto a source, since the point is to get them onto
+            # the device *before* their first day, not to react to a punch
+            # that can never arrive from someone the provider has never
+            # heard of. Runs before mapping so a person provisioned this
+            # cycle can, at the earliest, match on the very next one (once
+            # someone has actually enrolled their biometric at the terminal
+            # and they've punched for real).
+            self._provision_employees(odoo, sources)
 
             self._resolve_mappings(odoo)
             self._push(odoo, odoo_conn)
@@ -476,6 +494,99 @@ class SyncEngine:
             return name.strip() or None
         return None
 
+    # -- roster provisioning (runs once per cycle, ahead of stage 5) -------
+    def _provision_employees(self, odoo: OdooClient, sources: list[DeviceSource]) -> None:
+        """Push Odoo's active roster at every source opted into it.
+
+        Odoo is the source of truth here, by design (see DeviceSource.
+        auto_provision_employees): for each source with the flag on, any
+        active Odoo employee this source's provider doesn't already know
+        about gets created there. This never touches a biometric template —
+        no vendor lets one be pushed remotely (see the provider modules'
+        docstrings) — only identity: the id/name a person can then clock
+        against once someone enrolls their fingerprint or face locally at
+        the terminal, or issues them a card/PIN.
+
+        Matching reuses the same emp_code-priority scheme as stage 5 in the
+        opposite direction (OdooClient.employee_code_for mirrors
+        find_employee's MATCH_FIELDS order), so a code minted here for a
+        new device user is exactly the one a future punch from that person
+        will carry back — no separate vendor-specific mapping logic needed.
+        """
+        targets = [s for s in sources if s.auto_provision_employees]
+        if not targets:
+            return
+
+        try:
+            roster = odoo.list_employees()
+        except OdooError as exc:
+            self._log(f"Could not read the Odoo roster for provisioning: {exc}", "warning")
+            return
+
+        wanted: dict[str, str] = {}  # emp_code -> name, active employees only
+        for row in roster:
+            if not row.get("active", True):
+                continue
+            code = odoo.employee_code_for(row)
+            if not code or code in wanted:
+                continue
+            wanted[code] = row.get("name") or code
+        if not wanted:
+            return
+
+        provisioned = 0
+        for source in targets:
+            try:
+                provider = build_source_provider(self.tenant, source)
+            except (ProviderError, UnsupportedCapability, UnsafeTargetError) as exc:
+                self._log(f"'{source.name}': could not connect to provision employees: {exc}", "warning")
+                continue
+
+            try:
+                if not (
+                    provider.supports(Capability.READ_EMPLOYEES)
+                    and provider.supports(Capability.WRITE_EMPLOYEES)
+                ):
+                    continue  # this vendor has no create-employee capability at all
+
+                try:
+                    existing_codes = {
+                        e.emp_code for e in provider.fetch_employees() if e.emp_code
+                    }
+                except (ProviderError, UnsupportedCapability) as exc:
+                    self._log(f"'{source.name}': could not read its employee list: {exc}", "warning")
+                    continue
+
+                created_here = 0
+                for code, name in wanted.items():
+                    if code in existing_codes:
+                        continue
+                    first_name, _, last_name = name.partition(" ")
+                    try:
+                        provider.create_employee(
+                            EmployeeRecord(
+                                external_id=None,
+                                emp_code=code,
+                                first_name=first_name,
+                                last_name=last_name,
+                            )
+                        )
+                        created_here += 1
+                    except (ProviderError, UnsupportedCapability) as exc:
+                        # One bad code (too long for this protocol, a vendor
+                        # validation rule, ...) must not abort the rest of
+                        # the roster — same principle as _fetch_and_ingest
+                        # isolating one dead source from the others.
+                        self._log(f"'{source.name}': could not provision '{code}': {exc}", "warning")
+
+                if created_here:
+                    self._log(f"'{source.name}': provisioned {created_here} employee(s) from Odoo's roster")
+                provisioned += created_here
+            finally:
+                provider.close()
+
+        self.run.employees_provisioned = provisioned
+
     # -- stage 5 -----------------------------------------------------------
     def _resolve_mappings(self, odoo: OdooClient) -> None:
         pending = set(
@@ -723,6 +834,9 @@ class SyncEngine:
                         biotime_ref=self._ref(interval, by_id)
                         if odoo_conn.has_companion_addon
                         else None,
+                        device_id=self._odoo_device_id(
+                            odoo, odoo_conn, self._terminal_for(interval, by_id)
+                        ),
                     )
                     self.run.attendances_created += 1
                     if interval.check_out:
@@ -833,6 +947,56 @@ class SyncEngine:
     def _ref(interval, by_id: dict[str, PunchRecord]) -> str:
         punch = by_id.get(interval.check_in_punch_id or "")
         return f"biotime:{punch.external_id}" if punch else "biotime:derived"
+
+    def _terminal_for(self, interval, by_id: dict[str, PunchRecord]) -> Device | None:
+        """Which terminal recorded this interval's check-in, if known.
+
+        Falls back to the check-out punch's terminal for a record created
+        while closing a shift, where the check-in punch may not be in this
+        batch's ``by_id`` at all.
+        """
+        punch = by_id.get(interval.check_in_punch_id or "") or by_id.get(
+            interval.check_out_punch_id or ""
+        )
+        if punch is None or not punch.device_id:
+            return None
+        return self.db.get(Device, punch.device_id)
+
+    def _odoo_device_id(
+        self, odoo: OdooClient, odoo_conn: OdooConnection, device: Device | None
+    ) -> int | None:
+        """Upsert this terminal into Odoo's optional biobridge.device model.
+
+        Returns None — never raises — when the companion add-on isn't
+        installed, when the punch can't be attributed to a terminal, or when
+        the upsert itself fails: a device link is a nice-to-have on top of the
+        attendance record, not a reason to fail the whole push. Cached per
+        device for the run, so a terminal with fifty punches this cycle is
+        upserted once, not fifty times.
+        """
+        if device is None or not odoo_conn.has_device_tracking:
+            return None
+        if device.id in self._odoo_device_cache:
+            return self._odoo_device_cache[device.id]
+        try:
+            odoo_id = odoo.upsert_device(
+                device.serial_number,
+                name=device.alias,
+                location=device.area,
+                terminal_model=device.model,
+                ip_address=device.ip_address,
+            )
+        except OdooError as exc:
+            # has_device_tracking was true as of the last connection test, but
+            # the add-on may have been removed, or this Odoo user may lack
+            # access to it, since then. Degrade rather than error the push.
+            self._log(
+                f"Could not register device {device.serial_number} in Odoo: {exc}",
+                "warning",
+            )
+            odoo_id = None
+        self._odoo_device_cache[device.id] = odoo_id
+        return odoo_id
 
     def _mark(self, by_id: dict[str, PunchRecord], interval, attendance_id: int) -> None:
         for punch_id in (interval.check_in_punch_id, interval.check_out_punch_id):

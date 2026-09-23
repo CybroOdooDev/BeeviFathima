@@ -88,7 +88,16 @@ def _probe_odoo(principal: Principal, conn: OdooConnection) -> TestResult:
     conn.uid_cache = info["uid"]
     conn.odoo_version = str(info.get("server_version") or "")
     conn.has_companion_addon = bool(info.get("has_companion_addon"))
+    conn.has_device_tracking = bool(info.get("has_device_tracking"))
+    conn.device_tracking_mode = info.get("device_tracking_mode")
     conn.last_checked_at = datetime.now(timezone.utc)
+    # company_name is a display cache, refreshed here and only here — never
+    # trust a name the client sent, and never leave a stale one paired with
+    # whatever company_id ends up being true after this probe.
+    companies = info.get("companies") or []
+    conn.company_name = next(
+        (c["name"] for c in companies if c["id"] == conn.company_id), None
+    ) if conn.company_id is not None else None
 
     if not info.get("can_create_attendance"):
         # Connected but useless: worth failing the test loudly, because the
@@ -147,6 +156,7 @@ def create_odoo(
         db_name=payload.db_name,
         username=payload.username,
         api_key_enc=encrypt(payload.api_key, principal.tenant.crypto_key),
+        company_id=payload.company_id,
     )
     db.add(conn)
     _dupe_name_guard(db, payload.name)
@@ -173,6 +183,8 @@ def update_odoo(
     if api_key:
         conn.api_key_enc = encrypt(api_key, principal.tenant.crypto_key)
         conn.uid_cache = None  # a new key means a new session
+    if "company_id" in data:
+        conn.company_name = None  # stale until the next Test Connection refreshes it
     conn.status = ConnectionStatus.unverified.value
     audit(db, principal, "odoo.update", conn.id, ",".join(data), request)
     _dupe_name_guard(db, data.get("name", conn.name), commit=True)
@@ -188,6 +200,40 @@ def test_odoo(
 ) -> TestResult:
     conn = _get_odoo(db, principal, conn_id)
     result = _probe_odoo(principal, conn)
+    db.commit()
+    return result
+
+
+@router.post("/odoo-connections/{conn_id}/device-tracking/bootstrap", response_model=TestResult)
+def bootstrap_device_tracking(
+    conn_id: str,
+    request: Request,
+    principal: Principal = Depends(require_writer),
+    db: Session = Depends(get_db),
+) -> TestResult:
+    """Turn on device tracking without installing an Odoo add-on.
+
+    See ``OdooClient.ensure_device_tracking_bootstrap`` — it creates a
+    custom model and fields purely through the external API (the same
+    mechanism Odoo Studio's own UI uses), which is the only device-tracking
+    path that reaches Odoo Online, since a real module never will.
+
+    Kept as its own explicit action rather than something the ordinary
+    Test Connection probe does on its own initiative: unlike a probe, this
+    writes new fields into the customer's own Odoo schema, and a button
+    named "test" should never have that side effect.
+    """
+    conn = _get_odoo(db, principal, conn_id)
+    try:
+        build_odoo_client(principal.tenant, conn).ensure_device_tracking_bootstrap()
+    except (OdooError, UnsafeTargetError) as exc:
+        return TestResult(ok=False, message=str(exc))
+
+    result = _probe_odoo(principal, conn)
+    audit(
+        db, principal, "odoo.device_tracking_bootstrap", conn.id,
+        conn.device_tracking_mode or "", request,
+    )
     db.commit()
     return result
 
@@ -251,6 +297,26 @@ def _enforce_biometric_mode(db: Session, principal: Principal, kind: str) -> Non
         )
 
 
+def _require_provider_fields(provider_cls, payload: SourceIn) -> None:
+    """A provider's own ``config_fields`` says what it actually needs.
+
+    This is what lets a provider with a different shape than BioTime's
+    (a standalone device has no username, for instance) skip fields BioTime
+    requires without a schema change here for every new integration —
+    the provider declares its own requirements and this just enforces them.
+    """
+    missing = [
+        f["label"]
+        for f in provider_cls.config_fields
+        if f.get("required") and not str(getattr(payload, f["name"], "") or "").strip()
+    ]
+    if missing:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"{', '.join(missing)} required for {provider_cls.label}.",
+        )
+
+
 def _get_source(db: Session, principal: Principal, source_id: str) -> DeviceSource:
     source = db.get(DeviceSource, source_id)
     if source is None or source.tenant_id != principal.tenant.id:
@@ -305,9 +371,27 @@ def create_source(
     # Reject an unknown provider now rather than storing a row that can never be
     # built — a source that fails only at sync time is far harder to diagnose.
     try:
-        get_provider_class(payload.provider)
+        provider_cls = get_provider_class(payload.provider)
     except ProviderError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+    if payload.connection_kind not in provider_cls.kinds:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"{provider_cls.label} is not offered as a {_MODE_LABEL[payload.connection_kind]} "
+            "connection.",
+        )
+    _require_provider_fields(provider_cls, payload)
+
+    if payload.auto_provision_employees and not (
+        Capability.READ_EMPLOYEES in provider_cls.capabilities
+        and Capability.WRITE_EMPLOYEES in provider_cls.capabilities
+    ):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"{provider_cls.label} cannot create employees, so it cannot be "
+            "provisioned from Odoo's roster.",
+        )
 
     _enforce_biometric_mode(db, principal, payload.connection_kind)
 
@@ -333,6 +417,7 @@ def create_source(
         auth_type=payload.auth_type,
         server_timezone=payload.server_timezone,
         verify_ssl=payload.verify_ssl,
+        auto_provision_employees=payload.auto_provision_employees,
     )
     db.add(source)
     _dupe_name_guard(db, payload.name)
@@ -354,6 +439,20 @@ def update_source(
     source = _get_source(db, principal, source_id)
     data = payload.model_dump(exclude_unset=True)
     password = data.pop("password", None)
+    if data.get("auto_provision_employees"):
+        try:
+            provider_cls = get_provider_class(source.provider)
+        except ProviderError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+        if not (
+            Capability.READ_EMPLOYEES in provider_cls.capabilities
+            and Capability.WRITE_EMPLOYEES in provider_cls.capabilities
+        ):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"{provider_cls.label} cannot create employees, so it cannot be "
+                "provisioned from Odoo's roster.",
+            )
     if "name" in data and data["name"] != source.name:
         clash = db.scalar(
             select(DeviceSource).where(
@@ -406,6 +505,78 @@ def delete_source(
     db.commit()
 
 
+def _push_devices_to_odoo(
+    db: Session, principal: Principal, devices: list[Device]
+) -> str | None:
+    """Register every discovered terminal in Odoo's device model right away,
+    rather than waiting for it to earn one the slow way.
+
+    Without this, a terminal only gets an Odoo device record the first time
+    one of *its* punches makes it into a closed, pushed attendance record
+    (see ``SyncEngine._odoo_device_id``) — and a ``PunchRecord``'s device
+    link is decided once, at ingest time, from whatever local ``Device``
+    rows existed *then*. A terminal imported here after its punches had
+    already been ingested (or already pushed to Odoo, in which case that
+    attendance is never revisited) keeps a permanently null device link on
+    those old rows, so it could sit with punches flowing into Odoo and no
+    device record to show for it, indefinitely. Pushing straight from the
+    terminal's serial number here has no such dependency on punch history.
+
+    Never raises, and never stops the terminals from being imported into
+    BioBridge itself — that part always succeeds regardless of Odoo
+    reachability. But a caller that swallows failures entirely leaves the
+    customer with no way to tell "nothing needed pushing" apart from
+    "something is silently broken", so this returns a short human-readable
+    problem description on any failure (Odoo unreachable, or one or more
+    individual devices rejected) and ``None`` when there was nothing to
+    report — including the ordinary case of device tracking being off.
+    """
+    if not devices:
+        return None
+    conn = db.scalars(
+        select(OdooConnection)
+        .where(
+            OdooConnection.tenant_id == principal.tenant.id,
+            OdooConnection.is_active.is_(True),
+        )
+        .limit(1)
+    ).first()
+    if conn is None:
+        return None
+    if not conn.has_device_tracking:
+        return None
+
+    try:
+        odoo = build_odoo_client(principal.tenant, conn)
+        odoo.authenticate()
+    except (OdooError, UnsafeTargetError) as exc:
+        message = f"Could not reach Odoo to register discovered devices: {exc}"
+        log.warning(message)
+        return message
+
+    failures: list[str] = []
+    for device in devices:
+        try:
+            odoo.upsert_device(
+                device.serial_number,
+                name=device.alias,
+                location=device.area,
+                terminal_model=device.model,
+                ip_address=device.ip_address,
+            )
+        except OdooError as exc:
+            log.warning(
+                "Could not register device %s in Odoo: %s", device.serial_number, exc
+            )
+            failures.append(f"{device.serial_number}: {exc}")
+
+    if not failures:
+        return None
+    if len(failures) == len(devices):
+        return "Could not register any device in Odoo — " + "; ".join(failures)
+    return "Could not register some devices in Odoo — " + "; ".join(failures)
+
+
 @router.post("/sources/{source_id}/discover-devices", response_model=list[DeviceOut])
 def discover_devices(
     source_id: str,
@@ -437,6 +608,7 @@ def discover_devices(
         provider.close()
 
     added = 0
+    touched: list[Device] = []
     for terminal in terminals:
         serial = (terminal.serial_number or "").strip()
         if not serial:
@@ -453,8 +625,20 @@ def discover_devices(
         device.area = terminal.area or device.area
         device.ip_address = terminal.ip_address or device.ip_address
         device.model = terminal.model or device.model
+        touched.append(device)
 
     audit(db, principal, "device.discover", source.id, f"{added} new", request)
+    # Every terminal this call found, not just newly-added ones — a terminal
+    # imported in an earlier call may still have no Odoo device record (see
+    # _push_devices_to_odoo), and re-running Import terminals is the natural
+    # way a customer retries that.
+    push_problem = _push_devices_to_odoo(db, principal, touched)
+    # Surface a real problem the same way the sync engine already does —
+    # the "Last error" banner on the source card (settings.js:sourceCard) —
+    # so a failure here isn't invisible just because it happened outside a
+    # sync run. A clean push, or nothing to push, clears any stale message
+    # from an earlier attempt rather than leaving it stuck.
+    source.status_message = push_problem[:500] if push_problem else None
     db.commit()
     return list(
         db.scalars(

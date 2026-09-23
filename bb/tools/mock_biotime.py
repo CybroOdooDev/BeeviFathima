@@ -6,6 +6,19 @@ an absolute ``next`` URL, and the three list endpoints. Punch data comes from a
 JSON file so a test can change the stream between sync cycles.
 
     python3 tools/mock_biotime.py --port 8099 --punches punches.json
+
+Serves one company's roster at a time, chosen with ``--company``. Company 1
+(the default, unchanged from before ``--company`` existed) is Ahmed Sharma /
+Sara Tanaka / Jane Haddad on MOCK-GATE-01/02. Company 2 is Liam Okafor / Priya
+Nakamura / Noah Fernandes on MOCK-GATE-03/04 — the same three people
+tools/create_company_employees.py creates in a real Odoo, so the two tools
+describe the same fake "company 2" everywhere. Run two instances on two ports,
+one per --company, to drive BioBridge sources against two OdooConnections that
+are scoped to two different company_id values and confirm each only ever sees
+its own roster:
+
+    python3 tools/mock_biotime.py --port 8099 --company 1 &
+    python3 tools/mock_biotime.py --port 8098 --company 2 &
 """
 
 from __future__ import annotations
@@ -20,25 +33,76 @@ from urllib.parse import parse_qs, urlparse
 TOKEN = "mock-token"
 PAGE_CAP = 2  # tiny on purpose, so pagination is exercised by every run
 
-DEPARTMENTS = [
-    {"id": 1, "dept_code": "1", "dept_name": "Production"},
-    {"id": 2, "dept_code": "2", "dept_name": "Logistics"},
-    {"id": 3, "dept_code": "3", "dept_name": "Administration"},
+
+def _dept(id_: int, code: str, name: str) -> dict:
+    return {"id": id_, "dept_code": code, "dept_name": name}
+
+
+def _emp(id_: int, code: str, first: str, last: str, dept: dict) -> dict:
+    return {"id": id_, "emp_code": code, "first_name": first, "last_name": last,
+             "department": dept, "enable_attendance": True}
+
+
+def _term(id_: int, sn: str, alias: str, ip: str) -> dict:
+    return {"id": id_, "sn": sn, "alias": alias, "ip_address": ip}
+
+
+def _dataset(departments: list[dict], employees: list[dict], terminals: list[dict]) -> dict:
+    return {"departments": departments, "employees": employees, "terminals": terminals}
+
+
+_COMPANY_1_DEPTS = [
+    _dept(1, "1", "Production"),
+    _dept(2, "2", "Logistics"),
+    _dept(3, "3", "Administration"),
 ]
 
-EMPLOYEES = [
-    {"id": 11, "emp_code": "1001", "first_name": "Ahmed", "last_name": "Sharma",
-     "department": DEPARTMENTS[0], "enable_attendance": True},
-    {"id": 12, "emp_code": "0042", "first_name": "Sara", "last_name": "Tanaka",
-     "department": DEPARTMENTS[1], "enable_attendance": True},
-    {"id": 13, "emp_code": "A7", "first_name": "Jane", "last_name": "Haddad",
-     "department": DEPARTMENTS[2], "enable_attendance": True},
+_COMPANY_2_DEPTS = [
+    _dept(1, "1", "Engineering"),
+    _dept(2, "2", "Sales"),
+    _dept(3, "3", "Facilities"),
 ]
 
-TERMINALS = [
-    {"id": 101, "sn": "MOCK-GATE-01", "alias": "Main Gate", "ip_address": "10.0.0.11"},
-    {"id": 102, "sn": "MOCK-GATE-02", "alias": "Back Door", "ip_address": "10.0.0.12"},
-]
+#: Two self-contained rosters, selected at startup by --company. Every id
+#: (department, employee, terminal) restarts from the same small numbers in
+#: each dataset — the two are never mixed into one process, so nothing needs
+#: them to be globally unique, and it keeps each dataset readable on its own.
+DATASETS: dict[int, dict] = {
+    1: _dataset(
+        _COMPANY_1_DEPTS,
+        [
+            _emp(11, "1001", "Ahmed", "Sharma", _COMPANY_1_DEPTS[0]),
+            _emp(12, "0042", "Sara", "Tanaka", _COMPANY_1_DEPTS[1]),
+            _emp(13, "A7", "Jane", "Haddad", _COMPANY_1_DEPTS[2]),
+        ],
+        [
+            _term(101, "MOCK-GATE-01", "Main Gate", "10.0.0.11"),
+            _term(102, "MOCK-GATE-02", "Back Door", "10.0.0.12"),
+        ],
+    ),
+    #: Same three people tools/create_company_employees.py's SAMPLE_EMPLOYEES
+    #: creates in a real Odoo (company-2 flavored, deliberately distinct names
+    #: and codes from company 1's roster above so the two are never confused).
+    2: _dataset(
+        _COMPANY_2_DEPTS,
+        [
+            _emp(21, "2001", "Liam", "Okafor", _COMPANY_2_DEPTS[0]),
+            _emp(22, "2002", "Priya", "Nakamura", _COMPANY_2_DEPTS[1]),
+            _emp(23, "2003", "Noah", "Fernandes", _COMPANY_2_DEPTS[2]),
+        ],
+        [
+            _term(201, "MOCK-GATE-03", "North Entrance", "10.0.1.11"),
+            _term(202, "MOCK-GATE-04", "Loading Bay", "10.0.1.12"),
+        ],
+    ),
+}
+
+# Populated from DATASETS[args.company] in main() — default to company 1 so
+# every existing caller (tests, other tools) that never passes --company sees
+# exactly the roster this file always had.
+DEPARTMENTS = DATASETS[1]["departments"]
+EMPLOYEES = DATASETS[1]["employees"]
+TERMINALS = DATASETS[1]["terminals"]
 
 PUNCH_FILE: str | None = None
 
@@ -158,6 +222,16 @@ def main():
     parser.add_argument("--port", type=int, default=8099)
     parser.add_argument("--punches", default=None)
     parser.add_argument(
+        "--company", type=int, default=1, choices=sorted(DATASETS),
+        help="Which fake roster to serve: 1 (default) is Ahmed Sharma / Sara "
+             "Tanaka / Jane Haddad on MOCK-GATE-01/02; 2 is Liam Okafor / "
+             "Priya Nakamura / Noah Fernandes on MOCK-GATE-03/04 — the same "
+             "people tools/create_company_employees.py makes in a real Odoo. "
+             "Run one instance per company, on different ports, to test "
+             "BioBridge sources against two company_id-scoped OdooConnections "
+             "at once.",
+    )
+    parser.add_argument(
         "--host", default="127.0.0.1",
         help="Address to bind. The default is loopback-only, which is right for "
              "a BioBridge on the same machine and invisible to one in a "
@@ -165,8 +239,12 @@ def main():
     )
     args = parser.parse_args()
 
-    global PUNCH_FILE
+    global PUNCH_FILE, DEPARTMENTS, EMPLOYEES, TERMINALS
     PUNCH_FILE = args.punches
+    dataset = DATASETS[args.company]
+    DEPARTMENTS = dataset["departments"]
+    EMPLOYEES = dataset["employees"]
+    TERMINALS = dataset["terminals"]
 
     # Threaded: one slow or abandoned client must not stop every other
     # request. BioBridge paginates, so it holds several sequential
@@ -180,6 +258,8 @@ def main():
         f"  point the source's Server URL at exactly http://{args.host}:{args.port}",
         flush=True,
     )
+    names = ", ".join(f"{e['first_name']} {e['last_name']}" for e in EMPLOYEES)
+    print(f"  company {args.company}: {names}", flush=True)
     if args.host == "127.0.0.1":
         print("  loopback only — pass --host 0.0.0.0 if BioBridge is not on this machine",
               flush=True)
