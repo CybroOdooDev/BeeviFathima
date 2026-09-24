@@ -649,6 +649,20 @@ change to the matching logic itself, just each provider implementing
 `fetch_employees`/`create_employee` (`Capability.READ_EMPLOYEES` /
 `WRITE_EMPLOYEES`).
 
+**Import terminals** does a narrower version of the same thing, on demand:
+for a provider that can create employees (ZKTeco and BioTime), the settings
+page follows a successful import with `POST
+/sources/{id}/provision-employees`, which creates on the device every
+**active** Odoo employee who is **not mapped to a device user yet** and has a
+**Badge ID or PIN** — those two fields only, never a registration number or
+work email (`app/services/provisioning.py`). "Not mapped" means BioBridge has
+no mapped badge for that Odoo employee and the device has no user with that
+code, so running it again creates nobody twice. Two Odoo employees sharing a
+Badge ID are both refused and reported, and a code the device can't hold (a
+non-numeric one on ZK6 firmware) is reported rather than failing the rest.
+It's a separate call so the terminal import itself never fails over an Odoo
+or employee problem, and the result shows in its own message.
+
 **This provisions identity only, never a biometric template.** No vendor's
 protocol lets a fingerprint or face be pushed to a device remotely —
 BioTime's REST API doesn't expose it and neither does ZKTeco's wire
@@ -659,12 +673,16 @@ their fingerprint or face locally at the terminal, or issues a card/PIN.
 first day, not that enrollment itself is remote — that step needs a human
 at the physical device, for every vendor.
 
-ZKTeco standalone terminals have one additional constraint worth knowing:
-the attendance-log wire record truncates a user id to 9 bytes, while the
-live user table allows 24. `ZKDeviceProvider.create_employee` refuses to
-provision an `emp_code` longer than 9 characters, because a longer one
-would enroll fine and then silently fail to match every future punch back
-to that person.
+ZKTeco standalone terminals store a user id in one of two ways, depending
+on firmware (the record layout is detected per device — see "The table
+layouts" in `app/integrations/providers/zkteco.py`): as text of up to 24
+characters, or, on older "ZK6" firmware, as a plain 32-bit number.
+`ZKDeviceProvider.create_employee` refuses an `emp_code` the device's own
+layout can't hold unchanged — longer than 24 characters, or on ZK6 anything
+but digits without leading zeros — because it would enroll fine and then
+silently fail to match every future punch back to that person. (This used
+to say the attendance log truncates ids to 9 bytes. It doesn't: that came
+from BioBridge misreading the record, since fixed.)
 
 ## Multi-company Odoo isolation
 
@@ -695,16 +713,117 @@ way every other optional field in this client is.
 One exception needed its own fix rather than inheriting the guarantee for
 free: `x_biobridge_device` (bootstrap-mode device tracking, `## Employee
 mapping` above's sibling — see `ensure_device_tracking_bootstrap`) is a
-plain custom model BioBridge creates over the API, with no multi-company
-rule of its own the way the real add-on's `biobridge.device` has. Company
-scoping there is a genuine, load-bearing field (`x_company_id`), added
-during bootstrap and backfilled automatically the next time an existing
-bootstrap connection re-runs "Set up device tracking" (bootstrap stopped
-being a no-op once device tracking already exists — see the docstring).
+plain custom model BioBridge creates over the API. Company scoping there is
+a genuine, load-bearing field (`x_company_id`), added during bootstrap. A
+connection bootstrapped before that field existed gets it from **Update
+setup** on the Odoo connection card (Settings), which re-runs the bootstrap
+and adds only what's missing. That button didn't exist at first: the only
+way to run the bootstrap disappeared once device tracking was on, so older
+connections had no way to get the field. Devices already in Odoo with no
+company are claimed by the next push from a company-scoped connection (the
+company is filled in on the same row, rather than a second device being
+created for the same serial number — see `upsert_device`).
+
+Everything above is about what *BioBridge itself* reads and writes over
+XML-RPC — it says nothing about what a person clicking around inside Odoo's
+own UI sees. `company_id` (or `x_company_id`) sitting on a device row does
+nothing there by itself: ir.model.access controls whether a user can read
+`biobridge.device`/`x_biobridge_device` at all, not which rows of it they
+see with a given company active in the switcher — only an `ir.rule` does
+that, and neither model had one. Both do now: the real add-on gets a
+standard company-scoped rule from its own
+`security/biobridge_device_security.xml` (`[('company_id', 'in',
+company_ids)]`, no `groups_id` — a global rule, the same shape most of
+Odoo's own multi-company models use), and bootstrap mode gets the
+equivalent for `x_biobridge_device`, created the same Studio-style way as
+everything else `ensure_device_tracking_bootstrap` sets up (and, like
+`x_company_id` itself, backfilled onto a connection that bootstrapped
+before this rule existed).
+
+The bootstrap rule's domain isn't a plain `('x_company_id', 'in',
+company_ids)`, on purpose: `x_company_id` is optional (unlike the add-on's
+`company_id`, which is `required=True` and so never blank), and neither
+bootstrap nor `upsert_device` goes back and backfills a value onto a device
+row that predates the field, or onto any device registered by a connection
+whose own `OdooConnection.company_id` is left unset — which is correctly
+the recommended setup for an ordinary single-company Odoo. A row like that
+has `x_company_id = False`, and `False` is never `in` any non-empty list of
+company ids — so a plain `'in'` domain would hide such rows from *every*
+company's session, turning "isolation not configured" into "devices
+silently vanish from the list" the moment this rule is installed. The
+actual domain is `['|', ('x_company_id', '=', False), ('x_company_id',
+'in', company_ids)]`: unset stays visible everywhere (matching the
+no-isolation behavior these rows already had), while a row that does carry
+a company id is properly restricted to it.
 
 Leaving `company_id` unset is still the right choice for an ordinary
 single-company Odoo — there's nothing to isolate from, and every existing
 connection predates this field and keeps working exactly as before.
+
+### Device identity is per-source, not per-tenant
+
+A separate isolation gap, entirely inside BioBridge's own database and
+unrelated to anything above: `Device.serial_number` used to be unique only
+per **tenant** (`UniqueConstraint("tenant_id", "serial_number")`), not per
+**source**. A serial number is only actually unique within its own vendor
+account's namespace — two `DeviceSource`s (two BioTime accounts, say, one
+per Odoo company) can each legitimately report a terminal carrying the same
+serial. Under the old constraint, whichever source's "Import terminals" run
+saw a given serial *first* owned it forever: a second source reporting the
+same serial got folded into that first source's existing `Device` row
+instead of getting its own, and its terminals then showed up mixed into the
+wrong source's device list. This is what a customer running two BioTime
+accounts, one per company, actually hit.
+
+The fix is per source, matching how `sync_engine.py`'s own device lookup
+was already scoped (`discover_devices`'s dedup lookup was the one place
+that wasn't):
+
+- `Device`'s unique constraint is now `(tenant_id, source_id,
+  serial_number)`.
+- `discover_devices` (the "Import terminals" handler,
+  `app/api/v1/connections.py`) looks up existing devices by `source_id`,
+  not tenant-wide.
+- A terminal a source used to report and no longer does is flagged, not
+  deleted or disabled — `Device.missing_since` is set the first time it
+  goes unseen, left alone on repeat imports that still don't see it (so it
+  reflects when it first went missing, not the latest check), and cleared
+  the moment the terminal reappears in an import *or* sends a punch
+  (`SyncEngine._ingest`), whichever happens first. This keeps the row's
+  alias, punch history and pairing override intact through a terminal that
+  is briefly offline or mid-relocation, rather than losing them to a
+  delete-and-recreate. The settings page shows a "missing" pill with how
+  long, next to the device's name.
+
+Existing installs pick this up through `tools/migrate.py`: SQLite has no
+`ALTER ... DROP CONSTRAINT` / `ADD CONSTRAINT`, so a reshaped unique
+constraint goes through the same whole-table rebuild `--apply` already uses
+for relaxing a NOT NULL (create the new shape under a temporary name, copy
+every row, drop the old table, rename — the database file is backed up
+first). PostgreSQL gets the real `ALTER TABLE ... DROP/ADD CONSTRAINT`
+statements instead. Either way this is additive to existing data: no row is
+dropped, and two devices that happen to share a serial across sources
+simply stop colliding.
+
+### The device on each attendance record
+
+With device tracking on, every `hr.attendance` BioBridge creates carries the
+terminal its check-in was punched on (`x_device_id` without the add-on,
+`device_id` with it). The terminal comes from the check-in punch's link to a
+BioBridge `Device` — and when that link is missing because the punch was
+fetched before its terminal was imported, from the punch's own serial
+number (`app/services/device_links.py:device_for_punch`); it used to be
+left empty in that case.
+
+Records already in Odoo without a device — pushed before device tracking
+was on, or before that fix — are filled in by
+
+    python3 tools/link_attendance_devices.py            # report
+    python3 tools/link_attendance_devices.py --apply    # write, over XML-RPC
+
+which takes each record's terminal from its earliest traceable punch, and
+only touches records BioBridge created that have no device in Odoo yet (a
+device set by hand is never overwritten). Safe to run again.
 
 ## Layout
 

@@ -40,6 +40,9 @@ log = logging.getLogger(__name__)
 ODOO_DT_FMT = "%Y-%m-%d %H:%M:%S"
 
 #: hr.employee fields to match a badge against, in priority order.
+#: hr.attendance ids per search/write when linking devices to past records.
+_ATTENDANCE_BATCH = 500
+
 MATCH_FIELDS: tuple[tuple[str, str], ...] = (
     ("barcode", "barcode"),
     ("pin", "pin"),
@@ -495,12 +498,50 @@ class OdooClient:
         if biotime_ref and "biotime_ref" in self.fields_of("hr.attendance"):
             vals["biotime_ref"] = biotime_ref
         if device_id:
-            mode = self._device_tracking_mode()
-            field = {"module": "device_id", "bootstrap": "x_device_id"}.get(mode)
+            field = self._attendance_device_field()
             if field:
                 vals[field] = device_id
         result = self.execute("hr.attendance", "create", [vals])
         return int(result if isinstance(result, int) else result[0])
+
+    def _attendance_device_field(self) -> str | None:
+        """The hr.attendance field that links to the device, for whichever
+        way this Odoo got device tracking; None if it has none."""
+        return {"module": "device_id", "bootstrap": "x_device_id"}.get(
+            self._device_tracking_mode()
+        )
+
+    def _require_attendance_device_field(self) -> str:
+        field = self._attendance_device_field()
+        if field is None:
+            raise OdooError(
+                "Device tracking is not set up on this Odoo connection — enable it "
+                "(Settings → Odoo → Enable device tracking) first."
+            )
+        return field
+
+    def attendance_ids_without_device(self, attendance_ids: list[int]) -> list[int]:
+        """Of these hr.attendance ids, the ones that exist and have no device.
+        Batched so a long history doesn't become one enormous domain."""
+        field = self._require_attendance_device_field()
+        found: list[int] = []
+        for start in range(0, len(attendance_ids), _ATTENDANCE_BATCH):
+            chunk = attendance_ids[start:start + _ATTENDANCE_BATCH]
+            rows = self.execute(
+                "hr.attendance",
+                "search_read",
+                [[("id", "in", chunk), (field, "=", False)]],
+                {"fields": ["id"], "context": {"active_test": False}},
+            )
+            found += [int(r["id"]) for r in rows]
+        return found
+
+    def set_attendance_device(self, attendance_ids: list[int], device_id: int) -> None:
+        """Point these hr.attendance records at one device record."""
+        field = self._require_attendance_device_field()
+        for start in range(0, len(attendance_ids), _ATTENDANCE_BATCH):
+            chunk = attendance_ids[start:start + _ATTENDANCE_BATCH]
+            self.execute("hr.attendance", "write", [chunk, {field: device_id}])
 
     # -- device tracking: two ways to get there, one call site -------------
     #
@@ -601,6 +642,21 @@ class OdooClient:
                 [[("x_serial_number", "=", serial_number), *company_domain]],
                 {"fields": ["id"], "limit": 1},
             )
+            if not existing and company_domain:
+                # A row with this serial and no company at all predates this
+                # connection being scoped (or predates x_company_id itself,
+                # added to an older bootstrap by re-running it). Claim it —
+                # the write below sets x_company_id — rather than creating a
+                # second device for the same terminal: attendance already
+                # recorded in Odoo points at the existing row, and a new one
+                # would split that terminal's history in two. A row already
+                # carrying a *different* company is left alone.
+                existing = self.execute(
+                    "x_biobridge_device",
+                    "search_read",
+                    [[("x_serial_number", "=", serial_number), ("x_company_id", "=", False)]],
+                    {"fields": ["id"], "limit": 1},
+                )
             if existing:
                 if vals:
                     self.execute("x_biobridge_device", "write", [[existing[0]["id"]], vals])
@@ -763,6 +819,20 @@ class OdooClient:
         variable Odoo's ir.rule evaluation always makes available to
         ``domain_force``, resolving to the companies enabled for whoever (or
         whatever XML-RPC caller) is running the request.
+
+        The domain treats an *unset* ``company_field`` as visible to
+        everyone, deliberately — ``'|', (company_field, '=', False), ...``,
+        not just ``(company_field, 'in', company_ids)`` alone. Unlike the
+        real add-on's ``company_id`` (``required=True``, so it is always
+        populated), ``x_company_id`` is optional and this rule does nothing
+        to backfill it onto rows that predate the field, or onto any device
+        registered by a connection whose own ``OdooConnection.company_id``
+        is left unset — which the README calls out as the *right* choice
+        for an ordinary single-company Odoo. Without the OR, every such row
+        would read as belonging to no company the current session has, and
+        a plain ``'in'`` domain would hide it from everyone rather than the
+        intended nobody-restricted default — turning "isolation not
+        configured" into "devices silently vanish from the list".
         """
         name = f"{model_name}.biobridge_company"
         existing = self.execute(
@@ -777,7 +847,10 @@ class OdooClient:
                 {
                     "name": name,
                     "model_id": model_id,
-                    "domain_force": f"[('{company_field}', 'in', company_ids)]",
+                    "domain_force": (
+                        f"['|', ('{company_field}', '=', False), "
+                        f"('{company_field}', 'in', company_ids)]"
+                    ),
                 }
             ],
         )

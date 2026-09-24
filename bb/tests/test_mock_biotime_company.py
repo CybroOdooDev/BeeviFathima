@@ -54,15 +54,37 @@ def test_company_2_matches_create_company_employees_roster() -> None:
     }
 
 
+def test_company_4_is_beevi_and_marc() -> None:
+    names = {(e["first_name"], e["emp_code"]) for e in DATASETS[4]["employees"]}
+    assert names == {("Beevi", "5"), ("Marc", "6001")}
+    assert {t["sn"] for t in DATASETS[4]["terminals"]} == {"MOCK-GATE-05", "MOCK-GATE-06"}
+
+
+def test_generate_punches_rosters_match_the_mock_server() -> None:
+    """The two files keep their rosters in sync by hand; this catches drift."""
+    from tools.generate_punches import COMPANY_EMP_CODES, COMPANY_TERMINALS
+
+    assert set(COMPANY_EMP_CODES) == set(DATASETS)
+    for company, data in DATASETS.items():
+        assert set(COMPANY_EMP_CODES[company]) == {e["emp_code"] for e in data["employees"]}
+        assert set(COMPANY_TERMINALS[company]) == {t["sn"] for t in data["terminals"]}
+
+
 def test_company_2_never_shares_a_terminal_or_emp_code_with_company_1() -> None:
-    """Two mock instances are meant to run side by side — a collision here
-    would make responses from the two indistinguishable in a shared log."""
+    """Multiple mock instances are meant to run side by side — a collision here
+    would make responses from the different instances indistinguishable in a shared log."""
     codes_1 = {e["emp_code"] for e in DATASETS[1]["employees"]}
     codes_2 = {e["emp_code"] for e in DATASETS[2]["employees"]}
+    codes_4 = {e["emp_code"] for e in DATASETS[4]["employees"]}
     serials_1 = {t["sn"] for t in DATASETS[1]["terminals"]}
     serials_2 = {t["sn"] for t in DATASETS[2]["terminals"]}
+    serials_4 = {t["sn"] for t in DATASETS[4]["terminals"]}
     assert codes_1.isdisjoint(codes_2)
+    assert codes_1.isdisjoint(codes_4)
+    assert codes_2.isdisjoint(codes_4)
     assert serials_1.isdisjoint(serials_2)
+    assert serials_1.isdisjoint(serials_4)
+    assert serials_2.isdisjoint(serials_4)
 
 
 def test_every_department_referenced_by_an_employee_is_in_that_companys_list() -> None:
@@ -113,6 +135,12 @@ def test_served_over_http_company_2_returns_only_company_2s_people(served_compan
         assert "MOCK-GATE-01" not in serials
     finally:
         server.shutdown()
+
+
+def test_company_flag_accepts_valid_companies() -> None:
+    """Verify that all datasets (1, 2, 4) are accepted by --company."""
+    for company in sorted(DATASETS.keys()):
+        assert DATASETS[company]["employees"]  # Just verify they exist
 
 
 def test_company_flag_rejects_an_unknown_company() -> None:

@@ -18,9 +18,12 @@ worth having in the fixture, not a bug in the generator.
     python3 tools/generate_punches.py
     python3 tools/generate_punches.py --days 10 --emp-codes 1001,0042,A7,9001
     python3 tools/generate_punches.py --tz Asia/Kolkata --check-in 08:30 --check-out 17:30
+    python3 tools/generate_punches.py --company 2
+    python3 tools/generate_punches.py --company 4
 
 Then:
     python3 tools/mock_biotime.py --punches punches.json
+    python3 tools/mock_biotime.py --company 2 --punches punches_company2.json
 
 --tz must match whatever the *device source* is configured with in BioBridge
 ("BioTime server timezone" on the Connections screen) — punch_time is a naive
@@ -43,17 +46,32 @@ try:
 except ImportError:  # pragma: no cover - this project's floor is 3.10+
     ZoneInfo = None
 
-# The three codes tools/mock_biotime.py already knows about by name — Ahmed
-# Sharma, Sara Tanaka, Jane Haddad. Any other code still ingests fine: mapping
-# is punch-driven (app/services/sync_engine.py's _register_badges reads codes
+# The rosters, matching tools/mock_biotime.py's DATASETS exactly. Any code
+# still ingests fine even if it's not in either list below — mapping is
+# punch-driven (app/services/sync_engine.py's _register_badges reads codes
 # out of the punches themselves), not read from BioTime's employee list. But
-# only these three show up on the mock server's /personnel/api/employees/ and
-# get a name and department there, which is what makes a demo look real.
-DEFAULT_EMP_CODES = ["1001", "0042", "A7"]
+# only a mock server started with the matching --company shows these codes on
+# its /personnel/api/employees/ with a name and department, which is what
+# makes a demo look real. Duplicated here rather than imported — same as
+# TERMINALS always was — so this script has no import-time dependency on
+# mock_biotime.py; keep the two in sync by hand if either roster changes.
+COMPANY_EMP_CODES = {
+    1: ["1001", "0042", "A7"],          # Ahmed Sharma, Sara Tanaka, Jane Haddad
+    2: ["2001", "2002", "2003"],        # Liam Okafor, Priya Nakamura, Noah Fernandes
+    4: ["5", "6001"],                   # Beevi, Marc
+}
 
-# Matches tools/mock_biotime.py's TERMINALS. Employees alternate across them so
-# one sync run exercises more than one device.
-TERMINALS = ["MOCK-GATE-01", "MOCK-GATE-02"]
+# Matches tools/mock_biotime.py's TERMINALS for each company. Employees
+# alternate across them so one sync run exercises more than one device.
+COMPANY_TERMINALS = {
+    1: ["MOCK-GATE-01", "MOCK-GATE-02"],
+    2: ["MOCK-GATE-03", "MOCK-GATE-04"],
+    4: ["MOCK-GATE-05", "MOCK-GATE-06"],
+}
+
+# Kept for backward compatibility — anything importing this script's old
+# module-level default still gets company 1's codes.
+DEFAULT_EMP_CODES = COMPANY_EMP_CODES[1]
 
 STATE_IN = "0"   # Check In
 STATE_OUT = "1"  # Check Out
@@ -88,6 +106,7 @@ def build(
     jitter_minutes: int,
     skip_weekends: bool,
     seed: int | None,
+    terminals: list[str] | None = None,
 ) -> tuple[list[dict], list[str]]:
     """Return (rows, still_clocked_in_codes).
 
@@ -95,6 +114,7 @@ def build(
     ascending order — not load-bearing for the mock server (it sorts anyway),
     but it makes the written file readable top to bottom.
     """
+    terminals = terminals if terminals is not None else COMPANY_TERMINALS[1]
     rng = random.Random(seed)
     now = datetime.now(tz)
     ci_h, ci_m = _parse_hhmm(check_in, "--check-in")
@@ -127,7 +147,7 @@ def build(
             continue
 
         for i, code in enumerate(emp_codes):
-            terminal = TERMINALS[i % len(TERMINALS)]
+            terminal = terminals[i % len(terminals)]
             check_in_at = jitter(
                 datetime(day.year, day.month, day.day, ci_h, ci_m, tzinfo=tz)
             )
@@ -155,11 +175,25 @@ def main() -> int:
         description="Generate a punches.json for tools/mock_biotime.py, timed "
                      "relative to right now."
     )
-    parser.add_argument("--out", default="punches.json")
     parser.add_argument(
-        "--emp-codes", default=",".join(DEFAULT_EMP_CODES),
-        help=f"Comma-separated badge codes (default: {','.join(DEFAULT_EMP_CODES)}, "
-             f"the three the mock server already knows by name)",
+        "--out", default=None,
+        help="Where to write the punches (default: punches.json for --company 1, "
+             "punches_company<N>.json otherwise, so generating for one company "
+             "never clobbers another's file)",
+    )
+    parser.add_argument(
+        "--company", type=int, default=1, choices=sorted(COMPANY_EMP_CODES),
+        help="Which tools/mock_biotime.py roster to generate for: 1 (default) "
+             "is Ahmed Sharma / Sara Tanaka / Jane Haddad on MOCK-GATE-01/02; "
+             "2 is Liam Okafor / Priya Nakamura / Noah Fernandes on "
+             "MOCK-GATE-03/04; 4 is Beevi (5) / Marc (6001) on "
+             "MOCK-GATE-05/06. Sets the --emp-codes and terminal defaults; "
+             "an explicit --emp-codes still overrides this.",
+    )
+    parser.add_argument(
+        "--emp-codes", default=None,
+        help="Comma-separated badge codes (default: the three --company's mock "
+             "server already knows by name)",
     )
     parser.add_argument("--days", type=int, default=5,
                         help="How many days back, today included (default: 5)")
@@ -181,11 +215,16 @@ def main() -> int:
                         help="Fix the jitter for a reproducible file")
     args = parser.parse_args()
 
-    emp_codes = [c.strip() for c in args.emp_codes.split(",") if c.strip()]
+    emp_codes_str = args.emp_codes if args.emp_codes is not None else ",".join(COMPANY_EMP_CODES[args.company])
+    emp_codes = [c.strip() for c in emp_codes_str.split(",") if c.strip()]
     if not emp_codes:
         raise SystemExit("--emp-codes produced no codes")
     if args.days < 1:
         raise SystemExit("--days must be at least 1")
+
+    out = args.out if args.out is not None else (
+        "punches.json" if args.company == 1 else f"punches_company{args.company}.json"
+    )
 
     tz = _resolve_tz(args.tz)
     rows, still_in = build(
@@ -197,6 +236,7 @@ def main() -> int:
         jitter_minutes=args.jitter_minutes,
         skip_weekends=not args.include_weekends,
         seed=args.seed,
+        terminals=COMPANY_TERMINALS[args.company],
     )
 
     if not rows:
@@ -209,19 +249,20 @@ def main() -> int:
               "--include-weekends.", file=sys.stderr)
         return 1
 
-    with open(args.out, "w") as handle:
+    with open(out, "w") as handle:
         json.dump(rows, handle, indent=2)
         handle.write("\n")
 
     span_start = min(r["punch_time"] for r in rows)
     span_end = max(r["punch_time"] for r in rows)
-    print(f"Wrote {len(rows)} punches for {len(emp_codes)} employee(s) to {args.out}")
+    print(f"Wrote {len(rows)} punches for {len(emp_codes)} employee(s) to {out}")
     print(f"  {span_start}  ->  {span_end}   ({args.tz})")
     if still_in:
         print(f"  still clocked in (no check-out yet, on purpose): "
               f"{', '.join(sorted(set(still_in)))}")
     print()
-    print(f"  python3 tools/mock_biotime.py --punches {args.out}")
+    company_flag = "" if args.company == 1 else f" --company {args.company}"
+    print(f"  python3 tools/mock_biotime.py{company_flag} --punches {out}")
     print()
     print("Re-run this whenever the punches feel stale — every timestamp is "
           "computed relative to right now, so an old file is the only thing "

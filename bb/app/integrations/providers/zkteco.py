@@ -9,24 +9,63 @@ unrelated projects over the years, which is the only reason it is safe to
 rely on at all. This implementation follows that public documentation
 (https://github.com/adrobinoga/zk-protocol) rather than any vendor SDK.
 
-What this deliberately does NOT do
------------------------------------
-Some terminals are configured with a "comm key" (a numeric password). The
-handshake for that case (``CMD_AUTH``) scrambles the key using a function
-tied to the session id that no public write-up has actually reproduced —
-every source that mentions it says the same thing: nobody has documented
-it. Guessing at a security handshake is worse than refusing it outright, so
-a device that demands one gets a clear, specific error instead of a
-best-effort auth attempt that would either fail confusingly or, worse,
-silently misbehave. Set the device's comm key back to 0 (the factory
-default) to connect it here.
+Comm key 0 still needs CMD_AUTH
+---------------------------------
+A terminal can answer ``CMD_CONNECT`` with ``CMD_ACK_UNAUTH``, asking the
+client to authenticate with ``CMD_AUTH`` and its comm key (a numeric
+password) scrambled with the session id. Many terminals ask for this even
+with the comm key left at its factory default of 0 — the real one this was
+piloted against did. The scramble is ``_make_commkey``, a line-for-line
+port of ``pyzk``'s (from ZKTeco's ``commpro.c``), pinned against its output
+in the tests.
+
+An earlier version of this module refused ``CMD_ACK_UNAUTH`` outright,
+believing the scramble undocumented. It isn't, and refusing it locked out
+every terminal that asks — including ones whose key is 0 — with an error
+telling the user to set a key that was already 0.
 
 This has not been exercised against a physical terminal in this
-environment — there is no hardware to test against. The wire framing,
-checksum and record layout below follow the documented spec exactly and are
-covered by protocol-level tests against a fake device speaking the same
-bytes, but that is not the same guarantee as a real unit's firmware. Pilot
-one device before relying on this for payroll.
+environment — there is no hardware to test against here. The wire framing,
+checksum and record layout below are covered by protocol-level tests
+against a fake device, and the first two packets of a session are pinned
+byte-for-byte to what ``pyzk`` sends (see tests/test_zkteco_protocol.py),
+but that is not a substitute for piloting your own hardware before relying
+on this for payroll — firmware varies.
+
+The reply-id checksum rule (found against a real terminal)
+-----------------------------------------------------------
+A real terminal (comm key unset, correct port, ADMS off) accepted the TCP
+connection from this client and then never answered ``CMD_CONNECT`` — a
+full timeout — while ``pyzk`` connected to the same device instantly.
+Diffing the two clients' CMD_CONNECT packets byte for byte found exactly
+one difference, in the checksum: ``pyzk`` computes it over the header
+carrying the *previous* reply id and sends the header carrying the *next*
+one; this client computed it over the id it actually sent. The checksum
+algorithm itself was already identical. The device evidently validates
+``pyzk``'s form and silently drops anything else, so every packet this
+client had ever sent a real terminal was being ignored. The fake device in
+the tests never checked checksums, which is how it went unnoticed; it now
+validates them the same way. See ``_Connection._send``.
+
+The table layouts (found against the same terminal)
+----------------------------------------------------
+With the connection working, sync still brought nothing in. The attendance
+log and the user table both arrive as a 4-byte total-size prefix followed by
+the records, and this module had been parsing from byte 0 — reading every
+record 4 bytes out of line, so timestamps decoded as garbage and records
+were skipped. It also assumed one layout each (40-byte attendance, 72-byte
+users), when firmware uses 8/16/40 and 28/72 — the size given by nothing
+but total size / record count. And the 40-byte record's user id is 24 bytes,
+not the 9 this read (the basis of an old 9-character cap on provisioned
+employee codes, now removed). All of it is pyzk's get_attendance/get_users/
+set_user; the parser was checked against pyzk's own on every layout
+combination. The fake device had sent tables with no prefix, which is how
+none of this showed up in tests; it now sends them as real devices do.
+
+(An intermediate attempt before that diff added a throwaway "warm-up" TCP
+connection ahead of the real one, on the theory that ``pyzk``'s preliminary
+probe connect was what made the difference. It didn't help and was
+removed — noted here so nobody reintroduces it on the same reasoning.)
 
 A note on a bug that lived here briefly
 ----------------------------------------
@@ -81,6 +120,8 @@ DEFAULT_PORT = 4370
 SOCKET_TIMEOUT = 15
 
 _MAGIC = b"\x50\x50\x82\x7d"  # "PP\x82}" — every TCP packet starts with this.
+#: Reply ids wrap modulo 65535 (USHRT_MAX), not 65536 — pyzk's own wrap.
+_REPLY_ID_CYCLE = 65535
 
 # -- command codes (see module docstring for the spec this follows) ---------
 CMD_CONNECT = 1000
@@ -105,6 +146,7 @@ FCT_USER = 5
 _CMD_PREPARE_BUFFER = 1503
 _CMD_READ_BUFFER = 1504
 
+CMD_AUTH = 1102
 CMD_ACK_OK = 2000
 CMD_ACK_ERROR = 2001
 CMD_ACK_DATA = 2002
@@ -116,20 +158,34 @@ _STATE_IN = {0, 3, 4}
 _STATE_OUT = {1, 2, 5}
 _VERIFY_TYPE_LABEL = {0: "password", 1: "fingerprint", 2: "card"}
 
-_ATTLOG_RECORD_SIZE = 40
-#: uid(H) + privilege(B) + password(8s) + name(24s) + card_number(I) +
-#: pad(x) + group_id(7s) + pad(x) + user_id(24s) — verified against pyzk's
-#: own struct formats, not re-derived from the written spec (an earlier pass
-#: over the docs alone got group_id and user_id's widths wrong; see
-#: ``_USER_STRUCT``).
-_USER_RECORD_SIZE = 72
+# -- table layouts ----------------------------------------------------------
+# Both the attendance log and the user table arrive as a 4-byte total-size
+# prefix followed by fixed-size records — but the record size depends on the
+# firmware, and nothing in the table says which. As pyzk does, it's worked
+# out as total size / record count (the count from CMD_GET_FREE_SIZES), with
+# the largest layout as the fallback. Every struct format below is copied
+# from pyzk 0.9's get_attendance/get_users/set_user, not re-derived from the
+# written spec (see "The table layouts" in the module docstring).
+#
+# Attendance log — (uid or user id, timestamp, verify type, punch state):
+#: 8 bytes: uid(H) verify(B) time(4s) state(B). Carries the device's internal
+#: uid, not the user id — mapped back through the user table.
+_ATTLOG_8 = "<HB4sB"
+#: 16 bytes: user_id(I) time(4s) verify(B) state(B) reserved(2s) workcode(I).
+#: The user id is a 32-bit number.
+_ATTLOG_16 = "<I4sBB2sI"
+#: 40 bytes: uid(H) user_id(24s) verify(B) time(4s) state(B) reserved(8s).
+_ATTLOG_40 = "<H24sB4sB8s"
+_ATTLOG_SIZES = (8, 16, 40)
+#
+# User table:
+#: 28 bytes ("ZK6"): uid(H) privilege(B) password(5s) name(8s) card(I) pad
+#: group(B) timezone(H) user_id(I). The user id is a 32-bit number.
+_USER_28 = "<HB5s8sIxBHI"
+#: 72 bytes ("ZK8"): uid(H) privilege(B) password(8s) name(24s) card(I) pad
+#: group(7s) pad user_id(24s).
 _USER_STRUCT = "<HB8s24sIx7sx24s"
-#: The attendance-log record (see ``_parse_record`` below) only carries 9
-#: bytes of user id, even though the live user table allows 24. An employee
-#: code provisioned longer than this would enroll fine but every future
-#: punch from that person would come back truncated and never match back —
-#: a silent mapping failure. ``create_employee`` refuses anything longer.
-_MAX_PROVISIONABLE_CODE_LEN = 9
+_USER_SIZES = (28, 72)
 #: Largest single chunk requested per ``_CMD_READ_BUFFER`` call over TCP.
 _MAX_CHUNK = 0xFFC0
 
@@ -139,7 +195,32 @@ class ZKError(ProviderError):
 
 
 class ZKAuthError(ZKError):
-    """The terminal has a comm key set — see the module docstring."""
+    """The terminal rejected the comm key configured for it."""
+
+
+def _make_commkey(key: int, session_id: int, ticks: int = 50) -> bytes:
+    """Scramble a comm key with the session id, for ``CMD_AUTH``.
+
+    A line-for-line port of ``pyzk``'s ``make_commkey`` (itself from
+    ZKTeco's ``commpro.c`` ``MakeKey``): reverse the key's 32 bits, add the
+    session id, XOR the four bytes with "ZKSO", swap the two 16-bit halves,
+    then XOR with ``ticks`` — whose byte also replaces the third one. Output
+    is pinned against pyzk's in tests/test_zkteco_protocol.py.
+
+    Note many terminals demand this handshake even with the key left at the
+    factory default of 0 — see "Comm key 0 still needs CMD_AUTH" in the
+    module docstring.
+    """
+    k = 0
+    for i in range(32):
+        k = (k << 1 | 1) if key & (1 << i) else k << 1
+    k += session_id
+    b = struct.pack("<I", k & 0xFFFFFFFF)
+    b = bytes((b[0] ^ ord("Z"), b[1] ^ ord("K"), b[2] ^ ord("S"), b[3] ^ ord("O")))
+    lo, hi = struct.unpack("<HH", b)
+    b = struct.pack("<HH", hi, lo)
+    t = 0xFF & ticks
+    return bytes((b[0] ^ t, b[1] ^ t, t, b[3] ^ t))
 
 
 def _checksum16(payload: bytes) -> int:
@@ -198,6 +279,133 @@ def _decode_time(enc_t: int) -> datetime:
     # (e.g. day 31 in a fake "February") — better to say so than to crash
     # the whole fetch over one bad record.
     return datetime(year, month, day, hour, minute, second)
+
+
+def _split_table(
+    buffer: bytes, count: int | None, sizes: tuple[int, ...], what: str
+) -> tuple[int, list[bytes]]:
+    """Strip a table's 4-byte size prefix and cut it into records.
+
+    Returns ``(record_size, records)``. ``count`` is the record count from
+    CMD_GET_FREE_SIZES: 0 means empty (pyzk doesn't even read the table), and
+    None means the device didn't say, in which case — as when total/count
+    matches no known layout — the largest layout in ``sizes`` is assumed.
+    """
+    fallback = sizes[-1]
+    if count == 0 or len(buffer) < 4:
+        return fallback, []
+    (total,) = struct.unpack("<I", buffer[:4])
+    body = buffer[4:]
+    if total != len(body):
+        log.warning(
+            "ZK device: %s prefix says %d bytes follow, got %d.", what, total, len(body)
+        )
+
+    record_size = fallback
+    if count:
+        per_record = total / count
+        if per_record in sizes:
+            record_size = int(per_record)
+        else:
+            log.warning(
+                "ZK device: %s is %d bytes for %d record(s) — %.1f each, which "
+                "matches no known layout %s. Assuming %d.",
+                what, total, count, per_record, sizes, fallback,
+            )
+
+    usable = len(body) - (len(body) % record_size)
+    if usable != len(body):
+        log.warning(
+            "ZK device: %s is %d bytes, not a multiple of %d — dropping the "
+            "trailing %d byte(s).",
+            what, len(body), record_size, len(body) - usable,
+        )
+    return record_size, [body[i:i + record_size] for i in range(0, usable, record_size)]
+
+
+def _parse_user(record_size: int, record: bytes) -> EmployeeRecord | None:
+    """One user-table record, in either layout (see ``_USER_28``/``_USER_STRUCT``)."""
+    if record_size == 28:
+        uid, privilege, _password, name, card, group, _tz, user_id = struct.unpack(_USER_28, record)
+        emp_code = str(user_id)
+        group_id = str(group)
+    else:
+        uid, privilege, _password, name, card, group, user_id_raw = struct.unpack(
+            _USER_STRUCT, record
+        )
+        emp_code = user_id_raw.split(b"\x00", 1)[0].decode("ascii", "ignore").strip()
+        group_id = group.split(b"\x00", 1)[0].decode("ascii", "ignore").strip()
+    if not emp_code:
+        return None
+    full_name = name.split(b"\x00", 1)[0].decode("utf-8", "ignore").strip()
+    first_name, _, last_name = full_name.partition(" ")
+    return EmployeeRecord(
+        external_id=str(uid),
+        emp_code=emp_code,
+        first_name=first_name,
+        last_name=last_name,
+        # The live user table carries no per-user enable/disable flag —
+        # that's a separate, unrelated command this doesn't use.
+        is_active=True,
+        raw={
+            "uid": uid,
+            "privilege": privilege,
+            "card_number": card,
+            "group_id": group_id,
+            "full_name": full_name,
+        },
+    )
+
+
+def _parse_attendance(
+    record_size: int, record: bytes, terminal_sn: str, uid_to_code: dict[int, str]
+) -> PunchEvent | None:
+    """One attendance-log record, in any of the three layouts."""
+    if record_size == 8:
+        uid, verify_type, raw_time, verify_state = struct.unpack(_ATTLOG_8, record)
+        # This layout carries the internal uid; the user table maps it to the
+        # user id everything else uses. pyzk falls back to the uid itself.
+        user_id = uid_to_code.get(uid, str(uid))
+    elif record_size == 16:
+        numeric_id, raw_time, verify_type, verify_state, _res, _workcode = struct.unpack(
+            _ATTLOG_16, record
+        )
+        user_id = str(numeric_id)
+    else:
+        _uid, user_id_raw, verify_type, raw_time, verify_state, _res = struct.unpack(
+            _ATTLOG_40, record
+        )
+        user_id = user_id_raw.split(b"\x00", 1)[0].decode("ascii", "ignore").strip()
+    if not user_id:
+        return None
+
+    (enc_time,) = struct.unpack("<I", raw_time)
+    try:
+        punch_time = _decode_time(enc_time)
+    except ValueError:
+        log.warning(
+            "ZK device %s: record for user %s has an unreadable timestamp "
+            "(%d) — the device's clock is likely unset. Skipping.",
+            terminal_sn, user_id, enc_time,
+        )
+        return None
+
+    direction = True if verify_state in _STATE_IN else False if verify_state in _STATE_OUT else None
+    return PunchEvent(
+        external_id=f"{user_id}:{enc_time}:{verify_state}",
+        emp_code=user_id,
+        punch_time_local=punch_time,
+        direction=direction,
+        terminal_sn=terminal_sn,
+        verify_type=_VERIFY_TYPE_LABEL.get(verify_type, str(verify_type)),
+        raw={
+            "user_id": user_id,
+            "verify_type": verify_type,
+            "verify_state": verify_state,
+            "enc_time": enc_time,
+            "record_size": record_size,
+        },
+    )
 
 
 def _parse_address(base_url: str) -> tuple[str, int]:
@@ -265,7 +473,11 @@ class _Connection:
         self.comm_key = comm_key
         self.timeout = timeout
         self.session_id = 0
-        self._reply_id = 0
+        #: The reply id of the *last* exchange, not the next one to send —
+        #: see _send for why that distinction is load-bearing. Starts one
+        #: step before 0 in the protocol's mod-65535 cycle, so the first
+        #: packet (CMD_CONNECT) goes out carrying reply id 0.
+        self._reply_id = _REPLY_ID_CYCLE - 1
         self.sock: socket.socket | None = None
 
     def __enter__(self) -> "_Connection":
@@ -298,20 +510,29 @@ class _Connection:
             raise ZKError(f"Cannot reach {self.host}:{self.port}: {exc}") from exc
 
         reply = self._exchange(CMD_CONNECT, b"")
+        # The device assigns the session id in its CONNECT reply, whatever
+        # that reply says — and CMD_AUTH below needs it for both its header
+        # and the key scramble, so it's taken before anything else. (_exchange
+        # has already taken the reply id the device echoed back.)
+        self.session_id = reply.session_id
+
         if reply.command == CMD_ACK_UNAUTH:
-            raise ZKAuthError(
-                "This device has a communication password (comm key) set. "
-                "BioBridge cannot authenticate against one yet — set the "
-                "device's comm key back to 0 to connect it, or leave it "
-                "disconnected until that is supported."
-            )
+            # Asked to authenticate. Normal even with the comm key at its
+            # factory default of 0 — many terminals always ask; see the
+            # module docstring. Same handshake pyzk does.
+            reply = self._exchange(CMD_AUTH, _make_commkey(self.comm_key, self.session_id))
+            if reply.command == CMD_ACK_UNAUTH:
+                raise ZKAuthError(
+                    "The device rejected the comm key. Check that the Comm key "
+                    "configured for this connection matches the one set on the "
+                    "device (Comm → Comm Key on most models). Leave it blank "
+                    "here if the device's is 0."
+                )
+
         if reply.command != CMD_ACK_OK:
             raise ZKError(
                 f"The device refused the connection (reply code {reply.command})."
             )
-        # _exchange() already advanced the reply-id counter past this first
-        # round trip; only the session id (assigned by the device) is new.
-        self.session_id = reply.session_id
 
     def _close(self) -> None:
         if self.sock is None:
@@ -327,31 +548,86 @@ class _Connection:
                 self.sock = None
 
     def _send(self, command: int, data: bytes) -> None:
+        """Frame and send one request.
+
+        The checksum is computed over the header carrying the *previous*
+        reply id (``self._reply_id``), while the header actually sent
+        carries the *next* one. That looks like an off-by-one, but it is
+        what real terminals validate against: it is exactly what ``pyzk``
+        (and the ``zkemsdk.c`` it was ported from) sends, and a terminal
+        that got a checksum over the sent reply id instead silently dropped
+        the packet — no reply, just a timeout. That was the one byte of
+        difference between this client's CMD_CONNECT and ``pyzk``'s against
+        a real device that answered ``pyzk`` and ignored this; the module
+        docstring has the whole story.
+        """
         assert self.sock is not None
+        next_reply_id = (self._reply_id + 1) % _REPLY_ID_CYCLE
         header = struct.pack("<HHHH", command, 0, self.session_id, self._reply_id)
-        body = header + data
-        checksum = _checksum16(body)
-        header = struct.pack("<HHHH", command, checksum, self.session_id, self._reply_id)
+        checksum = _checksum16(header + data)
+        header = struct.pack("<HHHH", command, checksum, self.session_id, next_reply_id)
         body = header + data
         packet = _MAGIC + struct.pack("<I", len(body)) + body
-        self.sock.sendall(packet)
+        try:
+            self.sock.sendall(packet)
+        except OSError as exc:
+            raise self._transport_error(exc) from exc
 
     def _recv(self) -> _Reply:
         assert self.sock is not None
-        outer = _recv_exact(self.sock, 8)
+        # _open()'s own try/except only covers socket.create_connection — the
+        # TCP handshake succeeding says nothing about whether the device will
+        # actually answer a request once one is sent. Every read after that
+        # point can still time out (device is up but never replies — wrong
+        # comm key, an unsupported protocol variant, or something between
+        # BioBridge and the device quietly eating the response) or drop the
+        # connection mid-reply, and neither is a ZKError on its own: it's a
+        # raw OSError (TimeoutError/ConnectionResetError/...) that would
+        # otherwise propagate straight past every ``except ProviderError``
+        # handler above this and surface as an opaque HTTP 500 instead of a
+        # message that says what actually went wrong.
+        try:
+            outer = _recv_exact(self.sock, 8)
+        except OSError as exc:
+            raise self._transport_error(exc) from exc
         if outer[:4] != _MAGIC:
             raise ZKError("The device sent a reply with no recognisable framing.")
         (length,) = struct.unpack("<I", outer[4:8])
         if length < 8:
             raise ZKError(f"The device sent an impossibly short reply ({length} bytes).")
-        body = _recv_exact(self.sock, length)
-        command, _checksum, session_id, reply_id = struct.unpack("<HHHH", body[:8])
+        try:
+            body = _recv_exact(self.sock, length)
+        except OSError as exc:
+            raise self._transport_error(exc) from exc
+        try:
+            command, _checksum, session_id, reply_id = struct.unpack("<HHHH", body[:8])
+        except struct.error as exc:
+            raise ZKError(f"The device's reply header was malformed: {exc}") from exc
         return _Reply(command=command, session_id=session_id, reply_id=reply_id, data=body[8:])
+
+    def _transport_error(self, exc: OSError) -> ZKError:
+        if isinstance(exc, TimeoutError):
+            return ZKError(
+                f"Timed out waiting for a reply from {self.host}:{self.port}. The "
+                "device accepted the connection but never answered within "
+                f"{self.timeout}s. A terminal silently ignores packets it can't "
+                "validate, so this usually means its firmware speaks a protocol "
+                "variant this doesn't handle; it can also mean something between "
+                "BioBridge and the device is accepting the connection but "
+                "dropping what's sent over it. (A wrong comm key is reported "
+                "as a rejection, not a timeout.)"
+            )
+        return ZKError(
+            f"Lost the connection to {self.host}:{self.port} mid-request: {exc}"
+        )
 
     def _exchange(self, command: int, data: bytes) -> _Reply:
         self._send(command, data)
         reply = self._recv()
-        self._reply_id += 1
+        # Take the id the device echoed rather than counting locally, the
+        # same as pyzk: the next request's checksum is computed over it (see
+        # _send), so it has to be the value the device itself last used.
+        self._reply_id = reply.reply_id
         return reply
 
     # -- commands --------------------------------------------------------
@@ -363,16 +639,38 @@ class _Connection:
         _, _, value = text.partition("=")
         return value.strip() or None
 
+    def read_sizes(self) -> tuple[int | None, int | None]:
+        """``(user count, attendance record count)``, None where the device
+        didn't say. Offsets are pyzk's read_sizes (fields 4 and 8 of 20
+        little-endian int32s). The counts are what ``_split_table`` divides
+        by to tell which record layout this firmware uses."""
+        reply = self._exchange(CMD_GET_FREE_SIZES, b"")
+        if reply.command != CMD_ACK_OK:
+            return None, None
+        data = reply.data
+        users = struct.unpack("<i", data[16:20])[0] if len(data) >= 20 else None
+        records = struct.unpack("<i", data[32:36])[0] if len(data) >= 36 else None
+        return users, records
+
     def get_attlog_count(self) -> int | None:
         self._exchange(CMD_DISABLEDEVICE, b"")
         try:
-            reply = self._exchange(CMD_GET_FREE_SIZES, b"")
+            _users, records = self.read_sizes()
         finally:
             self._exchange(CMD_ENABLEDEVICE, b"")
-        if reply.command != CMD_ACK_OK or len(reply.data) < 36:
-            return None
-        (count,) = struct.unpack("<I", reply.data[32:36])
-        return count
+        return records
+
+    def read_users(self) -> tuple[int, list[EmployeeRecord]]:
+        """The whole user table, as ``(record_size, users)`` — the record
+        size is also the layout any user written back must use."""
+        users_count, _records = self.read_sizes()
+        if users_count == 0:
+            # Nothing to tell the layout from; 72 is pyzk's default too.
+            return _USER_SIZES[-1], []
+        buffer = self.read_with_buffer(CMD_USERTEMP_RRQ, FCT_USER)
+        record_size, records = _split_table(buffer, users_count, _USER_SIZES, "user table")
+        parsed = (_parse_user(record_size, r) for r in records)
+        return record_size, [u for u in parsed if u is not None]
 
     def read_with_buffer(self, command: int, fct: int = 0, ext: int = 0) -> bytes:
         """Read a (possibly large) table via the device's chunked-buffer
@@ -551,21 +849,26 @@ class ZKDeviceProvider(AttendanceProvider):
     def fetch_punches(
         self, since: datetime | None = None, until: datetime | None = None
     ) -> Iterator[PunchEvent]:
+        # Everything is read inside one short session and parsed after it
+        # closes — never holding the device's only connection slot open while
+        # a caller consumes the generator.
+        uid_to_code: dict[int, str] = {}
         with self._connect() as conn:
             serial = self._serial(conn)
+            _users, records_count = conn.read_sizes()
+            if records_count == 0:
+                return
             buffer = conn.read_with_buffer(CMD_ATTLOG_RRQ)
-
-        usable = len(buffer) - (len(buffer) % _ATTLOG_RECORD_SIZE)
-        if usable != len(buffer):
-            log.warning(
-                "ZK device %s: attendance buffer is %d bytes, not a multiple of "
-                "%d — dropping the trailing %d byte(s).",
-                serial, len(buffer), _ATTLOG_RECORD_SIZE, len(buffer) - usable,
+            record_size, records = _split_table(
+                buffer, records_count, _ATTLOG_SIZES, "attendance log"
             )
+            if record_size == 8 and records:
+                # This layout carries uids, not user ids — see _ATTLOG_8.
+                _usize, users = conn.read_users()
+                uid_to_code = {u.raw["uid"]: u.emp_code for u in users}
 
-        for offset in range(0, usable, _ATTLOG_RECORD_SIZE):
-            record = buffer[offset:offset + _ATTLOG_RECORD_SIZE]
-            event = self._parse_record(record, serial)
+        for record in records:
+            event = _parse_attendance(record_size, record, serial, uid_to_code)
             if event is None:
                 continue
             if since is not None and event.punch_time_local < since:
@@ -574,85 +877,11 @@ class ZKDeviceProvider(AttendanceProvider):
                 continue
             yield event
 
-    @staticmethod
-    def _parse_record(record: bytes, terminal_sn: str) -> PunchEvent | None:
-        user_id = record[2:11].split(b"\x00", 1)[0].decode("ascii", "ignore").strip()
-        if not user_id:
-            return None
-        verify_type = record[26]
-        (enc_time,) = struct.unpack("<I", record[27:31])
-        verify_state = record[31]
-        try:
-            punch_time = _decode_time(enc_time)
-        except ValueError:
-            log.warning(
-                "ZK device %s: record for user %s has an unreadable timestamp "
-                "(%d) — the device's clock is likely unset. Skipping.",
-                terminal_sn, user_id, enc_time,
-            )
-            return None
-
-        direction = True if verify_state in _STATE_IN else False if verify_state in _STATE_OUT else None
-        return PunchEvent(
-            external_id=f"{user_id}:{enc_time}:{verify_state}",
-            emp_code=user_id,
-            punch_time_local=punch_time,
-            direction=direction,
-            terminal_sn=terminal_sn,
-            verify_type=_VERIFY_TYPE_LABEL.get(verify_type, str(verify_type)),
-            raw={
-                "user_id": user_id,
-                "verify_type": verify_type,
-                "verify_state": verify_state,
-                "enc_time": enc_time,
-            },
-        )
-
-    @staticmethod
-    def _parse_user_record(record: bytes) -> EmployeeRecord | None:
-        if len(record) < _USER_RECORD_SIZE:
-            return None
-        uid, privilege, _password, name, card_number, group_id, user_id_raw = struct.unpack(
-            _USER_STRUCT, record[:_USER_RECORD_SIZE]
-        )
-        emp_code = user_id_raw.split(b"\x00", 1)[0].decode("ascii", "ignore").strip()
-        if not emp_code:
-            return None
-        full_name = name.split(b"\x00", 1)[0].decode("utf-8", "ignore").strip()
-        first_name, _, last_name = full_name.partition(" ")
-        return EmployeeRecord(
-            external_id=str(uid),
-            emp_code=emp_code,
-            first_name=first_name,
-            last_name=last_name,
-            # The live user table carries no per-user enable/disable flag —
-            # that's a separate, unrelated command this doesn't use.
-            is_active=True,
-            raw={
-                "uid": uid,
-                "privilege": privilege,
-                "card_number": card_number,
-                "group_id": group_id.split(b"\x00", 1)[0].decode("ascii", "ignore").strip(),
-                "full_name": full_name,
-            },
-        )
-
     # -- optional ------------------------------------------------------
     def fetch_employees(self) -> Iterator[EmployeeRecord]:
         with self._connect() as conn:
-            buffer = conn.read_with_buffer(CMD_USERTEMP_RRQ, FCT_USER)
-
-        usable = len(buffer) - (len(buffer) % _USER_RECORD_SIZE)
-        if usable != len(buffer):
-            log.warning(
-                "ZK device: user table is %d bytes, not a multiple of %d — "
-                "dropping the trailing %d byte(s).",
-                len(buffer), _USER_RECORD_SIZE, len(buffer) - usable,
-            )
-        for offset in range(0, usable, _USER_RECORD_SIZE):
-            record = self._parse_user_record(buffer[offset:offset + _USER_RECORD_SIZE])
-            if record is not None:
-                yield record
+            _size, users = conn.read_users()
+        yield from users
 
     def create_employee(self, record: EmployeeRecord) -> EmployeeRecord:
         """Provision identity only — never a fingerprint or face template.
@@ -668,46 +897,59 @@ class ZKDeviceProvider(AttendanceProvider):
         emp_code = (record.emp_code or "").strip()
         if not emp_code:
             raise ZKError("Cannot provision a device user with no employee code.")
-        if len(emp_code) > _MAX_PROVISIONABLE_CODE_LEN:
-            raise ZKError(
-                f"'{emp_code}' is {len(emp_code)} characters, but this device's "
-                f"attendance log only records the first {_MAX_PROVISIONABLE_CODE_LEN} "
-                "characters of a user id. Provisioning it would enroll fine, but "
-                "every future punch from this person would come back truncated "
-                "and never match back to them — so BioBridge refuses. Use an "
-                f"employee code of {_MAX_PROVISIONABLE_CODE_LEN} characters or "
-                "fewer for devices on this protocol."
-            )
 
-        name = (record.full_name or emp_code).encode("utf-8", "ignore")[:24]
+        full_name = record.full_name or emp_code
         with self._connect() as conn:
-            buffer = conn.read_with_buffer(CMD_USERTEMP_RRQ, FCT_USER)
-            usable = len(buffer) - (len(buffer) % _USER_RECORD_SIZE)
-
-            existing_uids: list[int] = []
-            for offset in range(0, usable, _USER_RECORD_SIZE):
-                chunk = buffer[offset:offset + _USER_RECORD_SIZE]
-                existing = self._parse_user_record(chunk)
-                if existing is None:
-                    continue
-                existing_uids.append(existing.raw["uid"])
+            record_size, users = conn.read_users()
+            for existing in users:
                 if existing.emp_code == emp_code:
                     # Already provisioned under this code — nothing to do.
                     # Not an error: reconciliation runs are expected to call
                     # this again for people already handled on a prior run.
                     return existing
 
-            uid = max(existing_uids, default=0) + 1
-            payload = struct.pack(
-                _USER_STRUCT,
-                uid,
-                0,   # privilege: always an ordinary user, never admin
-                b"",  # password: none — verification stays biometric/PIN on the device
-                name,
-                0,   # card_number: no card provisioned remotely
-                b"",  # group_id: unused
-                emp_code.encode("ascii", "ignore")[:24],
-            )
+            # The code has to come back out of the attendance log exactly as
+            # it went in, or this person's punches never match them.
+            if record_size == 28:
+                # This layout stores the user id as a 32-bit number.
+                if not (emp_code.isdigit() and str(int(emp_code)) == emp_code
+                        and int(emp_code) <= 0xFFFFFFFF):
+                    raise ZKError(
+                        f"'{emp_code}' can't be provisioned on this device: its "
+                        "firmware stores user ids as plain numbers, so only an "
+                        "employee code made of digits (no leading zeros) would "
+                        "come back unchanged in its punches."
+                    )
+            elif len(emp_code) > 24:
+                raise ZKError(
+                    f"'{emp_code}' is {len(emp_code)} characters; this device "
+                    "stores at most 24 for a user id."
+                )
+
+            uid = max((u.raw["uid"] for u in users), default=0) + 1
+            if record_size == 28:
+                payload = struct.pack(
+                    _USER_28,
+                    uid,
+                    0,  # privilege: always an ordinary user, never admin
+                    b"",  # password: none — verification stays on the device
+                    full_name.encode("utf-8", "ignore")[:8],
+                    0,  # card: none provisioned remotely
+                    0,  # group
+                    0,  # timezone
+                    int(emp_code),
+                )
+            else:
+                payload = struct.pack(
+                    _USER_STRUCT,
+                    uid,
+                    0,   # privilege: always an ordinary user, never admin
+                    b"",  # password: none — verification stays biometric/PIN on the device
+                    full_name.encode("utf-8", "ignore")[:24],
+                    0,   # card_number: no card provisioned remotely
+                    b"",  # group_id: unused
+                    emp_code.encode("ascii", "ignore")[:24],
+                )
             conn.create_user(payload)
 
         return EmployeeRecord(

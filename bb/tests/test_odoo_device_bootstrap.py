@@ -117,10 +117,13 @@ class FakeXmlRpcModels:
 
         if model == "x_biobridge_device":
             if method == "search_read":
-                sn = self._domain_value(args[0], "x_serial_number")
+                # Every '=' leaf in the domain has to hold, like real Odoo —
+                # this used to look only at the serial number, which is how
+                # upsert_device creating a duplicate for a row with no company
+                # went unnoticed. An unset field reads as False.
                 matches = [
                     r for r in self.x_biobridge_device_records.values()
-                    if r["x_serial_number"] == sn
+                    if all(r.get(f, False) == v for f, op, v in args[0] if op == "=")
                 ]
                 return [{"id": r["id"]} for r in matches[:1]]
             if method == "write":
@@ -152,6 +155,20 @@ class FakeXmlRpcModels:
             new_id = self._new_id()
             self.hr_attendance_records[new_id] = {"id": new_id, **vals}
             return new_id
+        if model == "hr.attendance" and method == "search_read":
+            def matches(r):
+                for f, op, v in args[0]:
+                    if op == "in" and r.get(f) not in v:
+                        return False
+                    if op == "=" and r.get(f, False) != v:
+                        return False
+                return True
+            return [{"id": r["id"]} for r in self.hr_attendance_records.values() if matches(r)]
+        if model == "hr.attendance" and method == "write":
+            ids, vals = args
+            for i in ids:
+                self.hr_attendance_records[i].update(vals)
+            return True
 
         raise AssertionError(f"unhandled call: {model}.{method}({args!r}, {kwargs!r})")
 
@@ -219,7 +236,12 @@ def test_bootstrap_creates_model_fields_and_access():
     # is selected, distinct from ir.model.access's read/write grant above.
     rule = next(r for r in fake.ir_rule_rows if r[0] == device_model_id)
     assert rule[1] == "x_biobridge_device.biobridge_company"
-    assert rule[2] == "[('x_company_id', 'in', company_ids)]"
+    # The OR-with-unset half matters as much as the 'in' half — see
+    # test_company_rule_domain_treats_an_unset_company_as_visible_everywhere
+    # for why a plain 'in' domain would be a regression, not an improvement.
+    assert rule[2] == (
+        "['|', ('x_company_id', '=', False), ('x_company_id', 'in', company_ids)]"
+    )
 
     assert client._device_tracking_mode() == "bootstrap"
 
@@ -288,6 +310,57 @@ def test_bootstrap_backfills_company_rule_for_a_connection_bootstrapped_before_i
     )
 
 
+def _domain_matches(domain: list, record: dict) -> bool:
+    """A tiny stand-in for how Odoo itself evaluates a polish-notation
+    domain (process right-to-left, '|'/'&' pop and combine the two terms
+    already on the stack) — enough to prove the *filtering semantics* of a
+    domain_force string, not just eyeball its text."""
+    stack: list[bool] = []
+    for token in reversed(domain):
+        if token == "|":
+            a, b = stack.pop(), stack.pop()
+            stack.append(a or b)
+        elif token == "&":
+            a, b = stack.pop(), stack.pop()
+            stack.append(a and b)
+        else:
+            field, op, value = token
+            rv = record.get(field)
+            stack.append(rv == value if op == "=" else rv in value if op == "in" else False)
+    assert len(stack) == 1
+    return stack[0]
+
+
+def test_company_rule_domain_treats_an_unset_company_as_visible_everywhere():
+    """The concrete failure mode a plain ('x_company_id', 'in', company_ids)
+    domain would have: bootstrap never backfills a value onto a device row
+    that predates x_company_id, and upsert_device only ever sets it when
+    this *connection's own* company_id is configured — which is correctly
+    left unset for an ordinary single-company Odoo (see README). Either way
+    a real, common row ends up with x_company_id = False. A plain 'in'
+    domain would then hide that row from every company's session, not just
+    the ones it doesn't belong to — silently emptying "Biometric Devices"
+    for exactly the deployments that never asked for isolation. The '|'
+    with an explicit unset check is what keeps that row visible instead,
+    while still hiding a row that *does* belong to a different company."""
+    fake = FakeXmlRpcModels()
+    client = make_client(fake)
+    client.ensure_device_tracking_bootstrap()
+    device_model_id = fake.model_name_to_id["x_biobridge_device"]
+    domain_force = next(
+        df for mid, _name, df in fake.ir_rule_rows if mid == device_model_id
+    )
+    domain = eval(domain_force, {"company_ids": [10]})  # noqa: S307 - fixed literal, test-only
+
+    unscoped = {"x_company_id": False}
+    own_company = {"x_company_id": 10}
+    other_company = {"x_company_id": 20}
+
+    assert _domain_matches(domain, unscoped), "an un-backfilled device must stay visible"
+    assert _domain_matches(domain, own_company)
+    assert not _domain_matches(domain, other_company)
+
+
 def test_bootstrap_is_a_true_no_op_in_module_mode():
     """Real add-on installed — biobridge.device already handles its own
     company scoping server-side (see the add-on's _biobridge_upsert and its
@@ -337,6 +410,38 @@ def test_upsert_device_bootstrap_creates_then_updates():
     assert len(fake.x_biobridge_device_records) == 1
 
 
+def test_upsert_device_claims_a_row_with_no_company_instead_of_duplicating_it():
+    """A device pushed before the connection was pinned to a company (or
+    before x_company_id existed on an older bootstrap) has no company.
+    Pushing it again from a company-scoped connection must fill that in on
+    the same row — attendance already in Odoo points at it — not create a
+    second device for the same terminal."""
+    fake = FakeXmlRpcModels()
+    client = make_client(fake)
+    client.ensure_device_tracking_bootstrap()
+    old_id = client.upsert_device("GATE-01", name="Front Gate")  # unscoped
+    assert fake.x_biobridge_device_records[old_id].get("x_company_id") in (None, False)
+
+    client.creds.company_id = 3
+    assert client.upsert_device("GATE-01", location="Lobby") == old_id
+    assert len(fake.x_biobridge_device_records) == 1
+    assert fake.x_biobridge_device_records[old_id]["x_company_id"] == 3
+
+
+def test_upsert_device_leaves_another_companys_row_alone():
+    fake = FakeXmlRpcModels()
+    client = make_client(fake)
+    client.ensure_device_tracking_bootstrap()
+    client.creds.company_id = 3
+    theirs = client.upsert_device("GATE-01")
+
+    client.creds.company_id = 4
+    ours = client.upsert_device("GATE-01")
+    assert ours != theirs
+    assert fake.x_biobridge_device_records[theirs]["x_company_id"] == 3
+    assert fake.x_biobridge_device_records[ours]["x_company_id"] == 4
+
+
 def test_upsert_device_module_mode_delegates_to_addon_method():
     fake = FakeXmlRpcModels()
     fake.model_fields["hr.attendance"].add("device_id")
@@ -365,6 +470,31 @@ def test_create_attendance_uses_x_prefixed_field_in_bootstrap_mode():
     record = fake.hr_attendance_records[attendance_id]
     assert record.get("x_device_id") == 42
     assert "device_id" not in record
+
+
+def test_attendance_device_helpers_read_and_write_the_bootstrap_field():
+    """What tools/link_attendance_devices.py does over XML-RPC: find which
+    attendance records have no device, and set it on them."""
+    fake = FakeXmlRpcModels()
+    client = make_client(fake)
+    client.ensure_device_tracking_bootstrap()
+    device = client.upsert_device("GATE-01")
+    linked = client.create_attendance(11, datetime(2026, 1, 1, 8, 0), device_id=device)
+    unlinked = client.create_attendance(12, datetime(2026, 1, 1, 8, 5))
+
+    # 99999 doesn't exist in Odoo (deleted there, say): simply not returned.
+    assert client.attendance_ids_without_device([linked, unlinked, 99999]) == [unlinked]
+    client.set_attendance_device([unlinked], device)
+    assert fake.hr_attendance_records[unlinked]["x_device_id"] == device
+    assert client.attendance_ids_without_device([linked, unlinked]) == []
+
+
+def test_attendance_device_helpers_refuse_without_device_tracking():
+    client = make_client(FakeXmlRpcModels())
+    with pytest.raises(OdooError, match="Device tracking is not set up"):
+        client.attendance_ids_without_device([1])
+    with pytest.raises(OdooError, match="Device tracking is not set up"):
+        client.set_attendance_device([1], 5)
 
 
 def test_create_attendance_uses_plain_field_in_module_mode():

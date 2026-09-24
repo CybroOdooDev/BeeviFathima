@@ -535,6 +535,22 @@ class SourceOut(ORMModel):
     auto_provision_employees: bool
 
 
+class ProvisionedEmployee(BaseModel):
+    emp_code: str
+    name: str
+    error: str | None = None
+
+
+class ProvisionOut(BaseModel):
+    """What "Import terminals" did about Odoo employees missing from the
+    device — see app.services.provisioning."""
+    created: list[ProvisionedEmployee]
+    failed: list[ProvisionedEmployee]
+    already_on_device: int
+    already_mapped: int
+    no_badge_or_pin: int
+
+
 class DeviceOut(ORMModel):
     id: str
     source_id: str
@@ -546,6 +562,7 @@ class DeviceOut(ORMModel):
     pairing_override: str | None
     last_seen_at: datetime | None
     punch_count: int
+    missing_since: datetime | None
 
 
 class DeviceUpdate(BaseModel):

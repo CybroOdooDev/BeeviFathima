@@ -12,13 +12,15 @@ Serves one company's roster at a time, chosen with ``--company``. Company 1
 Sara Tanaka / Jane Haddad on MOCK-GATE-01/02. Company 2 is Liam Okafor / Priya
 Nakamura / Noah Fernandes on MOCK-GATE-03/04 — the same three people
 tools/create_company_employees.py creates in a real Odoo, so the two tools
-describe the same fake "company 2" everywhere. Run two instances on two ports,
-one per --company, to drive BioBridge sources against two OdooConnections that
-are scoped to two different company_id values and confirm each only ever sees
+describe the same fake "company 2" everywhere. Company 4 is Beevi (badge 5) / Marc
+(badge 6001) on MOCK-GATE-05/06. Run multiple instances on different
+ports, one per --company, to drive BioBridge sources against multiple OdooConnections
+that are scoped to different company_id values and confirm each only ever sees
 its own roster:
 
     python3 tools/mock_biotime.py --port 8099 --company 1 &
     python3 tools/mock_biotime.py --port 8098 --company 2 &
+    python3 tools/mock_biotime.py --port 8097 --company 4 &
 """
 
 from __future__ import annotations
@@ -63,9 +65,15 @@ _COMPANY_2_DEPTS = [
     _dept(3, "3", "Facilities"),
 ]
 
-#: Two self-contained rosters, selected at startup by --company. Every id
+_COMPANY_4_DEPTS = [
+    _dept(1, "1", "Operations"),
+    _dept(2, "2", "Quality"),
+    _dept(3, "3", "Support"),
+]
+
+#: Three self-contained rosters, selected at startup by --company. Every id
 #: (department, employee, terminal) restarts from the same small numbers in
-#: each dataset — the two are never mixed into one process, so nothing needs
+#: each dataset — the rosters are never mixed into one process, so nothing needs
 #: them to be globally unique, and it keeps each dataset readable on its own.
 DATASETS: dict[int, dict] = {
     1: _dataset(
@@ -93,6 +101,19 @@ DATASETS: dict[int, dict] = {
         [
             _term(201, "MOCK-GATE-03", "North Entrance", "10.0.1.11"),
             _term(202, "MOCK-GATE-04", "Loading Bay", "10.0.1.12"),
+        ],
+    ),
+    #: Company 4: Beevi (badge 5) and Marc (badge 6001). No last names —
+    #: BioTime sends last_name as an empty string when none is enrolled.
+    4: _dataset(
+        _COMPANY_4_DEPTS,
+        [
+            _emp(41, "5", "Beevi", "", _COMPANY_4_DEPTS[0]),
+            _emp(42, "6001", "marc", "", _COMPANY_4_DEPTS[1]),
+        ],
+        [
+            _term(401, "MOCK-GATE-05", "East Entrance", "10.0.2.11"),
+            _term(402, "MOCK-GATE-06", "West Exit", "10.0.2.12"),
         ],
     ),
 }
@@ -226,10 +247,10 @@ def main():
         help="Which fake roster to serve: 1 (default) is Ahmed Sharma / Sara "
              "Tanaka / Jane Haddad on MOCK-GATE-01/02; 2 is Liam Okafor / "
              "Priya Nakamura / Noah Fernandes on MOCK-GATE-03/04 — the same "
-             "people tools/create_company_employees.py makes in a real Odoo. "
+             "people tools/create_company_employees.py makes in a real Odoo; "
+             "4 is Beevi (5) / Marc (6001) on MOCK-GATE-05/06. "
              "Run one instance per company, on different ports, to test "
-             "BioBridge sources against two company_id-scoped OdooConnections "
-             "at once.",
+             "BioBridge sources against multiple company_id-scoped OdooConnections.",
     )
     parser.add_argument(
         "--host", default="127.0.0.1",
@@ -258,7 +279,7 @@ def main():
         f"  point the source's Server URL at exactly http://{args.host}:{args.port}",
         flush=True,
     )
-    names = ", ".join(f"{e['first_name']} {e['last_name']}" for e in EMPLOYEES)
+    names = ", ".join(f"{e['first_name']} {e['last_name']}".strip() for e in EMPLOYEES)
     print(f"  company {args.company}: {names}", flush=True)
     if args.host == "127.0.0.1":
         print("  loopback only — pass --host 0.0.0.0 if BioBridge is not on this machine",

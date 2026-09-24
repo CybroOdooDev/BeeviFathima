@@ -139,12 +139,11 @@ def make_odoo(client, token):
     return response.json()
 
 
-def make_source(client, token):
-    response = client.post(
-        "/api/v1/sources",
-        headers=auth(token),
-        json={"provider": DISCOVERABLE_SLUG, "base_url": "https://device.test"},
-    )
+def make_source(client, token, name=None):
+    payload = {"provider": DISCOVERABLE_SLUG, "base_url": "https://device.test"}
+    if name is not None:
+        payload["name"] = name
+    response = client.post("/api/v1/sources", headers=auth(token), json=payload)
     assert response.status_code == 201, response.text
     return response.json()
 
@@ -313,3 +312,97 @@ def test_discover_devices_reports_which_devices_odoo_rejected(client, monkeypatc
     assert message is not None
     assert "GATE-02" in message
     assert "no access rights" in message
+
+
+def test_two_sources_with_the_same_serial_number_do_not_collide(client, monkeypatch):
+    """Regression for the real customer report: "Company2 Biotime" showed
+    the other source's terminals too. A serial number is only unique within
+    its own source/vendor namespace — two sources (e.g. two BioTime accounts,
+    one per company) reporting an overlapping serial must end up as two
+    separate Device rows, not one shared/overwritten row."""
+    token = signup(client, "Acme", "owner@acme.com")
+    make_odoo(client, token)
+    source_a = make_source(client, token, name="Company1 Biotime")
+    source_b = make_source(client, token, name="Company2 Biotime")
+
+    fake_odoo = FakeOdoo()
+    monkeypatch.setattr(connections_mod, "build_odoo_client", lambda t, c: fake_odoo)
+
+    # Both sources happen to report a terminal with the same serial number —
+    # entirely plausible for two independent vendor accounts.
+    overlapping = [{"serial_number": "GATE-01", "alias": "Shared serial"}]
+    _FakeDiscoverableProvider.terminals = overlapping
+    resp_a = client.post(
+        f"/api/v1/sources/{source_a['id']}/discover-devices", headers=auth(token)
+    )
+    assert resp_a.status_code == 200, resp_a.text
+    assert len(resp_a.json()) == 1
+
+    _FakeDiscoverableProvider.terminals = overlapping
+    resp_b = client.post(
+        f"/api/v1/sources/{source_b['id']}/discover-devices", headers=auth(token)
+    )
+    assert resp_b.status_code == 200, resp_b.text
+    assert len(resp_b.json()) == 1
+
+    # Each source still reports exactly its own device — importing into B
+    # did not fold into, rename, or steal A's row (or vice versa).
+    all_devices = client.get("/api/v1/devices", headers=auth(token)).json()
+    by_source = {}
+    for d in all_devices:
+        by_source.setdefault(d["source_id"], []).append(d)
+    assert len(by_source[source_a["id"]]) == 1
+    assert len(by_source[source_b["id"]]) == 1
+    assert by_source[source_a["id"]][0]["id"] != by_source[source_b["id"]][0]["id"]
+    assert by_source[source_a["id"]][0]["serial_number"] == "GATE-01"
+    assert by_source[source_b["id"]][0]["serial_number"] == "GATE-01"
+
+
+def test_a_terminal_no_longer_reported_is_flagged_missing_not_deleted(client, monkeypatch):
+    token = signup(client, "Acme", "owner@acme.com")
+    make_odoo(client, token)
+    source = make_source(client, token)
+
+    fake_odoo = FakeOdoo()
+    monkeypatch.setattr(connections_mod, "build_odoo_client", lambda t, c: fake_odoo)
+
+    _FakeDiscoverableProvider.terminals = list(TERMINALS)
+    first = client.post(
+        f"/api/v1/sources/{source['id']}/discover-devices", headers=auth(token)
+    )
+    response_ids = {d["serial_number"]: d["id"] for d in first.json()}
+    assert len(response_ids) == 3
+    assert all(d["missing_since"] is None for d in first.json())
+
+    # GATE-03 stops being reported by the provider.
+    _FakeDiscoverableProvider.terminals = [
+        row for row in TERMINALS if row["serial_number"] != "GATE-03"
+    ]
+    second = client.post(
+        f"/api/v1/sources/{source['id']}/discover-devices", headers=auth(token)
+    )
+    assert second.status_code == 200, second.text
+    by_serial = {d["serial_number"]: d for d in second.json()}
+    # Still present — flagged, not deleted.
+    assert set(by_serial) == {"GATE-01", "GATE-02", "GATE-03"}
+    assert by_serial["GATE-01"]["missing_since"] is None
+    assert by_serial["GATE-02"]["missing_since"] is None
+    assert by_serial["GATE-03"]["missing_since"] is not None
+    assert by_serial["GATE-03"]["id"] == response_ids["GATE-03"]
+    first_missing_since = by_serial["GATE-03"]["missing_since"]
+
+    # It stays missing on a repeat import that still doesn't see it — the
+    # timestamp reflects when it first went missing, not the latest check.
+    third = client.post(
+        f"/api/v1/sources/{source['id']}/discover-devices", headers=auth(token)
+    )
+    by_serial = {d["serial_number"]: d for d in third.json()}
+    assert by_serial["GATE-03"]["missing_since"] == first_missing_since
+
+    # It reappears — the flag clears.
+    _FakeDiscoverableProvider.terminals = list(TERMINALS)
+    fourth = client.post(
+        f"/api/v1/sources/{source['id']}/discover-devices", headers=auth(token)
+    )
+    by_serial = {d["serial_number"]: d for d in fourth.json()}
+    assert by_serial["GATE-03"]["missing_since"] is None

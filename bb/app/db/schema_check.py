@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sqlalchemy import Engine, inspect
+from sqlalchemy import Engine, UniqueConstraint, inspect
 
 
 @dataclass
@@ -27,6 +27,13 @@ class SchemaDrift:
     #: null. Reported separately because relaxing one is not an additive change:
     #: PostgreSQL takes an ALTER, SQLite has to rebuild the table.
     over_strict_columns: list[tuple[str, str]] = field(default_factory=list)
+    #: (table, constraint name) a named unique constraint whose live column set
+    #: no longer matches what the model declares for that same name — e.g. a
+    #: constraint widened from (tenant_id, serial_number) to (tenant_id,
+    #: source_id, serial_number). Same "not additive" reason as above: neither
+    #: backend can ALTER a constraint's columns in place, so this needs the
+    #: same table rebuild.
+    mismatched_unique_constraints: list[tuple[str, str]] = field(default_factory=list)
 
     @property
     def is_empty(self) -> bool:
@@ -35,6 +42,7 @@ class SchemaDrift:
             or self.missing_columns
             or self.missing_indexes
             or self.over_strict_columns
+            or self.mismatched_unique_constraints
         )
 
     def summary(self) -> str:
@@ -51,6 +59,11 @@ class SchemaDrift:
             parts.append(
                 f"{len(self.over_strict_columns)} column(s) still NOT NULL: "
                 + ", ".join(f"{t}.{c}" for t, c in sorted(self.over_strict_columns))
+            )
+        if self.mismatched_unique_constraints:
+            parts.append(
+                f"{len(self.mismatched_unique_constraints)} constraint(s) changed shape: "
+                + ", ".join(f"{t}.{c}" for t, c in sorted(self.mismatched_unique_constraints))
             )
         return "; ".join(parts) or "none"
 
@@ -87,5 +100,24 @@ def detect_drift(engine: Engine, metadata) -> SchemaDrift:
         drift.missing_indexes += [
             i.name for i in table.indexes if i.name not in live_indexes
         ]
+
+        # Matched by name, not by column set: a constraint the model dropped
+        # entirely is a rollback (left alone, same rule as a dropped column),
+        # and a brand new constraint name is caught by no live match at all —
+        # only a *same-named* constraint whose columns disagree is drift here.
+        live_uniques = {
+            u["name"]: set(u["column_names"])
+            for u in inspector.get_unique_constraints(name)
+            if u["name"]
+        }
+        for constraint in table.constraints:
+            if not isinstance(constraint, UniqueConstraint) or not constraint.name:
+                continue
+            live_cols = live_uniques.get(constraint.name)
+            if live_cols is None:
+                continue
+            model_cols = {c.name for c in constraint.columns}
+            if live_cols != model_cols:
+                drift.mismatched_unique_constraints.append((name, constraint.name))
 
     return drift

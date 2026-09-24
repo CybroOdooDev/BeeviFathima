@@ -450,13 +450,24 @@ async function renderOdoo(mount) {
  * Online too). Both read the same on this card; only the button differs. */
 function deviceTrackingRow(odoo, readonly) {
   if (odoo.has_device_tracking) {
-    const via = odoo.device_tracking_mode === 'module'
+    const isModule = odoo.device_tracking_mode === 'module';
+    const via = isModule
       ? 'via the installed BioBridge Attendance Devices add-on'
       : 'set up automatically, no Odoo add-on installed';
+    // Setup adds only what's missing, so re-running it is how a connection
+    // set up by an older version gets fields added since — the device
+    // Company field and the rule that hides other companies' devices. This
+    // used to disappear once tracking was on, leaving no way to do that.
+    // Not offered for the add-on: it brings its own fields and rules.
+    const rerun = isModule || readonly ? '' : `
+        <button type="button" class="sm link" id="enableDeviceTracking"
+                title="Adds anything newer versions of BioBridge set up that this Odoo doesn't have yet. Never changes or removes what's there.">
+          Update setup</button>`;
     return `
-      <div class="row" style="margin-bottom:14px">
+      <div class="row" style="margin-bottom:14px;align-items:center;gap:10px">
         ${pill('active', 'Device tracking on')}
         <span style="color:var(--muted);font-size:12.5px">${esc(via)}</span>
+        ${rerun}
       </div>`;
   }
   return `
@@ -544,6 +555,14 @@ async function renderBiometric(mount) {
   // versa. See AttendanceProvider.kinds.
   const providers = allProviders.filter((p) => (p.kinds || ['platform', 'device']).includes(mode));
 
+  // Providers that can create a user on the device — "Import terminals"
+  // also creates missing Odoo employees there for these (see
+  // app/services/provisioning.py for the rule).
+  const canProvision = new Set(allProviders
+    .filter((p) => (p.capabilities || []).includes('read_employees')
+      && (p.capabilities || []).includes('write_employees'))
+    .map((p) => p.slug));
+
   const devicesBySource = {};
   devices.forEach((d) => { (devicesBySource[d.source_id] ||= []).push(d); });
 
@@ -561,7 +580,7 @@ async function renderBiometric(mount) {
 
       ${showPicker ? modePicker(mode, readonly) : ''}
 
-      ${sources.map((s) => sourceCard(s, devicesBySource[s.id] || [], readonly)).join('')}
+      ${sources.map((s) => sourceCard(s, devicesBySource[s.id] || [], readonly, canProvision.has(s.provider))).join('')}
       ${!sources.length ? empty(
         'No biometric connections yet',
         readonly || !mode ? '' : 'Add one below.'
@@ -602,7 +621,24 @@ function modePicker(currentMode, readonly) {
       </div>`}`;
 }
 
-function sourceCard(source, devices, readonly) {
+/** One line for the toast after Import terminals created employees. */
+function provisionSummary(r) {
+  const parts = [];
+  const names = (list) => list.slice(0, 5).map((e) => `${e.name} (${e.emp_code})`).join(', ')
+    + (list.length > 5 ? `, and ${list.length - 5} more` : '');
+  if (r.created.length) parts.push(`Created on the device: ${names(r.created)}.`);
+  else parts.push('No new employees to create on the device.');
+  if (r.failed.length) {
+    parts.push(`Could not create ${r.failed.length}: `
+      + r.failed.slice(0, 3).map((e) => `${e.emp_code} — ${e.error}`).join('; ') + '.');
+  }
+  if (r.no_badge_or_pin) {
+    parts.push(`${r.no_badge_or_pin} Odoo employee${r.no_badge_or_pin === 1 ? ' has' : 's have'} no Badge ID or PIN, so ${r.no_badge_or_pin === 1 ? 'was' : 'were'} skipped.`);
+  }
+  return parts.join(' ');
+}
+
+function sourceCard(source, devices, readonly, canProvision = false) {
   const kindLabel = source.connection_kind === 'device' ? 'Individual device' : 'Platform';
   const providerLabel = PROVIDER_LABEL[source.provider];
   const isEditing = editingSourceId === source.id;
@@ -631,7 +667,8 @@ function sourceCard(source, devices, readonly) {
         <div class="row" style="gap:8px;flex-wrap:wrap">
           <button type="button" class="sm" data-edit="${esc(source.id)}">${isEditing ? 'Close' : 'Edit'}</button>
           <button type="button" class="sm" data-test="${esc(source.id)}">Test connection</button>
-          <button type="button" class="sm" data-discover="${esc(source.id)}">Import terminals</button>
+          <button type="button" class="sm" data-discover="${esc(source.id)}"
+                  ${canProvision ? 'data-provision="1" title="Also creates Odoo employees who have a Badge ID or PIN and aren\'t on the device yet."' : ''}>Import terminals</button>
           ${!isConfirming ? `<button type="button" class="sm link" data-remove="${esc(source.id)}">Remove</button>` : ''}
         </div>
         ${isConfirming ? `
@@ -650,7 +687,12 @@ function sourceCard(source, devices, readonly) {
             <tbody>
               ${devices.map((d) => `
                 <tr data-device="${esc(d.id)}">
-                  <td>${esc(d.alias || '—')}</td>
+                  <td>
+                    ${esc(d.alias || '—')}
+                    ${d.missing_since
+                      ? ` ${pill('missing')} <span class="hint" title="Not reported by this connection's last &quot;Import terminals&quot; run">since ${esc(fmtAgo(d.missing_since))}</span>`
+                      : ''}
+                  </td>
                   <td class="mono">${esc(d.serial_number)}</td>
                   <td class="mono">${esc(d.ip_address || '—')}</td>
                   <td class="num">${esc(d.punch_count)}</td>
@@ -839,9 +881,21 @@ function wireBiometric(mount, mode) {
     button.addEventListener('click', (event) =>
       busy(event.target, () =>
         guard(async () => {
-          await api.post(`/sources/${button.dataset.discover}/discover-devices`);
+          const sourceId = button.dataset.discover;
+          await api.post(`/sources/${sourceId}/discover-devices`);
+          toast('Terminals imported', 'ok');
+          if (button.dataset.provision) {
+            // Separate call on purpose: the terminals are already imported
+            // whatever happens here, and this reports its own result.
+            try {
+              const result = await api.post(`/sources/${sourceId}/provision-employees`);
+              toast(provisionSummary(result), result.failed.length ? 'bad' : 'ok');
+            } catch (error) {
+              if (error.status !== 401) toast(`Employees not created on the device: ${error.message}`, 'bad');
+            }
+          }
           await renderBiometric(mount);
-        }, 'Terminals imported')
+        })
       )
     );
   });

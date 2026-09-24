@@ -27,7 +27,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from sqlalchemy import MetaData, text  # noqa: E402
+from sqlalchemy import MetaData, inspect, text  # noqa: E402
 from sqlalchemy.engine import make_url  # noqa: E402
 from sqlalchemy.schema import CreateColumn, CreateTable  # noqa: E402
 
@@ -112,11 +112,10 @@ def backup_sqlite() -> str | None:
 def relax_not_null(table_name: str, column_name: str) -> None:
     """Let a column that the model now calls nullable actually hold null.
 
-    PostgreSQL has a statement for it. SQLite does not — ``ALTER COLUMN`` does
-    not exist there — so the table is rebuilt: create the new shape under a
-    temporary name, copy every row, drop the old one, rename. That is SQLite's
-    own documented procedure, and it runs inside a transaction with foreign keys
-    off so a half-done rebuild rolls back whole.
+    PostgreSQL has a statement for it — SQLite does not, so this delegates to
+    ``rebuild_table``, which rebuilds the whole table from current model
+    metadata (and so also happens to pick up any other pending shape change,
+    such as a widened unique constraint, in the same pass).
     """
     backend = make_url(settings.database_url).get_backend_name()
 
@@ -127,8 +126,42 @@ def relax_not_null(table_name: str, column_name: str) -> None:
             )
         return
 
+    rebuild_table(table_name)
+
+
+def rebuild_table(table_name: str) -> None:
+    """Rebuild one SQLite table from the model's current metadata.
+
+    SQLite has no ``ALTER COLUMN`` and no way to change a constraint's columns
+    in place, so both a relaxed NOT NULL and a reshaped unique constraint are
+    fixed the same way: create the new shape under a temporary name, copy every
+    row across, drop the old table, rename. That is SQLite's own documented
+    procedure, and it runs inside a transaction with foreign keys off so a
+    half-done rebuild rolls back whole rather than leaving the table missing.
+
+    Only used on SQLite — PostgreSQL has real ``ALTER`` statements for both
+    cases, so callers branch on backend before reaching here.
+    """
     table = Base.metadata.tables[table_name]
-    column_list = ", ".join(c.name for c in table.columns)
+
+    # The live table may not yet have every column the model declares — a
+    # column add and a constraint reshape can land in the same migration
+    # (exactly what shipped together here: Device gained both a new
+    # ``missing_since`` column and a widened ``uq_device_serial`` at once),
+    # and this runs regardless of which order the caller applied them in.
+    # Copying only the columns actually present in the old table lets a
+    # not-yet-added column fall back to its default in the new one, instead
+    # of a hard crash on "no such column" for a column that simply hasn't
+    # been ALTERed in yet.
+    live_column_names = {c["name"] for c in inspect(engine).get_columns(table_name)}
+    model_column_names = [c.name for c in table.columns]
+    copy_columns = [name for name in model_column_names if name in live_column_names]
+    skipped = [name for name in model_column_names if name not in live_column_names]
+    if skipped:
+        print(f"  ({table_name} doesn't have {', '.join(skipped)} yet — "
+              f"the rebuilt table will carry {'them' if len(skipped) > 1 else 'it'} "
+              f"as its column default, not a copied value)")
+    column_list = ", ".join(copy_columns)
     temp = f"{table_name}__rebuild"
 
     # The new shape, compiled to SQL under a temporary name.
@@ -184,6 +217,38 @@ def relax_not_null(table_name: str, column_name: str) -> None:
             print(log_line)
 
 
+def reshape_unique_constraint(table_name: str, constraint_name: str) -> None:
+    """Make a named unique constraint match the columns the model now declares.
+
+    PostgreSQL can drop and re-add a named constraint in place. SQLite can do
+    neither, so it goes through the same whole-table rebuild as
+    ``relax_not_null`` — which is also exactly why a table needing both fixes
+    is only rebuilt once (see ``main``), not twice.
+    """
+    backend = make_url(settings.database_url).get_backend_name()
+
+    if backend != "sqlite":
+        table = Base.metadata.tables[table_name]
+        constraint = next(
+            c for c in table.constraints
+            if getattr(c, "name", None) == constraint_name
+        )
+        columns = ", ".join(c.name for c in constraint.columns)
+        with engine.begin() as connection:
+            connection.execute(
+                text(f"ALTER TABLE {table_name} DROP CONSTRAINT {constraint_name}")
+            )
+            connection.execute(
+                text(
+                    f"ALTER TABLE {table_name} "
+                    f"ADD CONSTRAINT {constraint_name} UNIQUE ({columns})"
+                )
+            )
+        return
+
+    rebuild_table(table_name)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -192,9 +257,14 @@ def main() -> int:
 
     print(f"database: {settings.database_url}\n")
     missing_tables, addable, missing_indexes, blocked = plan()
-    over_strict = detect_drift(engine, Base.metadata).over_strict_columns
+    drift = detect_drift(engine, Base.metadata)
+    over_strict = drift.over_strict_columns
+    mismatched_constraints = drift.mismatched_unique_constraints
 
-    if not (missing_tables or addable or missing_indexes or blocked or over_strict):
+    if not (
+        missing_tables or addable or missing_indexes or blocked
+        or over_strict or mismatched_constraints
+    ):
         print("Schema is up to date — nothing to add.")
         return 0
 
@@ -207,33 +277,73 @@ def main() -> int:
     for table, column in over_strict:
         print(f"  DROP NOT NULL   {table}.{column}"
               f"   (the model allows null; the database does not)")
+    for table, constraint in mismatched_constraints:
+        print(f"  RESHAPE UNIQUE  {table}.{constraint}"
+              f"   (the model's column list for this constraint no longer matches the database)")
     for note in blocked:
         print(f"  NEEDS ATTENTION {note}")
 
-    if over_strict:
-        print("\nDropping a NOT NULL is the one change here that is not additive:"
-              "\non SQLite the table is rebuilt, so the database file is copied"
-              "\nfirst and the rebuild runs in a transaction.")
+    # Not additive changes — on SQLite both go through the same whole-table
+    # rebuild (create-copy-drop-rename), which is why a table appearing in
+    # both lists below is only rebuilt once, not twice.
+    if over_strict or mismatched_constraints:
+        print("\nRelaxing a NOT NULL or reshaping a unique constraint is not additive:"
+              "\non SQLite the affected table is rebuilt, so the database file is"
+              "\ncopied first and the rebuild runs in a transaction.")
 
     if not args.apply:
         print("\nReport only. Re-run with --apply to make the changes.")
         return 0
 
-    if over_strict:
+    # A table this run rebuilds (SQLite only) is built from the model's
+    # *current* full column list — see rebuild_table — so any column that
+    # table needed added is already sitting on it, NULL, the moment the
+    # rebuild finishes. Tracked here so the ADD COLUMN pass below can skip
+    # those columns: running ALTER TABLE ADD COLUMN for one a rebuild just
+    # created fails outright with "duplicate column name", which is exactly
+    # what happens when a release adds a column and reshapes a constraint on
+    # the same table at once (Device.missing_since + uq_device_serial did
+    # both) and --apply tried to do both the naive way.
+    rebuilt_tables: set[str] = set()
+
+    if over_strict or mismatched_constraints:
         backup = backup_sqlite()
         if backup:
             print(f"\nbacked up to {backup}")
-        for table, column in over_strict:
-            relax_not_null(table, column)
-            print(f"dropped NOT NULL from {table}.{column}")
+
+        backend = make_url(settings.database_url).get_backend_name()
+        if backend == "sqlite":
+            # One rebuild per table covers every reason it needs one.
+            rebuilt_tables = {t for t, _ in over_strict} | {
+                t for t, _ in mismatched_constraints
+            }
+            for table in sorted(rebuilt_tables):
+                rebuild_table(table)
+            for table, column in over_strict:
+                print(f"dropped NOT NULL from {table}.{column}")
+            for table, constraint in mismatched_constraints:
+                print(f"reshaped unique constraint {table}.{constraint}")
+        else:
+            for table, column in over_strict:
+                relax_not_null(table, column)
+                print(f"dropped NOT NULL from {table}.{column}")
+            for table, constraint in mismatched_constraints:
+                reshape_unique_constraint(table, constraint)
+                print(f"reshaped unique constraint {table}.{constraint}")
 
     if missing_tables:
         Base.metadata.create_all(engine)
         print(f"\ncreated {len(missing_tables)} table(s)")
 
-    if addable:
+    remaining_addable = [(t, ddl) for t, ddl in addable if t not in rebuilt_tables]
+    if rebuilt_tables:
+        for table, ddl in addable:
+            if table in rebuilt_tables:
+                print(f"skipped ADD COLUMN {table}.{ddl.split()[0]} — "
+                      f"the rebuild above already gave {table} every current column")
+    if remaining_addable:
         with engine.begin() as connection:
-            for table, ddl in addable:
+            for table, ddl in remaining_addable:
                 connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {ddl}"))
                 print(f"added {table}.{ddl.split()[0]}")
 

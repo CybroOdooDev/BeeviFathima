@@ -165,7 +165,17 @@ class DeviceSource(Base, UUIDPk, Timestamped):
 class Device(Base, UUIDPk, Timestamped):
     __tablename__ = "device"
     __table_args__ = (
-        UniqueConstraint("tenant_id", "serial_number", name="uq_device_serial"),
+        # Scoped to (tenant, source, serial) — not just (tenant, serial). A
+        # serial number is only unique within the terminal vendor's own
+        # namespace, and two different DeviceSources (e.g. two BioTime
+        # accounts, one per company) can each report a terminal with the same
+        # serial without being the same physical device. The old
+        # tenant-wide constraint made whichever source imported a serial
+        # first "own" it forever, silently folding a second company's
+        # terminal into the first company's device list.
+        UniqueConstraint(
+            "tenant_id", "source_id", "serial_number", name="uq_device_serial"
+        ),
     )
 
     tenant_id: Mapped[str] = mapped_column(
@@ -188,5 +198,13 @@ class Device(Base, UUIDPk, Timestamped):
 
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     punch_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    #: Set the first time an "Import terminals" run for this device's source
+    #: no longer reports it, and cleared the moment it reappears. Null means
+    #: the device's source currently reports it (or it has never been
+    #: checked). Left untouched rather than disabling or deleting the row so
+    #: its history (alias, punch_count, pairing_override) survives a terminal
+    #: being briefly offline or renamed on the provider side.
+    missing_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     source: Mapped[DeviceSource] = relationship(back_populates="devices")

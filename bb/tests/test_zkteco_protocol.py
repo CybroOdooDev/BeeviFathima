@@ -22,6 +22,7 @@ from app.integrations.providers.zkteco import (
     CMD_ACK_OK,
     CMD_ACK_UNAUTH,
     CMD_ATTLOG_RRQ,
+    CMD_AUTH,
     CMD_CONNECT,
     CMD_DATA,
     CMD_DISABLEDEVICE,
@@ -38,10 +39,13 @@ from app.integrations.providers.zkteco import (
     ZKDeviceProvider,
     ZKError,
     _checksum16,
+    _make_commkey,
     _CMD_PREPARE_BUFFER,
     _CMD_READ_BUFFER,
+    _Connection,
     _decode_time,
     _parse_address,
+    _split_table,
     _USER_STRUCT,
 )
 
@@ -68,31 +72,65 @@ def _recv_all(sock: socket.socket, size: int) -> bytes:
     return buf
 
 
-def _recv_packet(sock: socket.socket) -> tuple[int, int, int, bytes]:
+def _recv_packet(sock: socket.socket) -> tuple[int, int, int, bytes, bool]:
     outer = _recv_all(sock, 8)
     assert outer[:4] == MAGIC
     (length,) = struct.unpack("<I", outer[4:8])
     body = _recv_all(sock, length)
-    command, _checksum, session_id, reply_id = struct.unpack("<HHHH", body[:8])
-    return command, session_id, reply_id, body[8:]
+    command, checksum, session_id, reply_id = struct.unpack("<HHHH", body[:8])
+    return command, session_id, reply_id, body[8:], checksum == _expected_checksum(
+        command, session_id, reply_id, body[8:]
+    )
 
 
-def _encode_attlog_record(
-    user_id: str, when: datetime, verify_type: int = 1, verify_state: int = 0
-) -> bytes:
-    enc_time = (
+def _expected_checksum(command: int, session_id: int, reply_id: int, data: bytes) -> int:
+    """What a real terminal accepts: the checksum over the header carrying
+    the reply id *before* this one (mod 65535), not the one in the packet.
+    Taken from pyzk's __create_header, the client that connected to a real
+    terminal which silently ignored a checksum computed over the sent id —
+    see "The reply-id checksum rule" in the module docstring."""
+    previous = (reply_id - 1) % 65535
+    return _reference_checksum16(struct.pack("<HHHH", command, 0, session_id, previous) + data)
+
+
+def _enc_time(when: datetime) -> int:
+    return (
         ((when.year % 100) * 12 * 31 + (when.month - 1) * 31 + (when.day - 1)) * 86400
         + (when.hour * 60 + when.minute) * 60
         + when.second
     )
-    record = bytearray(40)
-    struct.pack_into("<H", record, 0, 1)
-    uid_bytes = user_id.encode("ascii")[:9]
-    record[2 : 2 + len(uid_bytes)] = uid_bytes
-    record[26] = verify_type
-    struct.pack_into("<I", record, 27, enc_time)
-    record[31] = verify_state
-    return bytes(record)
+
+
+# Attendance record encoders, one per firmware layout. Written as explicit
+# struct formats from pyzk 0.9's get_attendance, independently of the module
+# under test's own constants.
+def _encode_attlog_record(
+    user_id: str, when: datetime, verify_type: int = 1, verify_state: int = 0, uid: int = 1
+) -> bytes:
+    """40-byte layout: uid(H) user_id(24s) verify(B) time(I) state(B) 8 reserved."""
+    return struct.pack(
+        "<H24sBIB8s", uid, user_id.encode("ascii"), verify_type, _enc_time(when),
+        verify_state, b"",
+    )
+
+
+def _encode_attlog_record_16(
+    user_id: int, when: datetime, verify_type: int = 1, verify_state: int = 0
+) -> bytes:
+    """16-byte layout: user_id(I) time(I) verify(B) state(B) 2 reserved workcode(I)."""
+    return struct.pack("<IIBB2sI", user_id, _enc_time(when), verify_type, verify_state, b"", 0)
+
+
+def _encode_attlog_record_8(
+    uid: int, when: datetime, verify_type: int = 1, verify_state: int = 0
+) -> bytes:
+    """8-byte layout: uid(H) verify(B) time(I) state(B) — a uid, not a user id."""
+    return struct.pack("<HBIB", uid, verify_type, _enc_time(when), verify_state)
+
+
+def _encode_user_record_28(uid: int, user_id: int, name: str = "") -> bytes:
+    """28-byte layout: uid(H) priv(B) pw(5s) name(8s) card(I) pad group(B) tz(H) user_id(I)."""
+    return struct.pack("<HB5s8sIxBHI", uid, 0, b"", name.encode()[:8], 0, 1, 0, user_id)
 
 
 def _encode_user_record(
@@ -132,19 +170,29 @@ class FakeZKDevice:
         attlog_chunk_size: int = 40,
         user_records: list[bytes] | None = None,
         require_auth: bool = False,
+        comm_key: int = 0,
         attlog_count: int | None = None,
     ) -> None:
         self.params = params or {}
         self.attlog_records = attlog_records or []
         self.attlog_chunk_size = attlog_chunk_size
         self.user_records: list[bytes] = list(user_records or [])
+        #: Answer CMD_CONNECT with CMD_ACK_UNAUTH and demand CMD_AUTH, the
+        #: way the real terminal this was piloted against did — with its
+        #: comm key at 0. ``comm_key`` is what CMD_AUTH must carry.
         self.require_auth = require_auth
+        self.comm_key = comm_key
         self.attlog_count = attlog_count
         self._pending_buffer = b""
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._sock.bind(("127.0.0.1", 0))
         self._sock.listen(1)
         self.host, self.port = self._sock.getsockname()
+        #: Packets rejected for a bad checksum. A real terminal drops these
+        #: silently and the client times out; this fake closes the
+        #: connection instead, so a checksum regression fails the suite in
+        #: milliseconds rather than hanging each test for SOCKET_TIMEOUT.
+        self.bad_checksums = 0
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._thread.start()
 
@@ -180,18 +228,32 @@ class FakeZKDevice:
 
     def _serve_one_connection(self, conn: socket.socket) -> None:
         session_id = 4242
+        authed = not self.require_auth
         with conn:
             while True:
                 try:
-                    command, _sid, reply_id, data = _recv_packet(conn)
+                    command, _sid, reply_id, data, checksum_ok = _recv_packet(conn)
                 except (ConnectionError, OSError):
                     return
+                if not checksum_ok:
+                    self.bad_checksums += 1
+                    return
+                if not authed and command not in (CMD_CONNECT, CMD_AUTH, CMD_EXIT):
+                    conn.sendall(_pack(CMD_ACK_UNAUTH, session_id, reply_id))
+                    continue
 
                 if command == CMD_CONNECT:
-                    if self.require_auth:
-                        conn.sendall(_pack(CMD_ACK_UNAUTH, 0, reply_id))
+                    # The session id is assigned here either way — CMD_AUTH
+                    # needs it — just as a real terminal does.
+                    reply = CMD_ACK_UNAUTH if self.require_auth else CMD_ACK_OK
+                    conn.sendall(_pack(reply, session_id, reply_id))
+                elif command == CMD_AUTH:
+                    authed = data == _reference_commkey(self.comm_key, session_id)
+                    conn.sendall(
+                        _pack(CMD_ACK_OK if authed else CMD_ACK_UNAUTH, session_id, reply_id)
+                    )
+                    if not authed:
                         return
-                    conn.sendall(_pack(CMD_ACK_OK, session_id, reply_id))
                 elif command == CMD_EXIT:
                     conn.sendall(_pack(CMD_ACK_OK, session_id, reply_id))
                     return
@@ -206,9 +268,15 @@ class FakeZKDevice:
                 elif command == CMD_ENABLEDEVICE:
                     conn.sendall(_pack(CMD_ACK_OK, session_id, reply_id))
                 elif command == CMD_GET_FREE_SIZES:
+                    # pyzk's read_sizes layout: 20 int32s, users at field 4,
+                    # attendance records at field 8.
                     payload = bytearray(92)
-                    if self.attlog_count is not None:
-                        struct.pack_into("<I", payload, 32, self.attlog_count)
+                    records = (
+                        self.attlog_count if self.attlog_count is not None
+                        else len(self.attlog_records)
+                    )
+                    struct.pack_into("<i", payload, 16, len(self.user_records))
+                    struct.pack_into("<i", payload, 32, records)
                     conn.sendall(_pack(CMD_ACK_OK, session_id, reply_id, bytes(payload)))
                 elif command == _CMD_PREPARE_BUFFER:
                     self._prepare_buffer(conn, session_id, reply_id, data)
@@ -231,11 +299,16 @@ class FakeZKDevice:
         _Connection.read_with_buffer's docstring in the module under test."""
         _flag, req_command, fct, _ext = struct.unpack("<bhii", data)
         if req_command == CMD_ATTLOG_RRQ:
-            self._pending_buffer = b"".join(self.attlog_records)
+            table = b"".join(self.attlog_records)
         elif req_command == CMD_USERTEMP_RRQ and fct == FCT_USER:
-            self._pending_buffer = b"".join(self.user_records)
+            table = b"".join(self.user_records)
         else:
-            self._pending_buffer = b""
+            table = None
+        # Real tables start with a 4-byte total size (see pyzk's
+        # get_attendance/get_users). The fake used to send the records bare,
+        # which is how a client that never stripped the prefix passed here
+        # and then read every record 4 bytes out of line on real hardware.
+        self._pending_buffer = b"" if table is None else struct.pack("<I", len(table)) + table
         ack = bytearray(5)
         struct.pack_into("<I", ack, 1, len(self._pending_buffer))
         conn.sendall(_pack(CMD_ACK_OK, session_id, reply_id, bytes(ack)))
@@ -317,6 +390,26 @@ def _reference_checksum16(payload: bytes) -> int:
     return checksum
 
 
+def _reference_commkey(key: int, session_id: int, ticks: int = 50) -> bytes:
+    """pyzk 0.9's make_commkey, ported line for line and kept separate from
+    the module under test, so the fake device checks CMD_AUTH against the
+    reference rather than against the client's own copy."""
+    k = 0
+    for i in range(32):
+        if key & (1 << i):
+            k = (k << 1 | 1)
+        else:
+            k = k << 1
+    k += session_id
+    k = struct.unpack("BBBB", struct.pack("<I", k))
+    k = struct.pack("BBBB", k[0] ^ ord("Z"), k[1] ^ ord("K"), k[2] ^ ord("S"), k[3] ^ ord("O"))
+    k = struct.unpack("<HH", k)
+    k = struct.pack("<HH", k[1], k[0])
+    b = 0xFF & ticks
+    k = struct.unpack("BBBB", k)
+    return struct.pack("BBBB", k[0] ^ b, k[1] ^ b, b, k[3] ^ b)
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -382,11 +475,112 @@ def test_connection_reports_serial_and_count():
     assert "7" in result.message
 
 
-def test_connection_requiring_comm_key_gives_a_clear_error():
-    with FakeZKDevice(require_auth=True) as device:
+class _CapturingSocket:
+    def __init__(self) -> None:
+        self.sent: list[bytes] = []
+
+    def sendall(self, data: bytes) -> None:
+        self.sent.append(data)
+
+
+# Captured from pyzk 0.9's own ZK._ZK__create_header/_ZK__create_tcp_top —
+# the client that connected to a real terminal which ignored this module's
+# packets. Pinned as bytes so the test needs no pyzk install, and so the
+# comparison is against what real hardware accepted, not against this
+# module's own idea of the protocol.
+_PYZK_CONNECT = bytes.fromhex("5050827d08000000e80317fc00000000")
+_PYZK_SERIAL_QUERY = bytes.fromhex(
+    "5050827d160000000b005ea6921001007e53657269616c4e756d62657200"
+)
+
+
+def test_first_two_packets_match_pyzk_byte_for_byte():
+    """Regression for a real terminal (comm key unset, correct port, ADMS
+    off) that accepted the TCP connection and never answered CMD_CONNECT,
+    while pyzk connected instantly. The packets differed by one checksum
+    byte: pyzk checksums the header carrying the *previous* reply id and
+    sends the next one. See _Connection._send."""
+    conn = _Connection("device.test", 4370, comm_key=0)
+    sock = _CapturingSocket()
+    conn.sock = sock  # type: ignore[assignment]
+
+    conn._send(CMD_CONNECT, b"")
+    assert sock.sent[0] == _PYZK_CONNECT
+
+    # State after the device answers CMD_CONNECT with session 4242, echoing
+    # reply id 0 — what _exchange() records, and what pyzk records.
+    conn.session_id = 4242
+    conn._reply_id = 0
+    conn._send(CMD_OPTIONS_RRQ, b"~SerialNumber\x00")
+    assert sock.sent[1] == _PYZK_SERIAL_QUERY
+
+
+def test_fake_device_rejects_a_checksum_over_the_sent_reply_id():
+    """The fake used to accept any checksum, which is how the rule above
+    went unnoticed. Prove it now rejects the old, wrong form — so every other
+    test in this file is also a checksum test."""
+    wrong_header = struct.pack("<HHHH", CMD_CONNECT, 0, 0, 0)
+    wrong = struct.pack("<HHHH", CMD_CONNECT, _reference_checksum16(wrong_header), 0, 0)
+    with FakeZKDevice() as device:
+        with socket.create_connection((device.host, device.port), timeout=2) as sock:
+            sock.sendall(MAGIC + struct.pack("<I", len(wrong)) + wrong)
+            assert sock.recv(16) == b""  # closed without a reply
+    assert device.bad_checksums == 1
+
+
+def test_a_whole_session_passes_checksum_validation():
+    with FakeZKDevice(params={"~SerialNumber": "ABC123"}, attlog_count=3) as device:
         result = _provider(device).test_connection()
+    assert result.ok, result.message
+    assert device.bad_checksums == 0
+
+
+def test_device_demanding_auth_with_comm_key_zero_connects():
+    """Regression for the real terminal this was piloted against: comm key
+    shown as 0 on the device, yet it answered CMD_CONNECT with
+    CMD_ACK_UNAUTH. The module used to refuse that outright and tell the
+    user to set their comm key to 0 — which it already was. pyzk answers
+    with CMD_AUTH carrying the scrambled key 0, and so must this."""
+    with FakeZKDevice(require_auth=True, comm_key=0, params={"~SerialNumber": "OIN7"}) as device:
+        result = _provider(device).test_connection()
+    assert result.ok, result.message
+    assert "OIN7" in result.message
+
+
+def test_device_demanding_auth_accepts_its_configured_comm_key():
+    with FakeZKDevice(require_auth=True, comm_key=123456, attlog_records=[
+        _encode_attlog_record("7", datetime(2026, 9, 1, 9, 0)),
+    ]) as device:
+        provider = _provider(device, password="123456")
+        assert provider.test_connection().ok
+        # Every connection authenticates, not just the probe.
+        assert [e.emp_code for e in provider.fetch_punches()] == ["7"]
+
+
+def test_wrong_comm_key_gives_a_clear_rejection():
+    with FakeZKDevice(require_auth=True, comm_key=123456) as device:
+        result = _provider(device, password="999").test_connection()
     assert not result.ok
-    assert "comm key" in result.message.lower() or "communication password" in result.message.lower()
+    assert "rejected the comm key" in result.message
+
+
+def test_make_commkey_matches_pyzk():
+    # Captured from pyzk 0.9's make_commkey(key, 4242).
+    assert _make_commkey(0, 4242) == bytes.fromhex("617d3269")
+    assert _make_commkey(123456, 4242) == bytes.fromhex("267f32e9")
+    for key in (0, 1, 7, 123456, 99999999):
+        for session in (0, 1, 4242, 65534):
+            assert _make_commkey(key, session) == _reference_commkey(key, session)
+
+
+def test_auth_packet_matches_pyzk_byte_for_byte():
+    # pyzk's CMD_AUTH after a CONNECT reply of session 4242 / reply id 0.
+    conn = _Connection("device.test", 4370, comm_key=0)
+    sock = _CapturingSocket()
+    conn.sock = sock  # type: ignore[assignment]
+    conn.session_id, conn._reply_id = 4242, 0
+    conn._send(CMD_AUTH, _make_commkey(0, 4242))
+    assert sock.sent[0] == bytes.fromhex("5050827d0c0000004e048b0492100100617d3269")
 
 
 def test_serial_not_configured_falls_back_to_host():
@@ -455,6 +649,60 @@ def test_fetch_punches_empty_log():
     assert events == []
 
 
+# ---------------------------------------------------------------------------
+# Firmware layouts. Record size isn't in the data; like pyzk, it's the table's
+# 4-byte total size divided by the record count from CMD_GET_FREE_SIZES.
+# ---------------------------------------------------------------------------
+def test_fetch_punches_reads_the_16_byte_layout():
+    records = [
+        _encode_attlog_record_16(1001, datetime(2026, 9, 1, 8, 0), verify_type=1, verify_state=0),
+        _encode_attlog_record_16(1002, datetime(2026, 9, 1, 17, 30), verify_type=15, verify_state=1),
+    ]
+    with FakeZKDevice(attlog_records=records) as device:
+        events = list(_provider(device).fetch_punches())
+    assert [(e.emp_code, e.punch_time_local, e.direction) for e in events] == [
+        ("1001", datetime(2026, 9, 1, 8, 0), True),
+        ("1002", datetime(2026, 9, 1, 17, 30), False),
+    ]
+    assert {e.raw["record_size"] for e in events} == {16}
+
+
+def test_fetch_punches_maps_the_8_byte_layouts_uids_through_the_user_table():
+    """The 8-byte layout records the device's internal uid, not the user id —
+    the same number only by coincidence. Mapped through the user table the
+    way pyzk does, with the uid itself as the fallback for an unknown one."""
+    users = [_encode_user_record(7, "EMP-A", "Ann"), _encode_user_record(9, "EMP-B", "Bo")]
+    records = [
+        _encode_attlog_record_8(7, datetime(2026, 9, 1, 8, 0)),
+        _encode_attlog_record_8(9, datetime(2026, 9, 1, 8, 5)),
+        _encode_attlog_record_8(42, datetime(2026, 9, 1, 8, 10)),  # no such user
+    ]
+    with FakeZKDevice(attlog_records=records, user_records=users) as device:
+        events = list(_provider(device).fetch_punches())
+    assert [e.emp_code for e in events] == ["EMP-A", "EMP-B", "42"]
+    assert {e.raw["record_size"] for e in events} == {8}
+
+
+def test_fetch_employees_reads_the_28_byte_layout():
+    users = [_encode_user_record_28(1, 1001, "Ann"), _encode_user_record_28(2, 1002, "Bo")]
+    with FakeZKDevice(user_records=users) as device:
+        employees = list(_provider(device).fetch_employees())
+    assert [(e.external_id, e.emp_code, e.first_name) for e in employees] == [
+        ("1", "1001", "Ann"), ("2", "1002", "Bo"),
+    ]
+
+
+def test_split_table_strips_the_size_prefix_and_infers_the_layout():
+    body = b"".join(_encode_attlog_record_16(i, datetime(2026, 1, 1)) for i in range(3))
+    size, records = _split_table(struct.pack("<I", len(body)) + body, 3, (8, 16, 40), "t")
+    assert size == 16 and records == [body[i:i + 16] for i in (0, 16, 32)]
+    # No count from the device, or one that fits no layout: largest layout.
+    assert _split_table(struct.pack("<I", 40) + bytes(40), None, (8, 16, 40), "t")[0] == 40
+    assert _split_table(struct.pack("<I", 36) + bytes(36), 3, (8, 16, 40), "t")[0] == 40
+    # A count of zero is empty, whatever follows.
+    assert _split_table(struct.pack("<I", 40) + bytes(40), 0, (8, 16, 40), "t")[1] == []
+
+
 def test_fetch_terminals_returns_one_record_for_the_device_itself():
     with FakeZKDevice(params={"~SerialNumber": "TERM-9", "~DeviceName": "Front Door"}) as device:
         terminals = list(_provider(device).fetch_terminals())
@@ -475,6 +723,62 @@ def test_connect_refused_gives_a_actionable_message():
     result = provider.test_connection()
     assert not result.ok
     assert str(port) in result.message or host in result.message
+
+
+class _SilentDevice:
+    """Accepts a TCP connection and then never sends anything back —
+    reachable, unlike test_connect_refused_... above, but hung: the real
+    shape of a wrong comm key, an unsupported protocol variant, or a
+    middlebox that accepts the connection and drops what's sent over it."""
+
+    def __init__(self) -> None:
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._sock.bind(("127.0.0.1", 0))
+        self._sock.listen(1)
+        self.host, self.port = self._sock.getsockname()
+        self._accepted: socket.socket | None = None
+        self._thread = threading.Thread(target=self._accept, daemon=True)
+        self._thread.start()
+
+    def _accept(self) -> None:
+        try:
+            self._accepted, _addr = self._sock.accept()
+        except OSError:
+            pass
+
+    def close(self) -> None:
+        try:
+            self._sock.close()
+        except OSError:
+            pass
+        if self._accepted is not None:
+            try:
+                self._accepted.close()
+            except OSError:
+                pass
+        self._thread.join(timeout=5)
+
+    def __enter__(self) -> "_SilentDevice":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+
+def test_a_reachable_but_silent_device_raises_a_clear_timeout_error():
+    """Regression for a real customer report: a device that accepts the TCP
+    connection (so nothing in _open()'s own connect-phase error handling
+    ever fires) but never answers the CMD_CONNECT handshake used to escape
+    as a raw, unhandled TimeoutError — past every ``except ProviderError``
+    the app catches (ZKError is one; a bare TimeoutError is not), reaching
+    the customer as an opaque HTTP 500 instead of a message that says what
+    to check. _Connection.timeout is passed explicitly and short here so
+    the test doesn't sit through the real 15s SOCKET_TIMEOUT."""
+    with _SilentDevice() as device:
+        conn = _Connection(device.host, device.port, comm_key=0, timeout=0.3)
+        with pytest.raises(ZKError, match="Timed out waiting for a reply"):
+            with conn:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -539,11 +843,39 @@ def test_create_employee_is_idempotent_for_an_already_provisioned_code():
     assert len(all_employees) == 1
 
 
-def test_create_employee_rejects_codes_longer_than_the_attlog_can_carry():
+def test_create_employee_rejects_codes_longer_than_the_user_id_field():
     with FakeZKDevice(user_records=[]) as device:
         provider = _provider(device)
-        with pytest.raises(ZKError, match="characters"):
-            provider.create_employee(EmployeeRecord(external_id=None, emp_code="TOOLONGCODE12"))
+        with pytest.raises(ZKError, match="at most 24"):
+            provider.create_employee(EmployeeRecord(external_id=None, emp_code="X" * 25))
+
+
+def test_a_24_character_code_round_trips_through_provisioning_and_punches():
+    """The old 9-character cap came from reading 9 bytes of what is a
+    24-byte user id field in the 40-byte attendance record — see _ATTLOG_40."""
+    code = "EMP-2026-ENGINEERING-001"
+    assert len(code) == 24
+    with FakeZKDevice(user_records=[]) as device:
+        provider = _provider(device)
+        provider.create_employee(EmployeeRecord(external_id=None, emp_code=code))
+        assert [u.emp_code for u in provider.fetch_employees()] == [code]
+        device.attlog_records = [_encode_attlog_record(code, datetime(2026, 9, 1, 9, 0))]
+        assert [p.emp_code for p in provider.fetch_punches()] == [code]
+
+
+def test_create_employee_on_a_28_byte_user_table_writes_that_layout():
+    """ZK6-style firmware stores the user id as a 32-bit number, so the
+    record written back has to be the 28-byte layout, carrying the code as
+    a number — and a code that isn't one is refused rather than mangled."""
+    with FakeZKDevice(user_records=[_encode_user_record_28(1, 1001, "Ann")]) as device:
+        provider = _provider(device)
+        created = provider.create_employee(EmployeeRecord(external_id=None, emp_code="1002"))
+        assert created.external_id == "2"
+        assert len(device.user_records[-1]) == 28
+        assert sorted(u.emp_code for u in provider.fetch_employees()) == ["1001", "1002"]
+        for bad in ("EMP7", "0042"):
+            with pytest.raises(ZKError, match="plain numbers"):
+                provider.create_employee(EmployeeRecord(external_id=None, emp_code=bad))
 
 
 def test_create_employee_rejects_blank_emp_code():

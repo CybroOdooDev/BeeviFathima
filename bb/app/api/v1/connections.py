@@ -20,7 +20,14 @@ from app.integrations.base import (
     get_provider_class,
 )
 from app.integrations.odoo import OdooError
-from app.models import ConnectionStatus, Device, DeviceSource, OdooConnection
+from app.models import (
+    ConnectionStatus,
+    Device,
+    DeviceSource,
+    EmployeeMapping,
+    MappingStatus,
+    OdooConnection,
+)
 from app.schemas import (
     DeviceOut,
     DeviceUpdate,
@@ -28,6 +35,7 @@ from app.schemas import (
     OdooConnectionIn,
     OdooConnectionOut,
     OdooConnectionUpdate,
+    ProvisionOut,
     SourceIn,
     SourceOut,
     SourceUpdate,
@@ -38,6 +46,7 @@ from app.services.connections import (
     build_odoo_client,
     build_source_provider,
 )
+from app.services.provisioning import provision_unmapped
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["connections"])
@@ -585,10 +594,16 @@ def discover_devices(
     db: Session = Depends(get_db),
 ) -> list[Device]:
     source = _get_source(db, principal, source_id)
+    # Scoped to this source, not the whole tenant — a serial number is only
+    # unique within its own vendor/account namespace, and two sources (e.g.
+    # two BioTime accounts, one per company) can each legitimately report a
+    # terminal with the same serial. Matches the (tenant_id, source_id,
+    # serial_number) constraint on Device and the lookup sync_engine.py
+    # already uses for the same reason.
     existing = {
         d.serial_number: d
         for d in db.scalars(
-            select(Device).where(Device.tenant_id == principal.tenant.id)
+            select(Device).where(Device.source_id == source.id)
         ).all()
     }
 
@@ -609,10 +624,12 @@ def discover_devices(
 
     added = 0
     touched: list[Device] = []
+    seen_serials: set[str] = set()
     for terminal in terminals:
         serial = (terminal.serial_number or "").strip()
         if not serial:
             continue
+        seen_serials.add(serial)
         device = existing.get(serial)
         if device is None:
             device = Device(
@@ -625,9 +642,33 @@ def discover_devices(
         device.area = terminal.area or device.area
         device.ip_address = terminal.ip_address or device.ip_address
         device.model = terminal.model or device.model
+        # Reported again — whatever absence was tracked before no longer holds.
+        device.missing_since = None
         touched.append(device)
 
-    audit(db, principal, "device.discover", source.id, f"{added} new", request)
+    # A device this source used to report and now does not: flagged, not
+    # deleted or disabled, so its alias/punch history/pairing override survive
+    # a terminal that is only briefly offline or mid-relocation. The
+    # timestamp is set once and left alone on repeat imports that still don't
+    # see it, so it reflects when it first went missing, not the most recent
+    # check.
+    now = datetime.now(timezone.utc)
+    missing_now = 0
+    for serial, device in existing.items():
+        if serial in seen_serials:
+            continue
+        if device.missing_since is None:
+            device.missing_since = now
+            missing_now += 1
+
+    audit(
+        db,
+        principal,
+        "device.discover",
+        source.id,
+        f"{added} new, {missing_now} newly missing",
+        request,
+    )
     # Every terminal this call found, not just newly-added ones — a terminal
     # imported in an earlier call may still have no Odoo device record (see
     # _push_devices_to_odoo), and re-running Import terminals is the natural
@@ -647,6 +688,95 @@ def discover_devices(
             .order_by(Device.serial_number)
         ).all()
     )
+
+
+@router.post("/sources/{source_id}/provision-employees", response_model=ProvisionOut)
+def provision_employees(
+    source_id: str,
+    request: Request,
+    principal: Principal = Depends(require_writer),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Create Odoo employees who aren't mapped to a device user yet, and have
+    a Badge ID or PIN, on this source's device — see
+    app.services.provisioning for the exact rule.
+
+    The settings page calls this right after "Import terminals" succeeds, for
+    any provider that can create employees; it's its own endpoint so the
+    import itself (terminals into BioBridge) never fails or slows down over
+    a problem on the Odoo or employee side, and so the result can be reported
+    back on its own.
+    """
+    source = _get_source(db, principal, source_id)
+    try:
+        provider_cls = get_provider_class(source.provider)
+    except ProviderError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    if not (
+        Capability.READ_EMPLOYEES in provider_cls.capabilities
+        and Capability.WRITE_EMPLOYEES in provider_cls.capabilities
+    ):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"{provider_cls.label} cannot create employees on the device.",
+        )
+
+    conn = db.scalars(
+        select(OdooConnection)
+        .where(
+            OdooConnection.tenant_id == principal.tenant.id,
+            OdooConnection.is_active.is_(True),
+        )
+        .limit(1)
+    ).first()
+    if conn is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Connect Odoo first — employees are created on the device from Odoo's list.",
+        )
+    try:
+        odoo = build_odoo_client(principal.tenant, conn)
+        odoo.authenticate()
+        roster = odoo.list_employees()
+    except (OdooError, UnsafeTargetError) as exc:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, f"Could not read employees from Odoo: {exc}"
+        ) from exc
+
+    mapped_ids = set(
+        db.scalars(
+            select(EmployeeMapping.odoo_employee_id).where(
+                EmployeeMapping.tenant_id == principal.tenant.id,
+                EmployeeMapping.status == MappingStatus.mapped.value,
+                EmployeeMapping.odoo_employee_id.is_not(None),
+            )
+        ).all()
+    )
+
+    provider = None
+    try:
+        provider = build_source_provider(principal.tenant, source)
+        result = provision_unmapped(provider, roster, mapped_ids)
+    except (ProviderError, UnsafeTargetError) as exc:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, f"Could not read the device's user list: {exc}"
+        ) from exc
+    finally:
+        if provider is not None:
+            provider.close()
+
+    audit(
+        db, principal, "employee.provision", source.id,
+        f"{len(result.created)} created, {len(result.failed)} failed", request,
+    )
+    db.commit()
+    return {
+        "created": result.created,
+        "failed": result.failed,
+        "already_on_device": result.already_on_device,
+        "already_mapped": result.already_mapped,
+        "no_badge_or_pin": result.no_badge_or_pin,
+    }
 
 
 @router.get("/devices", response_model=list[DeviceOut])

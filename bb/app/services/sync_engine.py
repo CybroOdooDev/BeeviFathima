@@ -438,6 +438,10 @@ class SyncEngine:
         if device is not None:
             device.punch_count = (device.punch_count or 0) + 1
             device.last_seen_at = datetime.now(timezone.utc)
+            # A punch is live proof the terminal is there, regardless of
+            # whether "Import terminals" has been re-run since it was last
+            # flagged missing.
+            device.missing_since = None
 
     # -- stage 4 -----------------------------------------------------------
     def _register_badges(self) -> None:
