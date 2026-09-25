@@ -3,10 +3,33 @@
  * The access token lives in memory only. The refresh token goes to
  * sessionStorage so a reload survives, without leaving a long-lived credential
  * in localStorage where any XSS would find it and where it outlives the tab.
+ *
+ * Someone who is both a customer and platform staff can hold two sessions in
+ * one tab — one per door — and switch between them without signing in again.
+ * They stay two separate, separately-scoped tokens (the server still refuses
+ * a customer token at the console and a console token inside an account);
+ * only one is ever *active*, i.e. attached to requests.
  */
 
 const BASE = '/api/v1';
-const REFRESH_KEY = 'bb.refresh';
+const LEGACY_REFRESH_KEY = 'bb.refresh';
+const refreshKey = (scope) => `bb.refresh.${scope}`;
+const ACTIVE_KEY = 'bb.active';
+const SCOPES = ['tenant', 'staff'];
+
+function store(key, value) {
+  try {
+    if (value) sessionStorage.setItem(key, value);
+    else sessionStorage.removeItem(key);
+  } catch { /* private mode: the session simply will not survive a reload */ }
+}
+function load(key) {
+  try {
+    return sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
 
 export class ApiError extends Error {
   constructor(message, status, payload) {
@@ -74,21 +97,46 @@ export const auth = {
   persist(tokens) {
     this.accessToken = tokens.access_token;
     if (tokens.scope) this.scope = tokens.scope;
-    if (tokens.refresh_token) {
-      this.refreshToken = tokens.refresh_token;
-      try {
-        sessionStorage.setItem(REFRESH_KEY, tokens.refresh_token);
-      } catch { /* private mode: the session simply will not survive a reload */ }
-    }
+    if (tokens.refresh_token) this.refreshToken = tokens.refresh_token;
+    store(refreshKey(this.scope), this.refreshToken);
+    store(ACTIVE_KEY, this.scope);
+    store(LEGACY_REFRESH_KEY, null);
   },
+
+  /** Keep a second session for later without switching to it — the other
+   *  hat of a dual-role account, opened alongside the one in use. */
+  stash(tokens) {
+    if (tokens.refresh_token && tokens.scope) store(refreshKey(tokens.scope), tokens.refresh_token);
+  },
+  stashed(scope) {
+    return load(refreshKey(scope));
+  },
+  forget(scope) {
+    store(refreshKey(scope), null);
+  },
+  /** Every refresh token this tab holds, for a sign-out that ends them all. */
+  allRefreshTokens() {
+    return [...new Set(SCOPES.map((s) => load(refreshKey(s))).filter(Boolean))];
+  },
+
   restore() {
-    try {
-      this.refreshToken = sessionStorage.getItem(REFRESH_KEY);
-    } catch {
-      this.refreshToken = null;
-    }
+    const active = load(ACTIVE_KEY);
+    const order = active === 'staff' ? ['staff', 'tenant'] : ['tenant', 'staff'];
+    this.refreshToken = order.map((s) => load(refreshKey(s))).find(Boolean)
+      || load(LEGACY_REFRESH_KEY);
     return this.refreshToken;
   },
+
+  /** Drop only the session in use — it expired — keeping the other hat. */
+  endActive() {
+    if (this.accessToken || this.refreshToken) this.lastDoor = this.scope;
+    this.forget(this.scope);
+    this.accessToken = null;
+    this.refreshToken = null;
+    this.user = null;
+    this.tenant = null;
+  },
+
   clear() {
     // Only when there was something to clear: an expiry clears once in api.js
     // and again in the signed-out handler, and the second pass must not
@@ -99,9 +147,9 @@ export const auth = {
     this.user = null;
     this.tenant = null;
     this.scope = 'tenant';
-    try {
-      sessionStorage.removeItem(REFRESH_KEY);
-    } catch { /* nothing to clean up */ }
+    SCOPES.forEach((s) => store(refreshKey(s), null));
+    store(ACTIVE_KEY, null);
+    store(LEGACY_REFRESH_KEY, null);
   },
 };
 
@@ -139,8 +187,10 @@ async function raw(path, options = {}, retry = true) {
       refreshing = null;
       if (ok) return raw(path, options, false);
     }
-    auth.clear();
-    window.dispatchEvent(new CustomEvent('bb:signed-out'));
+    // Only this session is over. If the other hat is still open, the app
+    // switches to it rather than signing the person out of both.
+    auth.endActive();
+    window.dispatchEvent(new CustomEvent('bb:signed-out', { detail: { expired: true } }));
     throw new ApiError('Your session has expired. Please sign in again.', 401);
   }
 
@@ -186,4 +236,34 @@ export async function loadSession() {
   // quietly pull their own account into the console shell — the exact mixing of
   // hats the two doors exist to prevent.
   auth.tenant = auth.isStaffSession ? null : await api.get('/tenant');
+}
+
+/** Make the other stashed session the active one — the one-click switch
+ * between a dual-role person's workspace and the staff console.
+ *
+ * Returns false when there is nothing to switch to, or it has expired (a
+ * console session is short-lived on purpose); the caller then asks for the
+ * password again rather than switching silently. */
+export async function switchSession(scope) {
+  const refreshToken = auth.stashed(scope);
+  if (!refreshToken) return false;
+  let tokens = null;
+  try {
+    const response = await fetch(
+      `${BASE}/auth/refresh?refresh_token=${encodeURIComponent(refreshToken)}`,
+      { method: 'POST' }
+    );
+    if (response.ok) tokens = await response.json();
+  } catch { /* offline: treat as expired */ }
+  // The scope comes from the signed token. A stored token that turns out to
+  // be for the other surface is not a way into this one.
+  if (!tokens || tokens.scope !== scope) {
+    auth.forget(scope);
+    return false;
+  }
+  auth.persist({ ...tokens, refresh_token: refreshToken });
+  auth.user = null;
+  auth.tenant = null;
+  await loadSession();
+  return true;
 }

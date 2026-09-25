@@ -127,6 +127,10 @@ class UserOut(ORMModel):
     #: Read-only everywhere. The dashboard uses it to decide whether to show the
     #: Platform section; the server never takes it from a request.
     is_platform_admin: bool = False
+    #: Whether this person has a customer workspace of their own. The UI uses
+    #: it to offer a staff member the way back from the console to their own
+    #: account — the console session itself never carries tenant access.
+    tenant_id: str | None = None
     #: Null until the person has clicked their confirmation link — see
     #: app.services.email_verification. The dashboard uses this to show a
     #: "confirm your email" banner and the resend action; nothing server-side
@@ -326,8 +330,7 @@ class TenantOut(ORMModel):
     work_start_time: str
     late_grace_minutes: int
     consecutive_failures: int
-    #: "platform", "device", or null if this tenant has not chosen yet — see
-    #: Tenant.biometric_mode.
+    #: The kind of connection added most recently — see Tenant.biometric_mode.
     biometric_mode: str | None = None
 
     #: Why the dashboard is not updating, when it is not the customer's own
@@ -370,9 +373,8 @@ class TenantUpdate(BaseModel):
     auto_create_employees: bool | None = None
     work_start_time: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}$")
     late_grace_minutes: int | None = Field(default=None, ge=0, le=240)
-    #: Which kind of biometric connection this tenant adds from now on — see
-    #: Tenant.biometric_mode. Switching never touches existing connections of
-    #: the other kind; it only changes what "+ Add" is offered next.
+    #: Kept for older clients — see Tenant.biometric_mode. No longer limits
+    #: which kind of connection can be added.
     biometric_mode: Literal["platform", "device"] | None = None
     #: Self-service plan switch — repeatable, any time. Deliberately not
     #: nullable the way the staff console's TenantConfigUpdate.plan_id is:
@@ -441,6 +443,28 @@ class OdooConnectionUpdate(BaseModel):
     @classmethod
     def _check(cls, value: str | None) -> str | None:
         return _validate_url(value) if value else value
+
+
+class OdooConnectionTestIn(BaseModel):
+    """What the connection form holds before anything is saved.
+
+    Lets Test Connection run on values that exist only in the browser, so a
+    customer finds out the URL or key is wrong before they commit it — not
+    after. ``conn_id`` covers the edit form: the stored API key is never sent
+    back to the browser, so a blank ``api_key`` there means "the one on file".
+    """
+
+    url: str
+    db_name: str
+    username: str
+    api_key: str = ""
+    company_id: int | None = None
+    conn_id: str | None = None
+
+    @field_validator("url")
+    @classmethod
+    def _check(cls, value: str) -> str:
+        return _validate_url(value)
 
 
 class OdooConnectionOut(ORMModel):
@@ -515,6 +539,35 @@ class SourceUpdate(BaseModel):
     @classmethod
     def _check_timezone(cls, value: str | None) -> str | None:
         return _validate_timezone(value) if value else value
+
+
+class SourceTestIn(BaseModel):
+    """A biometric connection form's values, tested before they are saved.
+
+    Same idea as OdooConnectionTestIn: ``source_id`` is the edit form's way of
+    saying "use the stored password for anything I left blank", and also
+    supplies the provider for a form that no longer offers a choice of one.
+    """
+
+    provider: str | None = None
+    base_url: str
+    username: str = ""
+    password: str = ""
+    auth_type: Literal["token", "jwt"] = "token"
+    server_timezone: str = "UTC"
+    verify_ssl: bool = True
+    config: dict[str, Any] = Field(default_factory=dict)
+    source_id: str | None = None
+
+    @field_validator("base_url")
+    @classmethod
+    def _check(cls, value: str) -> str:
+        return _validate_source_address(value)
+
+    @field_validator("server_timezone")
+    @classmethod
+    def _check_timezone(cls, value: str) -> str:
+        return _validate_timezone(value)
 
 
 class SourceOut(ORMModel):

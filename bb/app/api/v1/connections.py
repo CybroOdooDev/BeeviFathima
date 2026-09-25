@@ -34,10 +34,12 @@ from app.schemas import (
     MessageOut,
     OdooConnectionIn,
     OdooConnectionOut,
+    OdooConnectionTestIn,
     OdooConnectionUpdate,
     ProvisionOut,
     SourceIn,
     SourceOut,
+    SourceTestIn,
     SourceUpdate,
     TestResult,
 )
@@ -201,6 +203,38 @@ def update_odoo(
     return conn
 
 
+@router.post("/odoo-connections/test", response_model=TestResult)
+def test_odoo_unsaved(
+    payload: OdooConnectionTestIn,
+    principal: Principal = Depends(require_writer),
+    db: Session = Depends(get_db),
+) -> TestResult:
+    """Test Connection on what the form holds, before anything is saved.
+
+    The probe runs against a throwaway ``OdooConnection`` that is never added
+    to the session, so nothing is written: not the row, not its status, not a
+    cached uid. That is the point — the customer can try a URL, see it fail,
+    fix it and try again without leaving half-configured connections behind.
+    """
+    api_key_enc = None
+    if payload.conn_id:
+        stored = _get_odoo(db, principal, payload.conn_id)
+        api_key_enc = stored.api_key_enc
+    if payload.api_key:
+        api_key_enc = encrypt(payload.api_key, principal.tenant.crypto_key)
+    if not api_key_enc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "API key is required to test.")
+
+    draft = OdooConnection(
+        url=payload.url,
+        db_name=payload.db_name,
+        username=payload.username,
+        api_key_enc=api_key_enc,
+        company_id=payload.company_id,
+    )
+    return _probe_odoo(principal, draft)
+
+
 @router.post("/odoo-connections/{conn_id}/test", response_model=TestResult)
 def test_odoo(
     conn_id: str,
@@ -276,34 +310,7 @@ def list_providers(_: Principal = Depends(get_principal)) -> list[dict]:
     return available_providers()
 
 
-_MODE_LABEL = {"platform": "platform server", "device": "individual device"}
-
-
-def _enforce_biometric_mode(db: Session, principal: Principal, kind: str) -> None:
-    """A tenant adds one kind of biometric connection at a time.
-
-    ``Tenant.biometric_mode`` is the record of that choice. Unset means
-    undecided — the frontend asks before offering either "+ Add" button, but
-    a direct API call gets the same gate rather than a free pass: the first
-    call adopts ``kind`` (or, if this tenant already has a connection from
-    before this field existed, that connection's kind) as the mode, and every
-    call after either matches it or is refused.
-    """
-    tenant = principal.tenant
-    if tenant.biometric_mode is None:
-        inferred = db.scalar(
-            select(DeviceSource.connection_kind)
-            .where(DeviceSource.tenant_id == tenant.id)
-            .order_by(DeviceSource.created_at)
-            .limit(1)
-        )
-        tenant.biometric_mode = inferred or kind
-    if kind != tenant.biometric_mode:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            f"This account is set up for {_MODE_LABEL[tenant.biometric_mode]} connections. "
-            f"Switch modes in Settings → Biometric before adding a {_MODE_LABEL[kind]} connection.",
-        )
+_MODE_LABEL = {"platform": "platform server", "device": "standalone device"}
 
 
 def _require_provider_fields(provider_cls, payload: SourceIn) -> None:
@@ -402,7 +409,12 @@ def create_source(
             "provisioned from Odoo's roster.",
         )
 
-    _enforce_biometric_mode(db, principal, payload.connection_kind)
+    # Platform servers and standalone devices can sit side by side: the kind
+    # is chosen per connection, when it is added. (It used to be one kind per
+    # account, switched in Settings first — a gate with no engine-side
+    # reason behind it; the sync engine has always handled mixed sources.)
+    # Tenant.biometric_mode still records the kind most recently added.
+    principal.tenant.biometric_mode = payload.connection_kind
 
     if db.scalar(
         select(DeviceSource).where(
@@ -485,6 +497,61 @@ def update_source(
     _dupe_name_guard(db, data.get("name", source.name), commit=True)
     db.refresh(source)
     return source
+
+
+@router.post("/sources/test", response_model=TestResult)
+def test_source_unsaved(
+    payload: SourceTestIn,
+    principal: Principal = Depends(require_writer),
+    db: Session = Depends(get_db),
+) -> TestResult:
+    """Test Connection on an unsaved biometric form — see test_odoo_unsaved.
+
+    Nothing is persisted, including a token the provider may mint along the
+    way: the throwaway ``DeviceSource`` below is never added to the session.
+    """
+    stored = _get_source(db, principal, payload.source_id) if payload.source_id else None
+    provider = payload.provider or (stored.provider if stored else None) or "biotime"
+    try:
+        provider_cls = get_provider_class(provider)
+    except ProviderError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+    password_enc = stored.password_enc if stored else None
+    if payload.password:
+        password_enc = encrypt(payload.password, principal.tenant.crypto_key)
+
+    # The provider's own required fields, with a stored password counting as
+    # filled in — the edit form never has it to send.
+    present = {
+        "base_url": payload.base_url,
+        "username": payload.username,
+        "password": payload.password or ("stored" if password_enc else ""),
+        "server_timezone": payload.server_timezone,
+    }
+    missing = [
+        f["label"]
+        for f in provider_cls.config_fields
+        if f.get("required") and not str(present.get(f["name"], "") or "").strip()
+    ]
+    if missing:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"{', '.join(missing)} required for {provider_cls.label}.",
+        )
+
+    draft = DeviceSource(
+        provider=provider,
+        base_url=payload.base_url,
+        username=payload.username,
+        password_enc=password_enc,
+        token_enc=None,
+        auth_type=payload.auth_type,
+        server_timezone=payload.server_timezone,
+        verify_ssl=payload.verify_ssl,
+        config=payload.config or (dict(stored.config or {}) if stored else {}),
+    )
+    return _probe_source(principal, draft)
 
 
 @router.post("/sources/{source_id}/test", response_model=TestResult)

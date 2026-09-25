@@ -88,14 +88,10 @@ class Tenant(Base, UUIDPk, Timestamped):
     work_start_time: Mapped[str] = mapped_column(String(5), default="09:00")
     late_grace_minutes: Mapped[int] = mapped_column(Integer, default=10)
 
-    #: "platform" (one or more shared servers, such as BioTime) or "device"
-    #: (several standalone terminals, no shared server) — which kind of
-    #: DeviceSource this tenant is allowed to add. Null means undecided: the
-    #: Biometric submenu asks before offering either "+ Add" button, unless
-    #: this tenant already has a connection to infer it from (every tenant
-    #: from before this field existed has only ever had "platform" ones).
-    #: Adopted automatically the first time app.api.v1.connections.create_source
-    #: sees it unset, so a direct API call is gated exactly like the UI.
+    #: The kind of biometric connection ("platform" or "device") this tenant
+    #: added most recently. Informational only now: the kind is picked per
+    #: connection in the "+ Add connection" flow and both kinds can coexist.
+    #: It used to gate which kind could be added at all.
     biometric_mode: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     consecutive_failures: Mapped[int] = mapped_column(Integer, default=0)

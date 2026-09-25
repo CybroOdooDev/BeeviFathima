@@ -40,16 +40,52 @@ function afterAuth(tokens) {
   window.dispatchEvent(new CustomEvent('bb:signed-in'));
 }
 
+/** Staff are also often customers with a workspace of their own. Signing in
+ * at the console door opens that workspace session too — with the password
+ * already typed, so there is no second sign-in to switch to it later.
+ *
+ * Only in this direction. A console session is the one worth stealing, so it
+ * is never opened as a side effect of an ordinary customer sign-in; that one
+ * asks for the password when the person actually goes to the console. */
+async function alsoOpenWorkspace(values) {
+  if (auth.stashed('tenant')) return;
+  try {
+    const me = await api.get('/auth/me');
+    if (!me.tenant_id) return;
+    // A bare call rather than api.post: it must not touch the console
+    // session that is active right now, only sit beside it.
+    const response = await fetch('/api/v1/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(values),
+    });
+    if (response.ok) auth.stash(await response.json());
+  } catch { /* best effort — the console sign-in itself already worked */ }
+}
+
 export function renderLogin() {
+  // A staff member in the console whose workspace session has expired comes
+  // back through here; their address is known, so only the password is asked.
+  const returning = auth.isAuthenticated && auth.isStaffSession && auth.user?.tenant_id
+    ? auth.user.email : '';
   const root = shell(`
-    <h1>Sign in</h1>
-    <p class="sub">Biometric attendance, synced into Odoo.</p>
+    <h1>${returning ? 'Back to your workspace' : 'Sign in'}</h1>
+    <p class="sub">${returning
+      ? 'Your workspace session has ended. Confirm your password to reopen it — the console stays open alongside.'
+      : 'Biometric attendance, synced into Odoo.'}</p>
     <form id="form">
-      ${field({ name: 'email', label: 'Email', type: 'email', required: true })}
+      ${field({ name: 'email', label: 'Email', type: 'email', required: true, value: returning })}
       ${field({ name: 'password', label: 'Password', type: 'password', required: true })}
-      <button class="primary" style="width:100%" id="go">Sign in</button>
+      <button class="primary" style="width:100%" id="go">${returning ? 'Open my workspace' : 'Sign in'}</button>
     </form>
-    <p class="auth-alt">No account yet? <a href="#/signup">Create one</a></p>`);
+    <p class="auth-alt">${returning
+      ? '<a href="#/platform">Cancel — stay in the console</a>'
+      : 'No account yet? <a href="#/signup">Create one</a>'}</p>`);
+
+  if (returning) {
+    $('#form input[name=email]', root).readOnly = true;
+    $('#form input[name=password]', root).focus();
+  }
 
   $('#form', root).addEventListener('submit', (event) => {
     event.preventDefault();
@@ -64,28 +100,44 @@ export function renderStaffLogin() {
   /* A second door, not a second check.
    *
    * The console refuses a customer-scoped token whatever page produced it, so
-   * this screen is not what keeps anyone out. What it buys is that a staff
-   * credential is never typed into the customer-facing form: the two surfaces
-   * no longer share one page to phish, and the session this door mints is a
-   * short one. There is no sign-up here on purpose — the staff flag is only
-   * ever set by tools/grant_admin.py on the server. */
+   * this screen is not what keeps anyone out. What it buys is that the
+   * session this door mints is its own — short-lived, and never the same
+   * token as the customer one. There is no sign-up here on purpose — the
+   * staff flag is only ever set by tools/grant_admin.py on the server.
+   *
+   * Reached two ways: cold, by staff with no session; or from the "Staff
+   * console" switch in a workspace, when there is no console session open
+   * yet (or it has expired). The second is a step-up: the address is known,
+   * so only the password is asked, and the workspace stays open beside it. */
+  const stepUp = auth.isAuthenticated && !auth.isStaffSession
+    && auth.user?.is_platform_admin === true;
   const root = shell(`
-    <h1>Platform console</h1>
-    <p class="sub">For BioBridge staff. Customer accounts sign in at the main
-      login. Console sessions are short and expire on their own.</p>
+    <h1>${stepUp ? 'Open the staff console' : 'Platform console'}</h1>
+    <p class="sub">${stepUp
+      ? 'Confirm your password to open the console. Your workspace stays open — switch between the two from the sidebar.'
+      : 'For BioBridge staff. Customer accounts sign in at the main login. Console sessions are short and expire on their own.'}</p>
     <form id="form">
-      ${field({ name: 'email', label: 'Staff email', type: 'email', required: true })}
+      ${field({ name: 'email', label: 'Staff email', type: 'email', required: true, value: stepUp ? auth.user.email : '' })}
       ${field({ name: 'password', label: 'Password', type: 'password', required: true })}
-      <button class="primary" style="width:100%" id="go">Sign in to console</button>
+      <button class="primary" style="width:100%" id="go">${stepUp ? 'Open console' : 'Sign in to console'}</button>
     </form>
-    <p class="auth-alt">Not staff? <a href="#/login">Customer sign in</a></p>`,
+    <p class="auth-alt">${stepUp
+      ? '<a href="#/">Cancel — back to my workspace</a>'
+      : 'Not staff? <a href="#/login">Customer sign in</a>'}</p>`,
     { staff: true });
+
+  if (stepUp) {
+    $('#form input[name=email]', root).readOnly = true;
+    $('#form input[name=password]', root).focus();
+  }
 
   $('#form', root).addEventListener('submit', (event) => {
     event.preventDefault();
     const values = readForm(event.target);
     submit($('#go', root), async () => {
-      afterAuth(await api.post('/auth/staff/login', values));
+      auth.persist(await api.post('/auth/staff/login', values));
+      await alsoOpenWorkspace(values);
+      window.dispatchEvent(new CustomEvent('bb:signed-in'));
     });
   });
 }

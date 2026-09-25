@@ -37,7 +37,7 @@ class FakeXmlRpcModels:
         }
         self.ir_model_fields_rows: list[tuple[int, str]] = []
         self.ir_model_access_rows: list[tuple[int, str]] = []
-        self.ir_rule_rows: list[tuple[int, str, str]] = []  # (model_id, name, domain_force)
+        self.ir_rule_rows: list[list] = []  # [model_id, name, domain_force]
         self.xmlids: dict[tuple[str, str], int] = {
             ("base", "group_user"): 501,
             ("hr_attendance", "group_hr_attendance_manager"): 502,
@@ -99,13 +99,23 @@ class FakeXmlRpcModels:
                 return self._new_id()
 
         if model == "ir.rule":
-            if method == "search":
+            # A row's id is 9000 + its index, so write() can find it again.
+            if method == "search_read":
                 domain = args[0]
                 key_ = (self._domain_value(domain, "model_id"), self._domain_value(domain, "name"))
-                return [1] if any((mid, n) == key_ for mid, n, _df in self.ir_rule_rows) else []
+                return [
+                    {"id": 9000 + i, "domain_force": df}
+                    for i, (mid, n, df) in enumerate(self.ir_rule_rows)
+                    if (mid, n) == key_
+                ][:1]
+            if method == "write":
+                ids, vals = args
+                for i in ids:
+                    self.ir_rule_rows[i - 9000][2] = vals["domain_force"]
+                return True
             if method == "create":
                 vals = args[0]
-                self.ir_rule_rows.append((vals["model_id"], vals["name"], vals["domain_force"]))
+                self.ir_rule_rows.append([vals["model_id"], vals["name"], vals["domain_force"]])
                 return self._new_id()
 
         if model == "ir.model.data" and method == "search_read":
@@ -518,3 +528,30 @@ def test_create_attendance_omits_device_field_when_tracking_absent():
     record = fake.hr_attendance_records[attendance_id]
     assert "device_id" not in record
     assert "x_device_id" not in record
+
+
+def test_update_setup_repairs_the_first_releases_strict_company_rule():
+    """The first release created the rule with no "unset company is visible"
+    half. A later bootstrap run must bring it to the current domain, not skip
+    it because a rule by that name exists — that skip is what left devices
+    with no company unreadable ("doesn't have 'read' access ... Blame the
+    following rules: x_biobridge_device.biobridge_company")."""
+    fake = FakeXmlRpcModels()
+    client = make_client(fake)
+    client.ensure_device_tracking_bootstrap()
+    device_model_id = fake.model_name_to_id["x_biobridge_device"]
+    rule = next(r for r in fake.ir_rule_rows if r[0] == device_model_id)
+    rule[2] = "[('x_company_id', 'in', company_ids)]"  # what the first release wrote
+
+    make_client(fake).ensure_device_tracking_bootstrap()  # "Update setup"
+
+    assert rule[2] == "['|', ('x_company_id', '=', False), ('x_company_id', 'in', company_ids)]"
+    assert fake.calls.count("ir.rule.create") == 1, "repaired in place, never duplicated"
+
+
+def test_a_current_company_rule_is_left_untouched():
+    fake = FakeXmlRpcModels()
+    client = make_client(fake)
+    client.ensure_device_tracking_bootstrap()
+    client.ensure_device_tracking_bootstrap()
+    assert "ir.rule.write" not in fake.calls

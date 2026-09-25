@@ -155,7 +155,8 @@ def prune_old_punches(retain_days: int = 180) -> dict[str, int]:
             delete(PunchRecord).where(
                 PunchRecord.punch_time_utc < cutoff,
                 PunchRecord.process_state.in_(
-                    [PunchState.synced.value, PunchState.skipped.value]
+                    [PunchState.synced.value, PunchState.skipped.value,
+                     PunchState.deleted.value]
                 ),
             )
         )

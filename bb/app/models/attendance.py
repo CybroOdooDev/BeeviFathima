@@ -44,6 +44,12 @@ class PunchState(str, enum.Enum):
     skipped = "skipped"     # deduplicated, or the employee is ignored
     unmapped = "unmapped"   # no Odoo employee carries this badge yet
     error = "error"         # the push failed; retried while attempts remain
+    #: Removed by a user from the Activity screen. Kept as a row on purpose:
+    #: the ledger's unique (source, external_id) is what stops the next
+    #: sync's overlap window re-ingesting a punch, so a hard delete would
+    #: bring it straight back as a new pending punch. Never pushed, hidden
+    #: from the unfiltered list, restorable with Retry, pruned with the rest.
+    deleted = "deleted"
 
 
 class SyncStatus(str, enum.Enum):

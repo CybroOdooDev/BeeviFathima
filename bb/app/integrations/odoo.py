@@ -835,24 +835,32 @@ class OdooClient:
         configured" into "devices silently vanish from the list".
         """
         name = f"{model_name}.biobridge_company"
+        domain = (
+            f"['|', ('{company_field}', '=', False), "
+            f"('{company_field}', 'in', company_ids)]"
+        )
         existing = self.execute(
-            "ir.rule", "search", [[("model_id", "=", model_id), ("name", "=", name)]], {"limit": 1}
+            "ir.rule",
+            "search_read",
+            [[("model_id", "=", model_id), ("name", "=", name)]],
+            {"fields": ["domain_force"], "limit": 1},
         )
         if existing:
+            # Repaired, not just detected: the first release of this rule
+            # created it as [('x_company_id', 'in', company_ids)], with no
+            # "unset is visible" half. Skipping any rule that merely exists
+            # by name left that strict domain in place forever, and it makes
+            # every device with no company unreadable — and every create from
+            # a connection with no company_id fail — for everyone. This is
+            # BioBridge's own named rule, so bringing it back to the current
+            # domain on "Update setup" overrides nothing the customer made.
+            if (existing[0].get("domain_force") or "").strip() != domain:
+                self.execute("ir.rule", "write", [[existing[0]["id"]], {"domain_force": domain}])
             return
         self.execute(
             "ir.rule",
             "create",
-            [
-                {
-                    "name": name,
-                    "model_id": model_id,
-                    "domain_force": (
-                        f"['|', ('{company_field}', '=', False), "
-                        f"('{company_field}', 'in', company_ids)]"
-                    ),
-                }
-            ],
+            [{"name": name, "model_id": model_id, "domain_force": domain}],
         )
 
     def _xmlid_to_id(self, module: str, name: str) -> int | None:

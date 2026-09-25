@@ -333,7 +333,23 @@ Two consequences worth knowing:
 
 - **The flag alone no longer opens the console.** After `grant_admin.py`, the
   person must sign in *at the staff door*; an existing session will not do. If
-  they also have their own workspace, the sidebar there links across.
+  they also have their own workspace, the sidebar there has a switch across.
+
+**Switching hats without signing in twice.** A dual-role person can hold both
+sessions in one tab and flip between them with the sidebar's *Staff console ›* /
+*‹ My workspace* button. They stay two separately-scoped tokens — only the
+active one is sent — so none of the separation above changes. How they get
+opened:
+
+- Signing in **at the staff door** also opens the person's workspace session with
+  the same password, so one sign-in gives both.
+- Signing in **at the customer door** opens only the workspace. The first switch
+  to the console asks for the password again (email pre-filled): a console
+  session is the one worth stealing, so it is never minted as a side effect of
+  an ordinary sign-in. After that, switching is instant both ways.
+- When one session expires (the console's after a day at most), the tab carries
+  on in the other; switching back asks for the password once more. *Sign out*
+  ends both.
 - **A staff account with no workspace is turned away from the customer door**,
   with the address of the right one, rather than being given a session that
   authenticates and then fails on every screen.
@@ -755,6 +771,15 @@ actual domain is `['|', ('x_company_id', '=', False), ('x_company_id',
 'in', company_ids)]`: unset stays visible everywhere (matching the
 no-isolation behavior these rows already had), while a row that does carry
 a company id is properly restricted to it.
+
+The very first release of this rule did use the plain domain, and setup used
+to skip any rule that already existed by name, so an Odoo set up with that
+release kept it. The symptoms: "doesn't have 'read' access to BioBridge
+Device … Blame the following rules: x_biobridge_device.biobridge_company"
+on a device with no company, and "doesn't have 'create' access to BioBridge
+Device" when a connection with no company registers a terminal. Setup now
+rewrites BioBridge's own rule to the current domain whenever it differs, so
+**Settings → Odoo → Update setup** fixes an affected Odoo in one click.
 
 Leaving `company_id` unset is still the right choice for an ordinary
 single-company Odoo — there's nothing to isolate from, and every existing

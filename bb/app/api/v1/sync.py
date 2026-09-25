@@ -318,6 +318,9 @@ def list_punches(
     stmt = select(PunchRecord).where(PunchRecord.tenant_id == principal.tenant.id)
     if state:
         stmt = stmt.where(PunchRecord.process_state == state)
+    else:
+        # Deleted punches are only listed when asked for by name.
+        stmt = stmt.where(PunchRecord.process_state != PunchState.deleted.value)
     if emp_code:
         stmt = stmt.where(PunchRecord.emp_code == emp_code)
     if terminal_sn:
@@ -347,6 +350,43 @@ def retry_punch(
     punch.error_message = None
     db.commit()
     return MessageOut(message="Punch queued for the next sync")
+
+
+#: The states Retry is offered for — the only ones Delete is allowed on too.
+#: Pending is left out (it is about to be pushed anyway) and so is synced
+#: (the punch already sits in an Odoo attendance record, and removing it here
+#: would leave that record with nothing behind it in the ledger).
+DELETABLE_STATES = (PunchState.error.value, PunchState.skipped.value, PunchState.unmapped.value)
+
+
+@router.delete("/punches/{punch_id}", response_model=MessageOut)
+def delete_punch(
+    punch_id: str,
+    request: Request,
+    principal: Principal = Depends(require_writer),
+    db: Session = Depends(get_db),
+) -> MessageOut:
+    """Take a punch out of the queue for good — see PunchState.deleted for
+    why the row is kept rather than removed."""
+    punch = db.get(PunchRecord, punch_id)
+    if punch is None or punch.tenant_id != principal.tenant.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Punch not found")
+    if punch.process_state not in DELETABLE_STATES or punch.odoo_attendance_id:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"A {punch.process_state} punch can't be deleted — only error, skipped "
+            "and unmapped punches, which never reached Odoo.",
+        )
+    previous = punch.process_state
+    punch.process_state = PunchState.deleted.value
+    punch.error_message = f"Deleted (was {previous})"
+    audit(
+        db, principal, "punch.delete", punch.id,
+        f"{punch.emp_code} at {punch.punch_time_utc:%Y-%m-%d %H:%M:%S} UTC, was {previous}",
+        request,
+    )
+    db.commit()
+    return MessageOut(message="Punch deleted")
 
 
 @router.get("/mappings", response_model=list[MappingOut])

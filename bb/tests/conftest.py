@@ -168,6 +168,18 @@ class FakeOdoo:
             self.devices[serial_number] = self._next_device_id
         return self.devices[serial_number]
 
+    # Linking past attendance to its device (app.services.device_links).
+    def attendance_ids_without_device(self, attendance_ids):
+        return [
+            i for i in attendance_ids
+            if i in self.attendances and not self.attendances[i].get("device_id")
+        ]
+
+    def set_attendance_device(self, attendance_ids, device_id):
+        self.calls.append(f"set_attendance_device:{device_id}:{len(attendance_ids)}")
+        for i in attendance_ids:
+            self.attendances[i]["device_id"] = device_id
+
 
 class FakeProvider:
     """Stands in at the provider seam, so the seam itself is exercised."""

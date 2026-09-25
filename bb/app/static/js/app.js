@@ -5,7 +5,7 @@
  * not control.
  */
 
-import { api, auth, loadSession } from './api.js';
+import { api, auth, loadSession, switchSession } from './api.js';
 import { $, esc, toast } from './ui.js';
 import { renderLogin, renderSignup, renderStaffLogin } from './pages/auth.js';
 import { render as renderOverview } from './pages/overview.js';
@@ -114,6 +114,7 @@ function mountShell() {
         <div class="side-foot">
           <div class="side-user" id="sideUser"></div>
           <div id="consoleSwitch"></div>
+          <div class="theme-toggle" id="themeSwitch" role="group" aria-label="Theme"></div>
           <button class="link" id="signOut" style="padding-left:0">Sign out</button>
         </div>
       </aside>
@@ -129,13 +130,42 @@ function mountShell() {
     </div>`;
 
   $('#signOut', root).addEventListener('click', async () => {
+    // Both hats, if both are open: "Sign out" that left a console session
+    // alive in the tab would be the surprising kind of convenience.
     // Failure is ignored: signing out locally is what actually matters.
-    try {
-      if (auth.refreshToken) {
-        await api.post(`/auth/logout?refresh_token=${encodeURIComponent(auth.refreshToken)}`);
-      }
-    } catch { /* already gone */ }
+    for (const token of auth.allRefreshTokens()) {
+      try {
+        await api.post(`/auth/logout?refresh_token=${encodeURIComponent(token)}`);
+      } catch { /* already gone */ }
+    }
     window.dispatchEvent(new CustomEvent('bb:signed-out'));
+  });
+
+  // One click between a dual-role person's workspace and the console. If the
+  // session for the other side is still open it is just made active; if not
+  // (never opened, or the short console session expired) the matching door
+  // asks for the password only.
+  $('#consoleSwitch', root).addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-switch]');
+    if (!button) return;
+    const target = button.dataset.switch;
+    button.disabled = true;
+    let switched = false;
+    try {
+      switched = await switchSession(target);
+    } catch { /* fall through to the password prompt */ }
+    button.disabled = false;
+    const destination = switched
+      ? (target === 'staff' ? '#/platform' : '#/')
+      : (target === 'staff' ? '#/staff/login' : '#/login');
+    if (window.location.hash === destination) resolve();
+    else window.location.hash = destination;
+  });
+
+  paintThemeSwitch();
+  $('#themeSwitch', root).addEventListener('click', (event) => {
+    const button = event.target.closest('[data-theme-choice]');
+    if (button) setTheme(button.dataset.themeChoice);
   });
 
   $('#menuToggle', root).addEventListener('click', () =>
@@ -143,6 +173,41 @@ function mountShell() {
   );
 
   return root;
+}
+
+/* Light, dark, or whatever the computer is set to. js/theme.js applies the
+ * stored choice before first paint; this is the control that changes it. */
+const THEMES = [
+  { value: 'system', label: 'Auto' },
+  { value: 'light', label: 'Light' },
+  { value: 'dark', label: 'Dark' },
+];
+
+function currentTheme() {
+  return document.documentElement.getAttribute('data-theme') || 'system';
+}
+
+function setTheme(value) {
+  if (value === 'light' || value === 'dark') {
+    document.documentElement.setAttribute('data-theme', value);
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+  }
+  try {
+    if (value === 'light' || value === 'dark') localStorage.setItem('bb.theme', value);
+    else localStorage.removeItem('bb.theme');
+  } catch { /* storage blocked: the choice lasts until the tab closes */ }
+  paintThemeSwitch();
+}
+
+function paintThemeSwitch() {
+  const holder = $('#themeSwitch');
+  if (!holder) return;
+  const active = currentTheme();
+  holder.innerHTML = THEMES.map((t) => `
+    <button type="button" data-theme-choice="${t.value}" aria-pressed="${t.value === active}"
+            title="${t.value === 'system' ? 'Follow this computer’s setting' : `Always ${t.label.toLowerCase()}`}">
+      ${t.label}</button>`).join('');
 }
 
 function renderChrome(path) {
@@ -165,13 +230,15 @@ function renderChrome(path) {
   sideUser.textContent = auth.user?.email || '';
   sideUser.title = auth.user?.email || '';   // the truncated address, in full, on hover
 
-  // Staff signed in to their own workspace: the console is a different session,
-  // reached through its own door. Offered rather than hidden, because the page
-  // is unadvertised and they would otherwise have no way to find it.
+  // Someone who is both staff and a customer wears one hat at a time — each
+  // is its own session — and switches here. Offered rather than hidden,
+  // because the console is unadvertised and there is no other way to find it.
   $('#consoleSwitch').innerHTML =
     auth.user?.is_platform_admin === true && !auth.isStaffSession
-      ? '<a class="link" href="#/staff/login">Open the staff console &rsaquo;</a>'
-      : '';
+      ? '<button type="button" class="sm hat-switch" data-switch="staff">Staff console &rsaquo;</button>'
+      : auth.isStaffSession && auth.user?.tenant_id
+        ? '<button type="button" class="sm hat-switch" data-switch="tenant">&lsaquo; My workspace</button>'
+        : '';
   // Three states, and the order matters. A stopped account used to show the
   // green pill — the pill was keyed on sync_enabled alone, so an account the
   // platform had suspended looked perfectly healthy while nothing synced. The
@@ -201,9 +268,16 @@ async function refreshBadges() {
 }
 
 let running = false;
+// A navigation asked for while a page was still rendering — a hashchange, or
+// a session switch after an expiry — is run once that render finishes rather
+// than dropped.
+let rerun = false;
 
 async function resolve() {
-  if (running) return;
+  if (running) {
+    rerun = true;
+    return;
+  }
   running = true;
   try {
     const route = parseHash();
@@ -234,14 +308,17 @@ async function resolve() {
       // and signing in at that door swaps the session rather than adding a
       // second one. Without this they would have to sign out first to find a
       // page nothing links to.
-      const switchingHats = route.path === '/staff/login'
+      const switchingHats = (route.path === '/staff/login'
         && auth.user?.is_platform_admin === true
-        && !auth.isStaffSession;
+        && !auth.isStaffSession)
+        // …and the way back: a console session whose workspace session has
+        // expired reopens it at the customer door, password only.
+        || (route.path === '/login' && auth.isStaffSession && Boolean(auth.user?.tenant_id));
       if (!switchingHats) {
         window.location.hash = '#/';
         return;
       }
-      return renderStaffLogin();
+      return route.path === '/login' ? renderLogin() : renderStaffLogin();
     }
 
     if (!auth.user) {
@@ -290,6 +367,10 @@ async function resolve() {
     renderChrome(route.path);
   } finally {
     running = false;
+    if (rerun) {
+      rerun = false;
+      resolve();
+    }
   }
 }
 
@@ -301,7 +382,24 @@ window.addEventListener('bb:signed-in', async () => {
   resolve();
 });
 
-window.addEventListener('bb:signed-out', () => {
+window.addEventListener('bb:signed-out', async (event) => {
+  // One session expired, not a sign-out: if the other hat is still open, carry
+  // on in it rather than dropping the person at a login page.
+  if (event.detail?.expired) {
+    const other = auth.lastDoor === 'staff' ? 'tenant' : 'staff';
+    let switched = false;
+    try {
+      switched = await switchSession(other);
+    } catch { /* sign out below */ }
+    if (switched) {
+      toast(other === 'tenant'
+        ? 'Your console session expired — you are back in your workspace.'
+        : 'Your workspace session expired — you are in the staff console.', 'ok');
+      window.location.hash = other === 'staff' ? '#/platform' : '#/';
+      resolve();
+      return;
+    }
+  }
   auth.clear();
   $('#app-root').classList.add('hidden');
   $('#app-root').innerHTML = '';

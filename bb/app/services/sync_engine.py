@@ -48,6 +48,7 @@ from app.models import (
     SyncStatus,
     Tenant,
 )
+from app.services.device_links import device_for_punch
 from app.services.connections import (
     UnsafeTargetError,
     build_odoo_client,
@@ -962,9 +963,11 @@ class SyncEngine:
         punch = by_id.get(interval.check_in_punch_id or "") or by_id.get(
             interval.check_out_punch_id or ""
         )
-        if punch is None or not punch.device_id:
+        if punch is None:
             return None
-        return self.db.get(Device, punch.device_id)
+        # Falls back to the punch's serial number when it wasn't linked at
+        # fetch time (its terminal was imported later) — see device_links.
+        return device_for_punch(self.db, punch)
 
     def _odoo_device_id(
         self, odoo: OdooClient, odoo_conn: OdooConnection, device: Device | None

@@ -194,7 +194,7 @@ export async function renderActivity(mount, route) {
     api.get('/devices').catch(() => []),
   ]);
 
-  const states = ['', 'pending', 'synced', 'unmapped', 'error', 'skipped'];
+  const states = ['', 'pending', 'synced', 'unmapped', 'error', 'skipped', 'deleted'];
 
   /** Keep the state tab while changing a filter, and vice versa. */
   const linkFor = (overrides) => {
@@ -317,7 +317,12 @@ export async function renderActivity(mount, route) {
                   <td style="color:var(--muted);font-size:12.5px">${esc(p.error_message || '—')}</td>
                   <td style="text-align:right">
                     ${auth.canWrite && ['error', 'skipped', 'unmapped'].includes(p.process_state)
-                      ? `<button class="sm" data-retry="${esc(p.id)}">Retry</button>` : ''}
+                      ? `<button class="sm" data-retry="${esc(p.id)}">Retry</button>
+                         <button class="sm" data-delete="${esc(p.id)}"
+                                 title="Remove from the queue. It won't be pushed, and won't come back on the next sync.">Delete</button>` : ''}
+                    ${auth.canWrite && p.process_state === 'deleted'
+                      ? `<button class="sm" data-retry="${esc(p.id)}"
+                                 title="Put it back in the queue for the next sync">Restore</button>` : ''}
                   </td>
                 </tr>`).join('')}
             </tbody>
@@ -353,5 +358,31 @@ export async function renderActivity(mount, route) {
         }, 'Queued for the next sync')
       )
     );
+  });
+
+  // Two clicks, no confirm() dialog (nothing in this app uses one): the first
+  // arms the button for a few seconds, the second deletes.
+  mount.querySelectorAll('[data-delete]').forEach((button) => {
+    let armed = null;
+    button.addEventListener('click', () => {
+      if (!armed) {
+        button.textContent = 'Confirm delete';
+        button.classList.add('danger');
+        armed = setTimeout(() => {
+          armed = null;
+          button.textContent = 'Delete';
+          button.classList.remove('danger');
+        }, 4000);
+        return;
+      }
+      clearTimeout(armed);
+      armed = null;
+      busy(button, () =>
+        guard(async () => {
+          await api.del(`/punches/${button.dataset.delete}`);
+          await renderActivity(mount, route);
+        }, 'Punch deleted')
+      );
+    });
   });
 }

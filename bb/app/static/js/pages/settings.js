@@ -105,6 +105,22 @@ function topBanners(ctx) {
     ${ctx.readonly ? banner('Read-only', 'Your role cannot change settings.', 'warn') : ''}`;
 }
 
+/** A card's title bar, with the card's actions on the right.
+ *
+ * Every settings page puts its buttons here — at the top, where they are
+ * found without scrolling past the whole form first. The bar is sticky, so
+ * on a long form Save is still in reach from the bottom of it. */
+function cardHead(title, hint, actions = '') {
+  return `
+    <div class="card-head">
+      <h2>${esc(title)}${hint ? ` <span class="hint">${esc(hint)}</span>` : ''}</h2>
+      ${actions ? `<div class="actions">${actions}</div>` : ''}
+    </div>`;
+}
+
+const saveButton = (readonly) =>
+  readonly ? '' : '<button class="primary" id="save" type="submit">Save settings</button>';
+
 function saveTenantForm(mount, formId, buttonId, reRender) {
   if (!auth.canWrite) return;
   $(`#${formId}`, mount).addEventListener('submit', (event) => {
@@ -128,7 +144,7 @@ async function renderGeneral(mount) {
     ${topBanners(ctx)}
     <form id="form" ${readonly ? 'inert' : ''}>
       <div class="card">
-        <h2>General</h2>
+        ${cardHead('General', '', saveButton(readonly))}
         ${field({ name: 'name', label: 'Company', value: tenant.name, required: true })}
         ${field({
           name: 'timezone', label: 'Display timezone', value: tenant.timezone, required: true,
@@ -151,9 +167,6 @@ async function renderGeneral(mount) {
               + 'Nothing is lost: the cursor stays where it is and the next run '
               + 'picks up from there.',
         })}
-        <div class="row end" style="margin-top:14px">
-          <button class="primary" id="save">Save settings</button>
-        </div>
       </div>
     </form>`;
 
@@ -169,7 +182,7 @@ async function renderPairing(mount) {
     ${topBanners(ctx)}
     <form id="form" ${readonly ? 'inert' : ''}>
       <div class="card">
-        <h2>Pairing <span class="hint">how raw punches become shifts</span></h2>
+        ${cardHead('Pairing', 'how raw punches become shifts', saveButton(readonly))}
         ${field({
           name: 'pairing_mode', label: 'Mode', value: tenant.pairing_mode, required: true,
           options: [
@@ -203,9 +216,6 @@ async function renderPairing(mount) {
             { value: 'ignore', label: 'Ignore — drop it' },
           ],
         })}
-        <div class="row end" style="margin-top:14px">
-          <button class="primary" id="save">Save settings</button>
-        </div>
       </div>
     </form>`;
 
@@ -221,7 +231,7 @@ async function renderHours(mount) {
     ${topBanners(ctx)}
     <form id="form" ${readonly ? 'inert' : ''}>
       <div class="card">
-        <h2>Working hours <span class="hint">used to score late arrivals</span></h2>
+        ${cardHead('Working hours', 'used to score late arrivals', saveButton(readonly))}
         ${field({
           name: 'work_start_time', label: 'Day starts', value: tenant.work_start_time,
           required: true, placeholder: '09:00',
@@ -231,9 +241,6 @@ async function renderHours(mount) {
           name: 'late_grace_minutes', label: 'Grace period (minutes)', type: 'number',
           value: tenant.late_grace_minutes, required: true,
         })}
-        <div class="row end" style="margin-top:14px">
-          <button class="primary" id="save">Save settings</button>
-        </div>
       </div>
     </form>`;
 
@@ -248,7 +255,10 @@ async function renderPlan(mount) {
   mount.innerHTML = `
     ${topBanners(ctx)}
     <div class="card">
-      <h2>Plan <span class="hint">what this account is billed and limited by</span></h2>
+      ${cardHead('Plan', 'what this account is billed and limited by',
+        activePlans.length && !readonly
+          ? '<button class="primary" id="changePlan" type="submit" form="planForm">Change plan</button>'
+          : '')}
       <div class="hint" style="margin-bottom:10px">
         ${tenant.plan_name ? `Currently <strong>${esc(tenant.plan_name)}</strong>` : 'No plan assigned — nothing is limited.'}
         ${tenant.plan_max_employees != null ? ` · up to ${esc(tenant.plan_max_employees)} employees` : ''}
@@ -278,7 +288,6 @@ async function renderPlan(mount) {
                 : p.name,
             })),
           })}
-          <button class="primary" id="changePlan" type="submit">Change plan</button>
         </form>
         <div class="hint">${willDefer
           ? 'You’re on a paid plan already: a switch is queued and takes '
@@ -332,11 +341,29 @@ async function renderOdoo(mount) {
 
   if (!odoo || odooLastCompanies?.connId !== odoo.id) odooLastCompanies = null;
 
+  // Test sits before Connect, left to right, and on a new connection Connect
+  // only unlocks once the values in the form have been tested — see
+  // wireTestFirst. Remove is kept apart from both, on the far left.
+  const removeControls = odoo && !readonly ? (
+    odooConfirmDelete
+      ? '<span class="hint">Remove this connection?</span>'
+        + '<button type="button" class="sm danger" id="odooRemoveCommit">Remove</button>'
+        + '<button type="button" class="sm link" id="odooRemoveCancel">Cancel</button>'
+      : '<button type="button" class="sm link" id="odooRemove">Remove connection</button>'
+  ) : '';
+  const actions = readonly ? '' : `
+    ${removeControls}
+    <button type="button" id="testOdoo">Test connection</button>
+    <button class="primary" id="saveOdoo" type="submit" form="odooForm">
+      ${odoo ? 'Save changes' : 'Connect Odoo'}</button>`;
+
   mount.innerHTML = `
     ${readonly ? banner('Read-only', 'Your role cannot change connections.', 'warn') : ''}
 
     <div class="card">
-      <h2>Odoo <span class="hint">where attendance is written</span></h2>
+      ${cardHead('Odoo', 'where attendance is written', actions)}
+      ${!odoo && !readonly ? testFirstHint('Connect Odoo') : ''}
+      <div id="odooTestResult"></div>
       ${odoo ? statusRow(odoo) : ''}
       ${odoo && odoo.status === 'connected' ? deviceTrackingRow(odoo, readonly) : ''}
       ${odoo && odoo.status === 'connected' ? companyScopeRow(odoo) : ''}
@@ -366,52 +393,59 @@ async function renderOdoo(mount) {
           help: 'Only matters if this Odoo has more than one company. Leave blank for '
             + 'a single-company Odoo. Set on a multi-company one, or this connection can '
             + 'see and write every company the API user has access to, not just one — '
-            + 'test the connection below to see the company IDs this login can reach.',
+            + 'Test connection lists the company IDs this login can reach.',
           strongHelp: true,
         })}
-        <div class="row">
-          <button class="primary" id="saveOdoo">${odoo ? 'Save changes' : 'Connect Odoo'}</button>
-          ${odoo ? '<button type="button" id="testOdoo">Test connection</button>' : ''}
-          ${odoo && !readonly ? (
-            odooConfirmDelete
-              ? '<span class="hint">Remove this connection?</span>'
-                + '<button type="button" class="sm" id="odooRemoveCommit">Remove</button>'
-                + '<button type="button" class="sm link" id="odooRemoveCancel">Cancel</button>'
-              : '<button type="button" class="sm link" id="odooRemove">Remove connection</button>'
-          ) : ''}
-        </div>
       </form>
       ${odooLastCompanies ? companiesHint(odoo, odooLastCompanies.companies) : ''}
     </div>`;
 
   if (readonly) return;
 
-  $('#odooForm', mount).addEventListener('submit', (event) => {
-    event.preventDefault();
-    const values = readForm(event.target);
+  const form = $('#odooForm', mount);
+  const odooValues = () => {
+    const values = readForm(form);
     if (odoo && !values.api_key) delete values.api_key;
-    busy($('#saveOdoo', mount), () =>
-      guard(async () => {
-        if (odoo) await api.patch(`/odoo-connections/${odoo.id}`, values);
-        else await api.post('/odoo-connections', values);
-        odooConfirmDelete = false;
-        await renderOdoo(mount);
-      }, 'Odoo connection saved')
-    );
+    return values;
+  };
+
+  wireTestFirst({
+    form,
+    test: $('#testOdoo', mount),
+    commit: $('#saveOdoo', mount),
+    result: $('#odooTestResult', mount),
+    label: odoo ? 'Save changes' : 'Connect Odoo',
+    gate: !odoo,
+    probe: () => api.post('/odoo-connections/test', {
+      ...odooValues(), ...(odoo ? { conn_id: odoo.id } : {}),
+    }),
+    after: (result) => companiesHint(odoo, result.detail?.companies || []),
   });
 
-  $('#testOdoo', mount)?.addEventListener('click', (event) =>
-    busy(event.target, () =>
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const values = odooValues();
+    busy($('#saveOdoo', mount), () =>
       guard(async () => {
-        const result = await api.post(`/odoo-connections/${odoo.id}/test`);
-        toast(result.message, result.ok ? 'ok' : 'bad');
-        odooLastCompanies = result.detail?.companies
-          ? { connId: odoo.id, companies: result.detail.companies }
-          : null;
+        if (odoo) {
+          await api.patch(`/odoo-connections/${odoo.id}`, values);
+          // Saving an edit used to leave the connection "unverified" until
+          // someone remembered to press Test. Check it straight away instead,
+          // so the status on screen is about the values just saved.
+          const result = await api.post(`/odoo-connections/${odoo.id}/test`);
+          toast(result.message, result.ok ? 'ok' : 'bad');
+          odooLastCompanies = result.detail?.companies
+            ? { connId: odoo.id, companies: result.detail.companies }
+            : null;
+        } else {
+          await api.post('/odoo-connections', values);
+          toast('Odoo connected', 'ok');
+        }
+        odooConfirmDelete = false;
         await renderOdoo(mount);
       })
-    )
-  );
+    );
+  });
 
   $('#odooRemove', mount)?.addEventListener('click', () => {
     odooConfirmDelete = true;
@@ -440,6 +474,75 @@ async function renderOdoo(mount) {
       })
     )
   );
+}
+
+/* ===========================================================================
+ * Test before you connect.
+ *
+ * Both connection forms used to offer Test Connection only once Connect had
+ * already stored the credentials — so the first anyone heard of a wrong URL
+ * or an unreachable device was after committing it. Now Test runs on the
+ * values in the form (POST /odoo-connections/test, /sources/test — nothing is
+ * saved), and on a new connection the Connect button unlocks only once the
+ * values currently in the form have been tested.
+ *
+ * A failed test does not trap anyone: the button then reads "… anyway",
+ * because a device that is switched off right now can still be configured
+ * correctly. Changing a field after a test asks for a fresh one.
+ * ======================================================================== */
+
+function testFirstHint(connectLabel) {
+  return `
+    <div class="steps">
+      <span class="step"><b>1</b> Fill in the details</span>
+      <span class="step"><b>2</b> Test connection</span>
+      <span class="step"><b>3</b> ${esc(connectLabel)}</span>
+    </div>`;
+}
+
+/** The last test's outcome, kept on screen rather than only in a toast — a
+ * toast is gone before anyone finishes reading a timeout message. */
+function testResultHtml(result, stale) {
+  if (!result) return '';
+  return `
+    <div class="test-result ${result.ok ? 'ok' : 'bad'}${stale ? ' stale' : ''}">
+      <strong>${result.ok ? 'Connection works' : 'Connection failed'}</strong>
+      <span>${esc(result.message)}</span>
+      ${stale ? '<span class="hint">The form has changed since this test — test again.</span>' : ''}
+    </div>`;
+}
+
+function wireTestFirst({ form, test, commit, result, probe, label, gate, after }) {
+  let tested = null;   // { fingerprint, ok } for the values last tested
+  let last = null;     // the TestResult itself
+  const fingerprint = () => JSON.stringify(readForm(form));
+
+  const paint = () => {
+    const current = Boolean(tested) && tested.fingerprint === fingerprint();
+    if (gate) {
+      commit.disabled = !current;
+      commit.textContent = current && !tested.ok ? `${label} anyway` : label;
+      commit.title = current ? '' : 'Test the connection first';
+    }
+    result.innerHTML = testResultHtml(last, Boolean(last) && !current)
+      + (last && current && after ? after(last) : '');
+  };
+
+  form.addEventListener('input', paint);
+  form.addEventListener('change', paint);
+  test.addEventListener('click', () => {
+    // The same required-field check Connect would do, so a test is never
+    // spent on a form that could not have been saved anyway.
+    if (!form.reportValidity()) return;
+    const fp = fingerprint();
+    busy(test, () =>
+      guard(async () => {
+        last = await probe();
+        tested = { fingerprint: fp, ok: last.ok };
+      })
+    ).then(paint);
+  });
+  paint();
 }
 
 /* Whether attendance records show which terminal punched them, and the
@@ -518,42 +621,50 @@ function companiesHint(odoo, companies) {
 }
 
 /* ===========================================================================
- * Biometric — where punches come from. A tenant runs in one of two modes,
- * chosen once (and changeable): connecting to a shared platform server, or
- * connecting several standalone devices directly. Either way it can hold
- * several connections — separate sites, separate terminals — but not a mix
- * of both kinds at once, so "+ Add" only ever offers the one that matches.
- * Both kinds are built and tested through the same mechanism underneath.
+ * Biometric — where punches come from. One "+ Add connection" button; the
+ * first thing it asks is which kind: a platform server that manages many
+ * terminals (BioTime), or a standalone device reached directly (ZKTeco).
+ * Both kinds can sit side by side, and both are built and tested the same
+ * way underneath — the choice only decides which form comes next.
  * ======================================================================== */
 
-let addKind = null;         // null | 'platform' | 'device'
+let choosingKind = false;   // the "which kind?" step is showing
+let addKind = null;         // null | 'platform' | 'device' — form open for this kind
 let addProvider = null;     // provider slug picked for the form currently open
 let editingSourceId = null;
 let confirmDeleteId = null; // a source id pending removal confirmation
-let pickingMode = false;    // showing the mode picker to switch an existing choice
 
-const MODE_LABEL = { platform: 'Platform servers', device: 'Individual devices' };
+const KIND_CHOICES = [
+  {
+    kind: 'platform',
+    title: 'Platform server',
+    example: 'e.g. ZKTeco BioTime',
+    body: 'One connection to a server that already collects punches from many terminals.',
+  },
+  {
+    kind: 'device',
+    title: 'Standalone device',
+    example: 'e.g. a ZKTeco terminal on your network',
+    body: 'Connect straight to one terminal by its IP address — no server in between.',
+  },
+];
 const PROVIDER_LABEL = { zk_device: 'ZKTeco protocol' };
 
 async function renderBiometric(mount) {
   mount.innerHTML = loading();
-  const [tenant, sources, devices, allProviders] = await Promise.all([
-    api.get('/tenant'),
+  const [sources, devices, allProviders] = await Promise.all([
     api.get('/sources'),
     api.get('/devices').catch(() => []),
     api.get('/providers').catch(() => []),
   ]);
   const readonly = !auth.canWrite;
-  // The server is the one that actually enforces this (see
-  // _enforce_biometric_mode); a tenant that already has connections from
-  // before this field existed reads its mode from them rather than asking
-  // again.
-  const mode = tenant.biometric_mode || sources[0]?.connection_kind || null;
-  const showPicker = !mode || pickingMode;
-  // Only offer what makes sense in this mode — a standalone-device protocol
-  // has no business appearing while set up for a shared platform, and vice
-  // versa. See AttendanceProvider.kinds.
-  const providers = allProviders.filter((p) => (p.kinds || ['platform', 'device']).includes(mode));
+  // Only offer what fits the kind picked — a standalone-device protocol has no
+  // business in the platform form, and vice versa. See AttendanceProvider.kinds.
+  // Providers built only for this kind come first, so a standalone device
+  // defaults to the device protocol rather than to BioTime's device mode.
+  const providersFor = (kind) => allProviders
+    .filter((p) => (p.kinds || ['platform', 'device']).includes(kind))
+    .sort((a, b) => (a.kinds?.length || 2) - (b.kinds?.length || 2));
 
   // Providers that can create a user on the device — "Import terminals"
   // also creates missing Odoo employees there for these (see
@@ -566,60 +677,57 @@ async function renderBiometric(mount) {
   const devicesBySource = {};
   devices.forEach((d) => { (devicesBySource[d.source_id] ||= []).push(d); });
 
+  const adding = choosingKind || addKind;
+  const actions = readonly ? '' : `
+    <button type="button" class="primary" id="addConnection" ${adding ? 'disabled' : ''}>
+      + Add connection</button>`;
+
   mount.innerHTML = `
     ${readonly ? banner('Read-only', 'Your role cannot change connections.', 'warn') : ''}
 
     <div class="card">
-      <h2>Biometric <span class="hint">where punches come from</span></h2>
+      ${cardHead('Biometric', 'where punches come from', actions)}
 
-      ${mode && !showPicker ? `
-        <div class="row" style="align-items:center;gap:8px;margin-bottom:14px">
-          <span class="hint">Connection type: <strong>${esc(MODE_LABEL[mode])}</strong></span>
-          ${!readonly ? '<button type="button" class="sm link" id="changeMode">Change</button>' : ''}
-        </div>` : ''}
-
-      ${showPicker ? modePicker(mode, readonly) : ''}
+      ${!readonly && choosingKind ? kindChooser() : ''}
+      ${!readonly && addKind ? sourceFormHtml(null, addKind, providersFor(addKind), addProvider) : ''}
 
       ${sources.map((s) => sourceCard(s, devicesBySource[s.id] || [], readonly, canProvision.has(s.provider))).join('')}
-      ${!sources.length ? empty(
+      ${!sources.length && !adding ? empty(
         'No biometric connections yet',
-        readonly || !mode ? '' : 'Add one below.'
+        readonly ? '' : 'Use “+ Add connection” above to connect a platform server or a device.'
       ) : ''}
-
-      ${mode && !showPicker && !readonly ? `
-        <div class="row" style="margin-top:14px">
-          <button type="button" id="addConnection" ${addKind ? 'disabled' : ''}>
-            + Add ${mode === 'device' ? 'individual device' : 'platform connection'}</button>
-        </div>
-        ${addKind ? sourceFormHtml(null, addKind, providers, addProvider) : ''}
-      ` : ''}
     </div>`;
 
-  wireBiometric(mount, mode);
+  wireBiometric(mount);
 }
 
-function modePicker(currentMode, readonly) {
+/** Step one of "+ Add connection": which kind. */
+function kindChooser() {
   return `
-    <div class="hint" style="margin-bottom:10px">
-      ${currentMode
-        ? 'Switching only changes what “+ Add” offers next — nothing already connected is touched.'
-        : 'Pick how this account’s biometric connections work before adding the first one.'}
-    </div>
-    ${readonly ? '<div class="hint">Your role cannot change this.</div>' : `
-      <div class="row" style="gap:10px;flex-wrap:wrap;margin-bottom:8px">
-        <button type="button" class="sm" data-set-mode="platform" ${currentMode === 'platform' ? 'disabled' : ''}>
-          Platform / server (e.g. BioTime)</button>
-        <button type="button" class="sm" data-set-mode="device" ${currentMode === 'device' ? 'disabled' : ''}>
-          Individual devices</button>
-        ${currentMode ? '<button type="button" class="sm link" id="cancelModePick">Cancel</button>' : ''}
+    <div class="add-panel kind-chooser">
+      <div class="form-head">
+        <strong>What are you connecting?</strong>
+        <div class="actions">
+          <button class="sm link" type="button" data-cancel-form="1">Cancel</button>
+        </div>
       </div>
-      <div class="hint" style="margin-bottom:14px">
-        Platform: one connection manages many terminals through a shared
-        server. Individual devices: each terminal connects on its own, with
-        no shared server in between. Both are added and tested the same way —
-        this only decides which one you can add.
-      </div>`}`;
+      <div class="choice-grid">
+        ${KIND_CHOICES.map((c) => `
+          <button type="button" class="choice" data-choose-kind="${esc(c.kind)}">
+            <span class="choice-icon" aria-hidden="true">${c.kind === 'platform' ? KIND_ICON.platform : KIND_ICON.device}</span>
+            <span class="choice-title">${esc(c.title)}</span>
+            <span class="choice-example">${esc(c.example)}</span>
+            <span class="choice-body">${esc(c.body)}</span>
+          </button>`).join('')}
+      </div>
+    </div>`;
 }
+
+const KIND_ICON = {
+  // A server stack, and a single terminal — drawn inline, no assets.
+  platform: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="4" y="3.5" width="16" height="7" rx="1.5"/><rect x="4" y="13.5" width="16" height="7" rx="1.5"/><path d="M8 7h.01M8 17h.01M12 7h4M12 17h4"/></svg>`,
+  device: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="6" y="2.5" width="12" height="19" rx="2"/><rect x="8.5" y="5.5" width="7" height="5" rx="1"/><circle cx="12" cy="15.5" r="2.2"/></svg>`,
+};
 
 /** One line for the toast after Import terminals created employees. */
 function provisionSummary(r) {
@@ -639,46 +747,44 @@ function provisionSummary(r) {
 }
 
 function sourceCard(source, devices, readonly, canProvision = false) {
-  const kindLabel = source.connection_kind === 'device' ? 'Individual device' : 'Platform';
+  const kindLabel = source.connection_kind === 'device' ? 'Standalone device' : 'Platform server';
   const providerLabel = PROVIDER_LABEL[source.provider];
   const isEditing = editingSourceId === source.id;
   const isConfirming = confirmDeleteId === source.id;
 
   return `
     <div class="card" style="margin-bottom:14px" data-source="${esc(source.id)}">
-      <div class="row" style="justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
-        <div>
+      <div class="item-head">
+        <div style="min-width:0">
           <div class="row" style="gap:8px;align-items:center">
             <strong>${esc(source.name)}</strong>
+            ${pill(source.status)}
             <span class="pill mute">${esc(kindLabel)}</span>
             ${providerLabel ? `<span class="pill mute">${esc(providerLabel)}</span>` : ''}
           </div>
           <div class="hint mono" style="margin-top:2px">${esc(source.base_url)}</div>
+          <div class="hint">
+            checked ${esc(fmtAgo(source.last_checked_at))}
+            · ${devices.length} terminal${devices.length === 1 ? '' : 's'}
+          </div>
         </div>
-        ${pill(source.status)}
-      </div>
-      <div class="hint" style="margin:8px 0">
-        checked ${esc(fmtAgo(source.last_checked_at))}
-        · ${devices.length} terminal${devices.length === 1 ? '' : 's'}
-      </div>
-      ${source.status_message ? banner('Last error', source.status_message, 'bad') : ''}
-
-      ${!readonly ? `
-        <div class="row" style="gap:8px;flex-wrap:wrap">
-          <button type="button" class="sm" data-edit="${esc(source.id)}">${isEditing ? 'Close' : 'Edit'}</button>
-          <button type="button" class="sm" data-test="${esc(source.id)}">Test connection</button>
-          <button type="button" class="sm" data-discover="${esc(source.id)}"
-                  ${canProvision ? 'data-provision="1" title="Also creates Odoo employees who have a Badge ID or PIN and aren\'t on the device yet."' : ''}>Import terminals</button>
-          ${!isConfirming ? `<button type="button" class="sm link" data-remove="${esc(source.id)}">Remove</button>` : ''}
-        </div>
-        ${isConfirming ? `
-          <div class="row" style="margin-top:8px;gap:8px;align-items:center">
-            <span class="hint">Remove this connection? Its terminals go with it.</span>
-            <button type="button" class="sm" data-remove-commit="${esc(source.id)}">Remove</button>
-            <button type="button" class="sm link" data-remove-cancel="${esc(source.id)}">Cancel</button>
+        ${!readonly ? `
+          <div class="actions">
+            ${!isConfirming ? `<button type="button" class="sm link" data-remove="${esc(source.id)}">Remove</button>` : ''}
+            <button type="button" class="sm" data-edit="${esc(source.id)}">${isEditing ? 'Close' : 'Edit'}</button>
+            <button type="button" class="sm" data-test="${esc(source.id)}">Test connection</button>
+            <button type="button" class="sm" data-discover="${esc(source.id)}"
+                    ${canProvision ? 'data-provision="1" title="Also creates Odoo employees who have a Badge ID or PIN and aren\'t on the device yet."' : ''}>Import terminals</button>
           </div>` : ''}
-        ${isEditing ? sourceFormHtml(source, source.connection_kind, []) : ''}
-      ` : ''}
+      </div>
+      ${!readonly && isConfirming ? `
+        <div class="row confirm-row">
+          <span class="hint">Remove this connection? Its terminals go with it.</span>
+          <button type="button" class="sm danger" data-remove-commit="${esc(source.id)}">Remove</button>
+          <button type="button" class="sm link" data-remove-cancel="${esc(source.id)}">Cancel</button>
+        </div>` : ''}
+      ${source.status_message ? banner('Last error', source.status_message, 'bad') : ''}
+      ${!readonly && isEditing ? sourceFormHtml(source, source.connection_kind, []) : ''}
 
       ${devices.length ? `
         <div class="scroll" style="margin-top:12px">
@@ -723,13 +829,24 @@ function sourceFormHtml(source, kind, providers, currentProvider) {
   const addressValue = source
     ? (isZk ? source.base_url.replace(/^zk:\/\//i, '') : source.base_url)
     : '';
+  const commitLabel = source ? 'Save changes' : isDevice ? 'Connect device' : 'Connect platform';
 
   return `
-    <form id="sourceForm" class="sourceForm" data-kind="${esc(kind)}" data-provider="${esc(provider)}"
-          ${source ? `data-editing="${esc(source.id)}"` : ''}
-          style="margin-top:12px;padding-top:12px;border-top:1px solid var(--rule)">
+    <form class="sourceForm" data-kind="${esc(kind)}" data-provider="${esc(provider)}"
+          data-label="${esc(commitLabel)}"
+          ${source ? `data-editing="${esc(source.id)}"` : ''}>
+      <div class="form-head">
+        <strong>${esc(source ? `Edit ${source.name}` : isDevice ? 'New standalone device' : 'New platform server')}</strong>
+        <div class="actions">
+          <button class="sm link" type="button" data-cancel-form="1">Cancel</button>
+          <button class="sm" type="button" data-test-form="1">Test connection</button>
+          <button class="primary sm" type="submit" data-commit="1">${esc(commitLabel)}</button>
+        </div>
+      </div>
+      ${source ? '' : testFirstHint(commitLabel)}
+      <div class="form-test-result"></div>
       ${!source && providers.length > 1 ? field({
-        name: 'provider', label: 'Platform', required: true, value: provider,
+        name: 'provider', label: isDevice ? 'Protocol' : 'Platform', required: true, value: provider,
         options: providers.map((p) => ({ value: p.slug, label: p.label })),
       }) : ''}
       ${field({
@@ -767,11 +884,6 @@ function sourceFormHtml(source, kind, providers, currentProvider) {
         options: ['token', 'jwt'],
         help: 'BioTime 8.5+ usually needs jwt; older builds use token.',
       }) : ''}
-      <div class="row" style="margin-top:4px;gap:8px">
-        <button class="primary sm" id="saveSource" type="submit">
-          ${source ? 'Save changes' : isDevice ? 'Connect device' : 'Connect platform'}</button>
-        <button class="sm link" type="button" data-cancel-form="1">Cancel</button>
-      </div>
     </form>`;
 }
 
@@ -787,35 +899,22 @@ function statusRow(connection) {
       ? banner('Last error', connection.status_message, 'bad') : ''}`;
 }
 
-function wireBiometric(mount, mode) {
-  $('#changeMode', mount)?.addEventListener('click', () => {
-    pickingMode = true;
+function wireBiometric(mount) {
+  $('#addConnection', mount)?.addEventListener('click', () => {
+    choosingKind = true;
     addKind = null;
     addProvider = null;
     editingSourceId = null;
     renderBiometric(mount);
   });
-  $('#cancelModePick', mount)?.addEventListener('click', () => {
-    pickingMode = false;
-    renderBiometric(mount);
-  });
-  mount.querySelectorAll('[data-set-mode]').forEach((button) => {
-    button.addEventListener('click', (event) =>
-      busy(event.target, () =>
-        guard(async () => {
-          await api.patch('/tenant', { biometric_mode: button.dataset.setMode });
-          pickingMode = false;
-          await renderBiometric(mount);
-        }, 'Connection type set')
-      )
-    );
-  });
 
-  $('#addConnection', mount)?.addEventListener('click', () => {
-    addKind = mode;
-    addProvider = null;
-    editingSourceId = null;
-    renderBiometric(mount);
+  mount.querySelectorAll('[data-choose-kind]').forEach((button) => {
+    button.addEventListener('click', () => {
+      choosingKind = false;
+      addKind = button.dataset.chooseKind;
+      addProvider = null;
+      renderBiometric(mount);
+    });
   });
 
   mount.querySelector('select[name=provider]')?.addEventListener('change', (event) => {
@@ -828,12 +927,14 @@ function wireBiometric(mount, mode) {
       const id = button.dataset.edit;
       editingSourceId = editingSourceId === id ? null : id;
       addKind = null;
+      choosingKind = false;
       renderBiometric(mount);
     });
   });
 
   mount.querySelectorAll('[data-cancel-form]').forEach((button) => {
     button.addEventListener('click', () => {
+      choosingKind = false;
       addKind = null;
       addProvider = null;
       editingSourceId = null;
@@ -901,10 +1002,12 @@ function wireBiometric(mount, mode) {
   });
 
   mount.querySelectorAll('.sourceForm').forEach((form) => {
-    form.addEventListener('submit', (event) => {
-      event.preventDefault();
-      const values = readForm(event.target);
-      const editing = form.dataset.editing;
+    const editing = form.dataset.editing;
+
+    /** What the form holds, shaped the way the API takes it — shared by
+     * Connect and by Test, so the test is of exactly what would be saved. */
+    const sourceValues = () => {
+      const values = readForm(form);
       if (editing && !values.password) delete values.password;
       if (!editing) {
         values.connection_kind = form.dataset.kind;
@@ -917,15 +1020,46 @@ function wireBiometric(mount, mode) {
       if (form.dataset.provider === 'zk_device' && values.base_url && !/^zk:\/\//i.test(values.base_url)) {
         values.base_url = `zk://${values.base_url}`;
       }
-      busy(form.querySelector('button[type=submit]'), () =>
+      return values;
+    };
+
+    const commit = form.querySelector('[data-commit]');
+    wireTestFirst({
+      form,
+      test: form.querySelector('[data-test-form]'),
+      commit,
+      result: form.querySelector('.form-test-result'),
+      label: form.dataset.label,
+      gate: !editing,
+      probe: () => {
+        const { name, connection_kind: _kind, auto_provision_employees: _p, ...values } = sourceValues();
+        return api.post('/sources/test', {
+          ...values,
+          ...(editing ? { source_id: editing } : { provider: values.provider || form.dataset.provider }),
+        });
+      },
+    });
+
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const values = sourceValues();
+      busy(commit, () =>
         guard(async () => {
-          if (editing) await api.patch(`/sources/${editing}`, values);
-          else await api.post('/sources', values);
+          if (editing) {
+            await api.patch(`/sources/${editing}`, values);
+            // As with Odoo: re-check at once, so the status shown is about
+            // the values just saved rather than "unverified".
+            const result = await api.post(`/sources/${editing}/test`);
+            toast(result.message, result.ok ? 'ok' : 'bad');
+          } else {
+            await api.post('/sources', values);
+            toast('Connection added', 'ok');
+          }
           addKind = null;
           addProvider = null;
           editingSourceId = null;
           await renderBiometric(mount);
-        }, editing ? 'Connection saved' : 'Connection added')
+        })
       );
     });
   });

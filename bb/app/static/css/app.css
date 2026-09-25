@@ -2,38 +2,49 @@
    No external fonts or CDNs: this ships inside the container and must render
    on a customer LAN with no internet.
 
-   Palette: Odoo's own product purple (#714b67 — biobridge.com writes Odoo
-   attendance, so its primary accent reads as "at home in an Odoo stack") as
-   the one interactive color used throughout, plus Cybrosys's brand maroon
-   (--accent-2, #b22126, sampled live from cybrosys.com's top banner) reserved
-   for the product's own mark rather than spread across buttons and links —
-   two accent hues fighting for attention in the same control is a common
-   rebrand mistake, so the mix lives in the logo, not in every interactive
-   element. Every value below was checked against its actual use for WCAG AA
-   contrast (4.5:1+), not just picked by eye. */
+   Palette: teal. One interactive accent (--accent, #0f766e in light, #2dd4bf in
+   dark) used for every button, link, tab and highlight, on cool grey-green
+   neutrals, with a dark sidebar framing the page in both themes. The state
+   colours (ok / warn / bad) are kept clearly apart from the accent so a green
+   "synced" pill never reads as "just the brand colour". Text/background pairs
+   were checked for WCAG AA contrast (4.5:1+).
+
+   Theme: follows the computer's light/dark setting unless the person picks
+   one in the sidebar, which sets data-theme on <html> (js/theme.js applies it
+   before first paint, so there is no flash of the wrong theme). */
 
 :root {
-  --ground: #f6f4f5;
+  --ground: #f2f6f5;
   --panel: #ffffff;
-  --panel-2: #efe9ec;
-  --ink: #211a1d;
-  --muted: #6b5c64;
-  --faint: #8f7f86;
-  --rule: #ddd2d7;
-  --rule-soft: #ece3e6;
-  --accent: #714b67;
+  --panel-2: #e8f0ee;
+  --ink: #10201f;
+  --muted: #4b605d;
+  --faint: #627875;
+  --rule: #d2dedb;
+  --rule-soft: #e4ecea;
+  --accent: #0f766e;
   --accent-ink: #ffffff;
-  --accent-soft: #f1e6ec;
-  --accent-2: #b22126;
+  --accent-soft: #e2f3ef;
+  --accent-2: #0d5f58;
   --accent-2-ink: #ffffff;
-  --ok: #1f6b4a;
-  --ok-soft: #e0f0e7;
-  --warn: #9a5a12;
-  --warn-soft: #f9eddf;
-  --bad: #97302b;
-  --bad-soft: #f8e5e3;
-  --shadow: 0 1px 2px rgba(33, 26, 29, .08);
-  --scroll-fade: rgba(33, 26, 29, .2);
+  --ok: #166534;
+  --ok-soft: #dcf2e3;
+  --warn: #92400e;
+  --warn-soft: #fbeedd;
+  --bad: #9f2d2d;
+  --bad-soft: #f9e4e2;
+  --shadow: 0 1px 2px rgba(16, 32, 31, .07);
+  --scroll-fade: rgba(16, 32, 31, .18);
+  /* The sidebar is dark in both themes — a fixed frame the page sits in. */
+  --side-bg: #12232a;
+  --side-ink: #dbe8e6;
+  --side-muted: #9bb2af;
+  --side-faint: #7d9794;
+  --side-hover: #1b323a;
+  --side-rule: #223a42;
+  --side-active-bg: rgba(45, 212, 191, .14);
+  --side-accent: #5eead4;
+  color-scheme: light;
   --radius: 8px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   /* "Noto Sans" first because it's Cybrosys's own site face and ships
@@ -45,28 +56,59 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --ground: #171219;
-    --panel: #201a20;
-    --panel-2: #271f27;
-    --ink: #efe9ec;
-    --muted: #a89aa1;
-    --faint: #85757c;
-    --rule: #382d36;
-    --rule-soft: #2c232a;
-    --accent: #b98cae;
-    --accent-ink: #241a22;
-    --accent-soft: #2a1f28;
-    --accent-2: #e2666a;
-    --accent-2-ink: #2b1214;
-    --ok: #5fb187;
-    --ok-soft: #14291f;
-    --warn: #d9964f;
-    --warn-soft: #2a2017;
-    --bad: #e0837a;
-    --bad-soft: #2b1a19;
-    --shadow: 0 1px 2px rgba(0, 0, 0, .35);
+    --ground: #0c1514;
+    --panel: #13201f;
+    --panel-2: #1a2a29;
+    --ink: #e2eeec;
+    --muted: #a1b6b3;
+    --faint: #839b98;
+    --rule: #263b3a;
+    --rule-soft: #1d2f2e;
+    --accent: #2dd4bf;
+    --accent-ink: #042f2c;
+    --accent-soft: #10312d;
+    --accent-2: #14b8a6;
+    --accent-2-ink: #042f2c;
+    --ok: #5fc58a;
+    --ok-soft: #12291d;
+    --warn: #e0a458;
+    --warn-soft: #2a2115;
+    --bad: #ef8a80;
+    --bad-soft: #2e1a18;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4);
     --scroll-fade: rgba(0, 0, 0, .5);
+    --side-bg: #08110f;
+    --side-hover: #13201f;
+    --side-rule: #1a2a29;
+    color-scheme: dark;
   }
+}
+:root[data-theme="dark"] {
+  --ground: #0c1514;
+  --panel: #13201f;
+  --panel-2: #1a2a29;
+  --ink: #e2eeec;
+  --muted: #a1b6b3;
+  --faint: #839b98;
+  --rule: #263b3a;
+  --rule-soft: #1d2f2e;
+  --accent: #2dd4bf;
+  --accent-ink: #042f2c;
+  --accent-soft: #10312d;
+  --accent-2: #14b8a6;
+  --accent-2-ink: #042f2c;
+  --ok: #5fc58a;
+  --ok-soft: #12291d;
+  --warn: #e0a458;
+  --warn-soft: #2a2115;
+  --bad: #ef8a80;
+  --bad-soft: #2e1a18;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4);
+  --scroll-fade: rgba(0, 0, 0, .5);
+  --side-bg: #08110f;
+  --side-hover: #13201f;
+  --side-rule: #1a2a29;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -135,7 +177,7 @@ a { color: var(--accent); }
   border-color: var(--warn);
   box-shadow: var(--shadow), inset 0 3px 0 var(--warn);
 }
-.auth-card.staff .brand-mark { background: var(--warn); color: #fff; }
+.auth-card.staff .brand-mark { background: var(--warn); color: var(--panel); }
 
 /* Wide enough for the plan-card grid to lay two or more columns out side by
    side — the signup screen only, when there's a set of plans to compare. */
@@ -149,12 +191,19 @@ a { color: var(--accent); }
 .shell { display: grid; grid-template-columns: 216px 1fr; min-height: 100vh; }
 
 .sidebar {
-  background: var(--panel);
-  border-right: 1px solid var(--rule);
+  background: var(--side-bg);
+  color: var(--side-ink);
+  border-right: 1px solid var(--side-rule);
   padding: 18px 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+/* Pinned to the viewport on desktop, so the account switch and Sign out at
+   its foot are always on screen — on a long page they used to sit below the
+   fold, at the bottom of a sidebar as tall as the content. */
+@media (min-width: 821px) {
+  .sidebar { position: sticky; top: 0; height: 100vh; overflow-y: auto; }
 }
 .sidebar .brand { padding: 0 18px 16px; }
 .nav-group { padding: 10px 18px 3px; }
@@ -162,24 +211,26 @@ a { color: var(--accent); }
   font: 500 10.5px/1 var(--mono);
   letter-spacing: .1em;
   text-transform: uppercase;
-  color: var(--faint);
+  color: var(--side-faint);
 }
+.sidebar .brand-word b { color: var(--side-ink); }
+.sidebar .brand-word span { color: var(--side-accent); }
 .sidebar a.nav {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   padding: 7px 18px;
-  color: var(--ink);
+  color: var(--side-ink);
   text-decoration: none;
   font-size: 13.5px;
   border-left: 2px solid transparent;
 }
-.sidebar a.nav:hover { background: var(--panel-2); }
+.sidebar a.nav:hover { background: var(--side-hover); }
 .sidebar a.nav.active {
-  border-left-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent);
+  border-left-color: var(--side-accent);
+  background: var(--side-active-bg);
+  color: var(--side-accent);
   font-weight: 550;
 }
 .nav-badge {
@@ -189,12 +240,13 @@ a { color: var(--accent); }
   padding: 2px 6px;
   border-radius: 9px;
 }
-.side-foot { margin-top: auto; padding: 14px 18px 0; border-top: 1px solid var(--rule-soft); }
+.side-foot { margin-top: auto; padding: 14px 18px 4px; border-top: 1px solid var(--side-rule); }
+.sidebar button.link { color: var(--side-accent); }
 /* Truncate rather than wrap: a long address broken mid-word reads as a bug,
    and the full value is on the title attribute for anyone who needs it. */
 .side-user {
   font-size: 12.5px;
-  color: var(--muted);
+  color: var(--side-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -249,6 +301,71 @@ a { color: var(--accent); }
 }
 .card > h2 .hint { font-weight: 400; color: var(--faint); margin-left: 8px; font-size: 12px; }
 
+/* A card's title bar with its actions on the right (settings.js cardHead).
+   Buttons live up here, not at the foot of the form, so nobody has to scroll
+   past every field to find Save — and it is sticky, so on a long form they
+   stay in reach from the bottom of it too. */
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 14px;
+  flex-wrap: wrap;
+  margin: -18px -20px 16px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--rule-soft);
+  background: var(--panel);
+  border-radius: var(--radius) var(--radius) 0 0;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+.card-head h2 { font-size: 13px; margin: 0; font-weight: 600; letter-spacing: .01em; }
+.card-head h2 .hint { font-weight: 400; color: var(--faint); margin-left: 8px; font-size: 12px; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: flex-end; }
+
+/* The same idea one level down: a connection inside the Biometric card, and
+   the add/edit form, each carry their own actions at their top-right. */
+.item-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
+.form-head {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding-bottom: 10px; margin-bottom: 12px; border-bottom: 1px solid var(--rule-soft);
+}
+.sourceForm, .add-panel {
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 14px 16px 4px;
+  margin: 0 0 14px;
+}
+.card .card .sourceForm { margin: 14px 0 0; }
+.confirm-row { margin-top: 10px; gap: 8px; }
+
+/* 1 Fill in → 2 Test → 3 Connect, above a new connection's form. */
+.steps { display: flex; gap: 6px 16px; flex-wrap: wrap; margin: 0 0 12px; font-size: 12.5px; color: var(--muted); }
+.steps .step b {
+  display: inline-grid; place-items: center;
+  width: 18px; height: 18px; margin-right: 5px;
+  border-radius: 50%; font-size: 11px;
+  background: var(--accent-soft); color: var(--accent);
+}
+
+/* What the last Test Connection found, kept in the form — a toast is gone
+   before anyone finishes reading a timeout message. */
+.test-result {
+  border-left: 3px solid var(--ok);
+  background: var(--ok-soft);
+  padding: 10px 14px;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  margin-bottom: 14px;
+  font-size: 13px;
+  display: grid;
+  gap: 2px;
+}
+.test-result.bad { border-left-color: var(--bad); background: var(--bad-soft); }
+.test-result.stale { opacity: .6; }
+.test-result strong { font-size: 13.5px; }
+
 /* Secondary prose anywhere — a card body, a strip, under a heading. Scoped
    only to h2 before, which meant every other use silently rendered as body
    text at full weight. */
@@ -292,6 +409,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 button.primary:hover { filter: brightness(1.08); }
 button.sm { padding: 4px 9px; font-size: 12px; }
 button.link { border: none; background: none; color: var(--accent); padding: 4px 2px; }
+button.danger { background: var(--bad-soft); border-color: var(--bad); color: var(--bad); font-weight: 550; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 label { display: block; font-size: 12.5px; font-weight: 550; margin-bottom: 4px; }
@@ -496,3 +614,42 @@ pre.log {
 .skeleton { color: var(--faint); font-size: 13px; padding: 14px 0; }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* The sidebar's switch between a dual-role person's workspace and the staff
+   console — a real button, since it does something rather than going
+   somewhere, and it sits where the old "Open the staff console" link did. */
+.hat-switch { width: 100%; margin: 8px 0 4px; text-align: left; font-weight: 550; }
+.sidebar .hat-switch {
+  background: transparent; color: var(--side-ink); border-color: var(--side-rule);
+}
+.sidebar .hat-switch:hover { background: var(--side-hover); }
+
+/* Light / Dark / System, at the foot of the sidebar. */
+.theme-toggle {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  margin: 10px 0 6px; padding: 2px; gap: 2px;
+  border: 1px solid var(--side-rule); border-radius: var(--radius);
+}
+.theme-toggle button {
+  border: none; background: transparent; color: var(--side-muted);
+  padding: 4px 0; font-size: 11.5px; border-radius: 6px;
+}
+.theme-toggle button:hover { background: var(--side-hover); color: var(--side-ink); }
+.theme-toggle button[aria-pressed="true"] { background: var(--side-active-bg); color: var(--side-accent); font-weight: 600; }
+
+/* "+ Add connection" → which kind? Two large choices, not a dropdown. */
+.choice-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.choice {
+  display: grid; justify-items: start; gap: 3px; text-align: left;
+  padding: 14px 16px; border-radius: var(--radius);
+  border: 1px solid var(--rule); background: var(--panel);
+}
+.choice:hover { border-color: var(--accent); background: var(--accent-soft); }
+.choice-icon {
+  display: inline-grid; place-items: center; width: 36px; height: 36px; margin-bottom: 6px;
+  border-radius: 8px; background: var(--accent-soft); color: var(--accent);
+}
+.choice:hover .choice-icon { background: var(--panel); }
+.choice-title { font-weight: 600; font-size: 14px; }
+.choice-example { font-size: 12px; color: var(--accent); }
+.choice-body { font-size: 12.5px; color: var(--muted); line-height: 1.45; }
