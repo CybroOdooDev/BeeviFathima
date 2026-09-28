@@ -65,7 +65,25 @@ export async function render(mount, route) {
   }
 
   const query = route.query.q || '';
+  const linkFor = (overrides) => {
+    const q = new URLSearchParams();
+    Object.entries({ q: query, ...overrides })
+      .forEach(([k, v]) => { if (v) q.set(k, v); });
+    const s = q.toString();
+    return `#/platform${s ? `?${s}` : ''}`;
+  };
+
+  // #/platform?open=<id> — how Overview's counts and the account list link
+  // straight to one account (see console.js). Read once on arrival to open
+  // its Configure dialog below, then dropped from the address bar and from
+  // `route` itself, so neither a reload nor a background refresh triggered
+  // from inside that dialog (Save, Sync now, Clear failures) reopens it again.
   const openId = route.query.open || '';
+  if (openId) {
+    delete route.query.open;
+    history.replaceState(null, '', linkFor({}));
+  }
+
   mount.innerHTML = loading();
 
   const [health, tenants, plans] = await Promise.all([
@@ -74,14 +92,6 @@ export async function render(mount, route) {
     api.get('/admin/plans').catch(() => []),
   ]);
   const defaultPlanId = (plans.find((p) => p.is_default) || {}).id || '';
-
-  const linkFor = (overrides) => {
-    const q = new URLSearchParams();
-    Object.entries({ q: query, open: openId, ...overrides })
-      .forEach(([k, v]) => { if (v) q.set(k, v); });
-    const s = q.toString();
-    return `#/platform${s ? `?${s}` : ''}`;
-  };
 
   // If the scheduler is down then *every* customer has stopped, whatever their
   // interval says, and editing one number will not start anything.
@@ -150,13 +160,13 @@ export async function render(mount, route) {
 
       ${tenants.length ? `
         <div class="scroll">
-          <table>
+          <table class="accounts-table">
             <thead><tr>
               <th>Account</th><th>Status</th><th class="num">Every</th>
-              <th>Next sync</th><th>Last sync</th><th>Automatic</th><th></th>
+              <th>Sync</th><th>Automatic</th><th></th>
             </tr></thead>
             <tbody>
-              ${tenants.map((t) => rowFor(t, t.id === openId, linkFor, plans)).join('')}
+              ${tenants.map((t) => rowFor(t)).join('')}
             </tbody>
           </table>
         </div>
@@ -170,42 +180,58 @@ export async function render(mount, route) {
       ` : empty('No accounts match', query ? 'Try a different search.' : '')}
     </div>`;
 
-  wire(mount, route, tenants, linkFor);
+  wire(mount, route, tenants, plans, linkFor);
+
+  if (openId) {
+    const tenant = tenants.find((x) => x.id === openId);
+    if (tenant) openConfigDialog(tenant, { plans, onChange: () => render(mount, route) });
+  }
 }
 
 /* The subscription gate: stop and restart one account's syncing.
  *
- * Its own control rather than the Status field in the configuration form below,
- * because this is the action taken when a subscription lapses or ends and it
- * should take one click from the list, not a form dive. It changes `status`,
- * never `sync_enabled` — that switch belongs to the customer, and moving it
- * would both look to them like they did it and silently switch syncing back on
- * for someone who had chosen to have it off.
+ * Its own control rather than the Status field in the configuration dialog
+ * below, because this is the action taken when a subscription lapses or ends
+ * and it should take one click from the list, not a form dive. It changes
+ * `status`, never `sync_enabled` — that switch belongs to the customer, and
+ * moving it would both look to them like they did it and silently switch
+ * syncing back on for someone who had chosen to have it off.
  *
  * Two steps to stop, one to restart, and no confirm() dialog anywhere: a modal
- * blocks the whole page and nothing else in this app uses one. The second click
- * is also where the reason gets typed, so recording one costs nothing extra.
+ * blocks the whole page and the only other one in this app (the add-connection
+ * and account-configuration wizards) is reserved for a deliberate, multi-field
+ * action, not a one-word confirmation. The second click is also where the
+ * reason gets typed, so recording one costs nothing extra.
  */
 function gateControl(t) {
-  if (t.syncable === false) {
-    return `
-      <button class="sm gate-start">Activate</button>
-      <div class="hint">stopped${t.suspended_at ? ` ${esc(fmtAgo(t.suspended_at))}` : ''}${
-        t.suspension_reason ? `: ${esc(t.suspension_reason)}` : ''}</div>`;
-  }
-  return '<button class="sm gate-stop">Deactivate</button>';
+  if (t.syncable === false) return '<button class="sm gate-start">Activate</button>';
+  return '<button class="sm danger-outline gate-stop">Deactivate</button>';
 }
 
 /** The second step: a reason box and the button that means it. */
 function gateConfirm() {
   return `
     <input class="gate-reason" maxlength="200" placeholder="Reason (optional)"
-           style="width:150px" aria-label="Why this account is being stopped">
-    <button class="sm gate-commit">Stop syncing</button>
+           aria-label="Why this account is being stopped">
+    <button class="sm danger gate-commit">Stop syncing</button>
     <button class="link sm gate-cancel" type="button">Cancel</button>`;
 }
 
-function rowFor(t, open, linkFor, plans) {
+/* The back-off, as a small tag beside the interval instead of a red sentence
+ * under it. The tag carries the interval the scheduler is actually using now
+ * — it comes from the server on every refresh, so it moves on its own as the
+ * back-off grows or clears — and the why is in its hover label. The box
+ * beside it stays the configured value, which is what Save writes. */
+function backoffTag(t) {
+  const label = `Backed off: syncing every ${t.effective_interval_minutes} min instead of `
+    + `${t.sync_interval_minutes} after ${t.consecutive_failures} failed syncs in a row. `
+    + `It returns to ${t.sync_interval_minutes} min by itself after the next successful sync `
+    + '(or use Clear failures under Configure).';
+  return `<span class="tip-tag warn" tabindex="0" role="note" aria-label="${esc(label)}" data-tip="${esc(label)}">
+      now ${esc(t.effective_interval_minutes)} min</span>`;
+}
+
+function rowFor(t) {
   const connected = t.odoo_connected && t.source_connected;
   return `
     <tr data-tenant="${esc(t.id)}">
@@ -219,6 +245,9 @@ function rowFor(t, open, linkFor, plans) {
         ${t.pending_plan_name ? `<div class="hint">→ ${esc(t.pending_plan_name)} queued</div>` : ''}
         ${t.renewal_warning ? `<div class="hint strong">${
           t.renewal_warning.urgent ? 'renewing very soon' : 'renewing soon'}</div>` : ''}
+        ${t.syncable === false ? `<div class="hint strong">stopped${
+          t.suspended_at ? ` ${esc(fmtAgo(t.suspended_at))}` : ''}${
+          t.suspension_reason ? `: ${esc(t.suspension_reason)}` : ''}</div>` : ''}
         ${connected ? '' : `<div class="hint strong">${
           !t.odoo_connected && !t.source_connected ? 'nothing connected'
             : !t.odoo_connected ? 'no Odoo connection' : 'no device platform'}</div>`}
@@ -229,31 +258,111 @@ function rowFor(t, open, linkFor, plans) {
                value="${esc(t.sync_interval_minutes)}"
                style="width:74px;text-align:right" aria-label="Minutes between syncs">
         <span class="hint">min</span>
-        ${t.interval_widened ? `<div class="hint strong">
-          backed off to ${esc(t.effective_interval_minutes)} after
-          ${esc(t.consecutive_failures)} failures</div>` : ''}
+        ${t.interval_widened ? backoffTag(t) : ''}
       </td>
-      <td>${t.next_run_at ? esc(fmtIn(t.next_run_at))
-            : '<span class="hint">not scheduled</span>'}</td>
-      <td>${t.last_run_at
-            ? `${pill(t.last_run_status)} <span class="hint">${esc(fmtAgo(t.last_run_at))}</span>`
-            : '<span class="hint">never</span>'}</td>
+      <td class="sync-cell">
+        <div>${t.next_run_at ? `next ${esc(fmtIn(t.next_run_at))}`
+              : '<span class="hint">not scheduled</span>'}</div>
+        <div class="hint">${t.last_run_at
+              ? `last ${pill(t.last_run_status)} ${esc(fmtAgo(t.last_run_at))}`
+              : 'never synced'}</div>
+      </td>
       <td>
         <select class="enabled" aria-label="Automatic sync">
           <option value="true"${t.sync_enabled ? ' selected' : ''}>on</option>
           <option value="false"${t.sync_enabled ? '' : ' selected'}>off</option>
         </select>
       </td>
-      <td style="text-align:right;white-space:nowrap">
-        <button class="sm save">Save</button>
-        <a class="link sm" href="${linkFor({ open: open ? '' : t.id })}"
-           >${open ? 'Close' : 'Configure'}</a>
-        <div class="gate" style="margin-top:6px">${gateControl(t)}</div>
+      <td class="actions-cell">
+        <div class="row-actions">
+          <button class="sm save">Save</button>
+          <button type="button" class="sm configure-btn">Configure</button>
+          <span class="gate">${gateControl(t)}</span>
+        </div>
       </td>
-    </tr>
-    ${open ? `
-      <tr class="detail-row"><td colspan="7">
-        <form class="config-form">
+    </tr>`;
+}
+
+function diagnosticsHtml(d) {
+  const nothing = !d.punches_error && !d.punches_unmapped && !d.punches_pending
+    && !d.unmapped_badges;
+  if (nothing) {
+    return `<div class="banner" style="margin:12px 0 0">
+      <strong>Nothing is stuck</strong>
+      No punches are pending, unmapped or in error for ${esc(d.name)}.</div>`;
+  }
+  return `
+    <div class="card" style="margin:12px 0 0">
+      <h2>Why ${esc(d.name)} is stuck <span class="hint">counts and error text
+        only — no punch times, badges or employee names</span></h2>
+      <table>
+        <tbody>
+          <tr><td>Pending</td><td class="num" style="text-align:right">${esc(d.punches_pending)}</td></tr>
+          <tr><td>In error</td><td class="num" style="text-align:right">${esc(d.punches_error)}</td></tr>
+          <tr><td>At the 5-attempt cap <span class="hint">never retried again
+            until reset</span></td>
+            <td class="num" style="text-align:right">${esc(d.punches_at_attempt_cap)}</td></tr>
+          <tr><td>Unmapped punches</td><td class="num" style="text-align:right">${esc(d.punches_unmapped)}</td></tr>
+          <tr><td>Badges with no Odoo employee</td><td class="num" style="text-align:right">${esc(d.unmapped_badges)}</td></tr>
+        </tbody>
+      </table>
+      ${d.last_run_error ? `<div class="banner bad" style="margin-top:12px">
+        <strong>Last run failed</strong>${esc(d.last_run_error)}</div>` : ''}
+      ${d.errors.length ? `
+        <h3 style="margin:14px 0 6px;font-size:13px">Distinct errors</h3>
+        ${d.errors.map((e) => `
+          <div class="banner bad" style="margin-bottom:8px">
+            <strong>${esc(e.count)} punch${e.count === 1 ? '' : 'es'}</strong>
+            ${esc(e.message)}</div>`).join('')}
+        ${d.redacted ? `<div class="hint">Employee names are replaced with
+          &lt;employee&gt; — Odoo writes them into its own error text.</div>` : ''}
+      ` : ''}
+    </div>`;
+}
+
+/* ===========================================================================
+ * The account configuration dialog: a modal <dialog>, opened from a row's
+ * Configure button, or from the #/platform?open=<id> deep link that
+ * Overview's numbers and the account list use (see render() above).
+ *
+ * Unlike the add-connection wizard in settings.js this is one screen, not a
+ * sequence — configuring an account usually means looking at several of its
+ * settings together (the plan next to its renewal date, say), not being
+ * walked through them one field group at a time.
+ *
+ * Lives on <body>, outside the account table, the same way the add-connection
+ * wizard does — so refreshing that table in the background after Save, Sync
+ * now or Clear failures never yanks the dialog out from under whoever is
+ * using it. `onChange` is how it asks for that refresh; the dialog never
+ * re-fetches or repaints the table itself, only its own contents.
+ * ======================================================================== */
+function openConfigDialog(tenant, { plans, onChange }) {
+  document.querySelector('dialog.config-dialog')?.remove();
+  const dialog = document.createElement('dialog');
+  dialog.className = 'wizard config-dialog';
+  dialog.setAttribute('aria-labelledby', 'configTitle');
+  document.body.append(dialog);
+
+  // The tenant and its diagnostics, if fetched — local to this dialog so a
+  // Save / Sync now / Clear failures updates what's on screen here right
+  // away, without waiting on (or depending on) the table refresh it also
+  // kicks off underneath via onChange.
+  let t = tenant;
+  let diag = null;
+
+  function close() {
+    dialog.close();
+    dialog.remove();
+  }
+
+  function paint() {
+    dialog.innerHTML = `
+      <div class="wiz-head">
+        <strong id="configTitle">${esc(t.name)}</strong>
+        <button type="button" class="link wiz-x" data-cfg="close" aria-label="Close">&times;</button>
+      </div>
+      <div class="wiz-body">
+        <form id="cfgForm">
           <div class="grid cols-2">
             <div>
               <h3 style="margin:0 0 10px;font-size:13px">Account</h3>
@@ -305,60 +414,97 @@ function rowFor(t, open, linkFor, plans) {
                             + 'exempt this account from that automatic check entirely.' })}
             </div>
           </div>
-          <div class="row" style="margin-top:6px">
-            <button class="primary save-config">Save configuration</button>
-            <button class="sync-now" type="button">Sync now</button>
-            <button class="diagnose" type="button">Why is it stuck?</button>
-            ${t.interval_widened
-              ? '<button class="clear-failures" type="button">Clear failures</button>' : ''}
-          </div>
         </form>
-        <div class="diag"></div>
-      </td></tr>` : ''}`;
-}
-
-function diagnosticsHtml(d) {
-  const nothing = !d.punches_error && !d.punches_unmapped && !d.punches_pending
-    && !d.unmapped_badges;
-  if (nothing) {
-    return `<div class="banner" style="margin:12px 0 0">
-      <strong>Nothing is stuck</strong>
-      No punches are pending, unmapped or in error for ${esc(d.name)}.</div>`;
+        <div class="diag">${diag ? diagnosticsHtml(diag) : ''}</div>
+      </div>
+      <div class="wiz-foot">
+        <button type="button" class="link" data-cfg="close">Close</button>
+        <div class="actions">
+          <button type="button" class="diagnose">Why is it stuck?</button>
+          ${t.interval_widened ? '<button type="button" class="clear-failures">Clear failures</button>' : ''}
+          <button type="button" class="sync-now">Sync now</button>
+          <button type="submit" form="cfgForm" class="primary save-config">Save configuration</button>
+        </div>
+      </div>`;
+    wireInner();
   }
-  return `
-    <div class="card" style="margin:12px 0 0">
-      <h2>Why ${esc(d.name)} is stuck <span class="hint">counts and error text
-        only — no punch times, badges or employee names</span></h2>
-      <table>
-        <tbody>
-          <tr><td>Pending</td><td class="num" style="text-align:right">${esc(d.punches_pending)}</td></tr>
-          <tr><td>In error</td><td class="num" style="text-align:right">${esc(d.punches_error)}</td></tr>
-          <tr><td>At the 5-attempt cap <span class="hint">never retried again
-            until reset</span></td>
-            <td class="num" style="text-align:right">${esc(d.punches_at_attempt_cap)}</td></tr>
-          <tr><td>Unmapped punches</td><td class="num" style="text-align:right">${esc(d.punches_unmapped)}</td></tr>
-          <tr><td>Badges with no Odoo employee</td><td class="num" style="text-align:right">${esc(d.unmapped_badges)}</td></tr>
-        </tbody>
-      </table>
-      ${d.last_run_error ? `<div class="banner bad" style="margin-top:12px">
-        <strong>Last run failed</strong>${esc(d.last_run_error)}</div>` : ''}
-      ${d.errors.length ? `
-        <h3 style="margin:14px 0 6px;font-size:13px">Distinct errors</h3>
-        ${d.errors.map((e) => `
-          <div class="banner bad" style="margin-bottom:8px">
-            <strong>${esc(e.count)} punch${e.count === 1 ? '' : 'es'}</strong>
-            ${esc(e.message)}</div>`).join('')}
-        ${d.redacted ? `<div class="hint">Employee names are replaced with
-          &lt;employee&gt; — Odoo writes them into its own error text.</div>` : ''}
-      ` : ''}
-    </div>`;
+
+  function wireInner() {
+    dialog.querySelectorAll('[data-cfg=close]').forEach((b) => b.addEventListener('click', close));
+
+    $('#cfgForm', dialog).addEventListener('submit', (event) => {
+      event.preventDefault();
+      const values = readForm(event.target);
+      // Both controls yield '' when cleared — the select's "No plan" option
+      // and an emptied date input. The API takes null for "unassign" / "no
+      // renewal date to watch", not an empty string.
+      if (values.plan_id === '') values.plan_id = null;
+      if (values.subscription_renews_at === '') values.subscription_renews_at = null;
+      busy($('.save-config', dialog), async () => {
+        const result = await guard(() => api.patch(`/admin/tenants/${t.id}/config`, values));
+        if (!result) return;
+        t = result;
+        paint();
+        toast(`${result.name} updated`, 'ok');
+        onChange();
+      });
+    });
+
+    $('.sync-now', dialog).addEventListener('click', () =>
+      busy($('.sync-now', dialog), async () => {
+        const run = await guard(() => api.post(`/admin/tenants/${t.id}/sync`));
+        if (!run) return;
+        t = await api.get(`/admin/tenants/${t.id}`).catch(() => t);
+        paint();
+        toast(`${run.status} — ${run.punches_new} new punch(es), `
+          + `${run.attendances_created} created, ${run.error_count} error(s)`, 'ok');
+        onChange();
+      })
+    );
+
+    $('.diagnose', dialog).addEventListener('click', () =>
+      busy($('.diagnose', dialog), async () => {
+        const d = await guard(() => api.get(`/admin/tenants/${t.id}/diagnostics`));
+        if (d) { diag = d; paint(); }
+      })
+    );
+
+    const clearBtn = $('.clear-failures', dialog);
+    if (clearBtn) {
+      clearBtn.addEventListener('click', () =>
+        busy(clearBtn, async () => {
+          const result = await guard(() => api.post(`/admin/tenants/${t.id}/schedule/reset`));
+          if (!result) return;
+          t = await api.get(`/admin/tenants/${t.id}`).catch(() => t);
+          paint();
+          toast(result.message, 'ok');
+          onChange();
+        })
+      );
+    }
+  }
+
+  // Esc and the backdrop both mean "close" — everything up to the last Save
+  // is already persisted, unlike the add-connection wizard, so there is
+  // nothing to lose by dismissing it this way.
+  dialog.addEventListener('cancel', (event) => {
+    event.preventDefault();
+    close();
+  });
+  dialog.addEventListener('click', (event) => {
+    if (event.target === dialog) close();
+  });
+
+  paint();
+  dialog.showModal();
+  return dialog;
 }
 
-function wire(mount, route, tenants, linkFor) {
+function wire(mount, route, tenants, plans, linkFor) {
   $('#search', mount).addEventListener('submit', (event) => {
     event.preventDefault();
     const value = $('#q', mount).value.trim();
-    window.location.hash = linkFor({ q: value, open: '' });
+    window.location.hash = linkFor({ q: value });
   });
 
   // --- create -------------------------------------------------------------
@@ -387,8 +533,6 @@ function wire(mount, route, tenants, linkFor) {
   // --- per row ------------------------------------------------------------
   $$('tr[data-tenant]', mount).forEach((row) => {
     const id = row.dataset.tenant;
-    const detail = row.nextElementSibling?.classList.contains('detail-row')
-      ? row.nextElementSibling : null;
 
     const refresh = async (message) => {
       await render(mount, route);
@@ -409,6 +553,11 @@ function wire(mount, route, tenants, linkFor) {
       })
     );
 
+    $('.configure-btn', row).addEventListener('click', () => {
+      const tenant = tenants.find((x) => x.id === id);
+      if (tenant) openConfigDialog(tenant, { plans, onChange: () => render(mount, route) });
+    });
+
     // --- the subscription gate ---------------------------------------------
     const gate = $('.gate', row);
 
@@ -416,6 +565,9 @@ function wire(mount, route, tenants, linkFor) {
       const stop = $('.gate-stop', gate);
       if (stop) {
         stop.addEventListener('click', () => {
+          // The confirm step takes the place of Save / Configure rather than
+          // sitting beside them, so the row keeps its width and stays on one line.
+          gate.closest('.row-actions')?.classList.add('confirming');
           gate.innerHTML = gateConfirm();
           $('.gate-reason', gate).focus();
           wireGate();
@@ -427,6 +579,7 @@ function wire(mount, route, tenants, linkFor) {
         cancel.addEventListener('click', () => {
           // Back to the button, from the row's own data rather than a refetch:
           // cancelling changed nothing, so a round trip would be for show.
+          gate.closest('.row-actions')?.classList.remove('confirming');
           gate.innerHTML = gateControl(tenants.find((x) => x.id === id) || {});
           wireGate();
         });
@@ -456,49 +609,5 @@ function wire(mount, route, tenants, linkFor) {
       }
     };
     wireGate();
-
-    if (!detail) return;
-
-    const form = $('.config-form', detail);
-    form.addEventListener('submit', (event) => {
-      event.preventDefault();
-      const values = readForm(event.target);
-      // Both controls yield '' when cleared — the select's "No plan" option
-      // and an emptied date input. The API takes null for "unassign" / "no
-      // renewal date to watch", not an empty string.
-      if (values.plan_id === '') values.plan_id = null;
-      if (values.subscription_renews_at === '') values.subscription_renews_at = null;
-      busy($('.save-config', detail), async () => {
-        const result = await guard(() => api.patch(`/admin/tenants/${id}/config`, values));
-        if (result) await refresh(`${result.name} updated`);
-      });
-    });
-
-    $('.sync-now', detail).addEventListener('click', () =>
-      busy($('.sync-now', detail), async () => {
-        const run = await guard(() => api.post(`/admin/tenants/${id}/sync`));
-        if (run) {
-          await refresh(`${run.status} — ${run.punches_new} new punch(es), `
-            + `${run.attendances_created} created, ${run.error_count} error(s)`);
-        }
-      })
-    );
-
-    $('.diagnose', detail).addEventListener('click', () =>
-      busy($('.diagnose', detail), async () => {
-        const d = await guard(() => api.get(`/admin/tenants/${id}/diagnostics`));
-        if (d) $('.diag', detail).innerHTML = diagnosticsHtml(d);
-      })
-    );
-
-    const clear = $('.clear-failures', detail);
-    if (clear) {
-      clear.addEventListener('click', () =>
-        busy(clear, async () => {
-          const result = await guard(() => api.post(`/admin/tenants/${id}/schedule/reset`));
-          if (result) await refresh(result.message);
-        })
-      );
-    }
   });
 }

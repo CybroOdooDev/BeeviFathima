@@ -295,3 +295,94 @@ def test_platform_servers_and_standalone_devices_can_sit_side_by_side(
     assert device.status_code == 201, device.text
     kinds = sorted(s["connection_kind"] for s in client.get("/api/v1/sources", headers=auth(token)).json())
     assert kinds == ["device", "platform"]
+
+
+# ===========================================================================
+# One connection per address
+# ===========================================================================
+from app.services.connections import address_key  # noqa: E402
+
+
+def test_address_key_sees_through_default_ports_case_and_slashes():
+    assert address_key("zk://10.0.11.43") == address_key("zk://10.0.11.43:4370")
+    assert address_key("10.0.11.43") == address_key("zk://10.0.11.43")
+    assert address_key("https://BioTime.acme.com/") == address_key("https://biotime.acme.com:443")
+    assert address_key("http://bt:8081") == address_key("https://bt:8081")
+    assert address_key("zk://10.0.11.43") != address_key("zk://10.0.11.44")
+    assert address_key("zk://10.0.11.43:4370") != address_key("zk://10.0.11.43:4371")
+
+
+def _ok_provider(monkeypatch):
+    monkeypatch.setattr(
+        connections_mod, "build_source_provider",
+        lambda *_: _StubProvider(ProviderTestResult(ok=True, message="ok")),
+    )
+
+
+def _add_device(client, token, name, address):  # noqa: F811
+    return client.post(
+        "/api/v1/sources",
+        json={"name": name, "provider": "zk_device", "connection_kind": "device", "base_url": address},
+        headers=auth(token),
+    )
+
+
+def test_the_same_device_address_cannot_be_added_twice(client, monkeypatch):  # noqa: F811
+    token = signup(client, "Acme", "owner@acme.example.com")
+    _ok_provider(monkeypatch)
+    assert _add_device(client, token, "Gate", "zk://10.0.11.43").status_code == 201
+    again = _add_device(client, token, "Gate again", "zk://10.0.11.43:4370")
+    assert again.status_code == 409
+    assert "'Gate'" in again.json()["detail"]
+    assert len(client.get("/api/v1/sources", headers=auth(token)).json()) == 1
+
+
+def test_the_same_biotime_server_cannot_be_added_twice(client, monkeypatch):  # noqa: F811
+    token = signup(client, "Acme", "owner@acme.example.com")
+    _ok_provider(monkeypatch)
+    body = {"provider": "biotime", "connection_kind": "platform", "username": "a", "password": "p"}
+    first = client.post("/api/v1/sources", json={**body, "name": "HQ", "base_url": "https://bt.acme.com"},
+                        headers=auth(token))
+    second = client.post("/api/v1/sources", json={**body, "name": "HQ2", "base_url": "https://BT.acme.com:443/"},
+                         headers=auth(token))
+    assert first.status_code == 201 and second.status_code == 409
+
+
+def test_the_wizard_test_step_reports_it_before_probing(client, monkeypatch):  # noqa: F811
+    token = signup(client, "Acme", "owner@acme.example.com")
+    _ok_provider(monkeypatch)
+    _add_device(client, token, "Gate", "zk://10.0.11.43")
+
+    def must_not_probe(*_):  # pragma: no cover — asserts it is not called
+        raise AssertionError("probed an address that is already connected")
+
+    monkeypatch.setattr(connections_mod, "build_source_provider", must_not_probe)
+    response = client.post("/api/v1/sources/test", json={"provider": "zk_device", "base_url": "zk://10.0.11.43"},
+                           headers=auth(token))
+    assert response.status_code == 409
+
+
+def test_editing_a_connection_onto_another_ones_address_is_refused(client, monkeypatch):  # noqa: F811
+    token = signup(client, "Acme", "owner@acme.example.com")
+    _ok_provider(monkeypatch)
+    _add_device(client, token, "Gate", "zk://10.0.11.43")
+    other = _add_device(client, token, "Back door", "zk://10.0.11.44").json()
+    moved = client.patch(f"/api/v1/sources/{other['id']}", json={"base_url": "zk://10.0.11.43"},
+                         headers=auth(token))
+    assert moved.status_code == 409
+    # …while saving a connection with its own, unchanged address is fine.
+    same = client.patch(f"/api/v1/sources/{other['id']}", json={"base_url": "zk://10.0.11.44:4370"},
+                        headers=auth(token))
+    assert same.status_code == 200, same.text
+    # And testing a connection from its own edit form is not "a duplicate of itself".
+    tested = client.post("/api/v1/sources/test",
+                         json={"base_url": "zk://10.0.11.44", "source_id": other["id"]}, headers=auth(token))
+    assert tested.status_code == 200, tested.text
+
+
+def test_two_accounts_may_each_have_a_device_at_the_same_private_ip(client, monkeypatch):  # noqa: F811
+    _ok_provider(monkeypatch)
+    one = signup(client, "Acme", "owner@acme.example.com")
+    two = signup(client, "Other", "owner@other.example.com")
+    assert _add_device(client, one, "Gate", "zk://192.168.1.201").status_code == 201
+    assert _add_device(client, two, "Gate", "zk://192.168.1.201").status_code == 201

@@ -109,7 +109,7 @@ class Settings(BaseSettings):
     allow_private_network_targets: bool = True
     cors_origins: str = ""
 
-        # --- email genuineness -----------------------------------------------------
+    # --- email genuineness -----------------------------------------------------
     #: Whether a new account's email address gets a real MX/A lookup, not just
     #: syntax checking, before the account is created. Off would let a signup
     #: through on "asdf@asdf" — this is what stops it costing a database row.
@@ -121,6 +121,18 @@ class Settings(BaseSettings):
     #: confirmation link before it goes stale and a fresh one has to be
     #: requested (POST /auth/resend-verification).
     email_verification_ttl_hours: int = 48
+
+    # --- outbound mail -----------------------------------------------------------
+    #: Empty means "no SMTP configured": mail is logged instead of sent, so a
+    #: fresh checkout and the test suite both work with zero setup — the same
+    #: shape REDIS_URL above uses for "no broker".
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_use_tls: bool = True
+    #: From address on outbound mail. Only read once SMTP_HOST is set.
+    mail_from: str = "no-reply@biobridge.app"
 
     @property
     def cors_origin_list(self) -> list[str]:

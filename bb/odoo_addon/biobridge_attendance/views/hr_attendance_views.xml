@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Best-effort patch onto Odoo's own Attendance list/form so the device
+         shows up right where attendance is normally reviewed, with no extra
+         click. Verified directly against Odoo 19's own source
+         (addons/hr_attendance/views/hr_attendance_view.xml): the tree view's
+         record id is "view_attendance_tree" (NOT "hr_attendance_view_tree" —
+         an easy guess to get wrong, since the form/filter views really are
+         named hr_attendance_view_form/_filter). Still confirm against the
+         target instance (Settings > Technical > Views, with developer mode
+         on) before deploying to a version this wasn't checked against.
+         Nothing else in this module depends on this patch landing correctly
+         — see the standalone Biometric Devices > Attendance by Device screen
+         below, which does not guess at any core view id and always works. -->
+    <record id="hr_attendance_view_tree_device" model="ir.ui.view">
+        <field name="name">hr.attendance.tree.biobridge.device</field>
+        <field name="model">hr.attendance</field>
+        <field name="inherit_id" ref="hr_attendance.view_attendance_tree"/>
+        <field name="arch" type="xml">
+            <field name="check_out" position="after">
+                <field name="device_id" optional="show"/>
+                <field name="device_location" string="Location" optional="show"/>
+            </field>
+        </field>
+    </record>
+
+    <record id="hr_attendance_view_form_device" model="ir.ui.view">
+        <field name="name">hr.attendance.form.biobridge.device</field>
+        <field name="model">hr.attendance</field>
+        <field name="inherit_id" ref="hr_attendance.hr_attendance_view_form"/>
+        <field name="arch" type="xml">
+            <field name="check_out" position="after">
+                <field name="device_id"/>
+                <field name="device_location" string="Location"/>
+            </field>
+        </field>
+    </record>
+
+    <record id="hr_attendance_view_filter_device" model="ir.ui.view">
+        <field name="name">hr.attendance.filter.biobridge.device</field>
+        <field name="model">hr.attendance</field>
+        <field name="inherit_id" ref="hr_attendance.hr_attendance_view_filter"/>
+        <field name="arch" type="xml">
+            <field name="employee_id" position="after">
+                <field name="device_id"/>
+            </field>
+            <filter name="group_by_employee" position="after">
+                <filter name="group_by_device" string="Device"
+                        context="{'group_by': 'device_id'}"/>
+            </filter>
+        </field>
+    </record>
+
+    <!-- Addon-owned fallback — this one references nothing outside this
+         module, so it works regardless of whether the patch above matched
+         the target version's actual view names. -->
+    <record id="hr_attendance_view_tree_by_device" model="ir.ui.view">
+        <field name="name">hr.attendance.tree.by.device</field>
+        <field name="model">hr.attendance</field>
+        <field name="arch" type="xml">
+            <tree string="Attendance by Device" create="0">
+                <field name="employee_id"/>
+                <field name="check_in"/>
+                <field name="check_out"/>
+                <field name="worked_hours" widget="float_time"/>
+                <field name="device_id"/>
+                <field name="device_location" string="Location"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="hr_attendance_action_by_device" model="ir.actions.act_window">
+        <field name="name">Attendance by Device</field>
+        <field name="res_model">hr.attendance</field>
+        <field name="view_mode">tree,form</field>
+        <field name="view_id" ref="hr_attendance_view_tree_by_device"/>
+        <field name="context">{'search_default_group_by_device': 1}</field>
+    </record>
+
+    <menuitem id="biobridge_device_menu_attendance" name="Attendance by Device"
+              parent="biobridge_device_menu_root" action="hr_attendance_action_by_device"
+              sequence="20"/>
+</odoo>

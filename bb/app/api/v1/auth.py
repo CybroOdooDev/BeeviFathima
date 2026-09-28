@@ -34,6 +34,13 @@ from app.schemas import (
     SubscriptionPlanOut,
     TokenPair,
     UserOut,
+    VerifyEmailRequest,
+)
+from app.services.email_check import UngenuineEmailError, assert_genuine_email
+from app.services.email_verification import (
+    issue_verification_token,
+    send_verification_email,
+    verify_token,
 )
 from app.services.timeutils import ensure_aware, is_past
 
@@ -117,7 +124,10 @@ def list_active_plans(db: Session = Depends(get_db)) -> list[SubscriptionPlan]:
 
 @router.post("/signup", response_model=TokenPair, status_code=status.HTTP_201_CREATED)
 def signup(payload: SignupRequest, request: Request, db: Session = Depends(get_db)) -> TokenPair:
-    email = payload.email.lower()
+    try:
+        email = assert_genuine_email(payload.email).lower()
+    except UngenuineEmailError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     if db.scalar(select(func.count(User.id)).where(User.email == email)):
         raise HTTPException(status.HTTP_409_CONFLICT, "An account with that email already exists")
 
@@ -191,10 +201,23 @@ def signup(payload: SignupRequest, request: Request, db: Session = Depends(get_d
     db.add(user)
     db.flush()
 
+    raw_verify_token = issue_verification_token(user)
+
     # Signup creates a customer workspace, so it can only ever be the customer
     # surface. Nothing here can make a staff session.
     tokens = _issue(db, user, request, SCOPE_TENANT)
     db.commit()
+
+    # A passing MX/A lookup already says the domain is real; this is the
+    # stronger proof that this particular person controls the inbox. Best
+    # effort deliberately — the account is already usable, and a down mail
+    # server must not turn a good signup into a failed one. Unsent means the
+    # person can ask again with POST /auth/resend-verification.
+    try:
+        send_verification_email(user, raw_verify_token)
+    except Exception as exc:  # noqa: BLE001 — signup must not fail because mail did
+        log.warning("Could not send verification email to %s: %s", user.email, exc)
+
     return tokens
 
 
@@ -353,6 +376,44 @@ def logout(refresh_token: str = "", db: Session = Depends(get_db)) -> MessageOut
         )
         db.commit()
     return MessageOut(message="Signed out")
+
+
+@router.post("/verify-email", response_model=MessageOut)
+def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db)) -> MessageOut:
+    """The link in the confirmation email lands here.
+
+    Unauthenticated on purpose — the token itself is the credential, and the
+    person clicking it may not have signed in on this device.
+    """
+    user = verify_token(db, payload.token)
+    if user is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "That link is invalid or has expired."
+        )
+    db.commit()
+    return MessageOut(message="Email confirmed.")
+
+
+@router.post("/resend-verification", response_model=MessageOut)
+def resend_verification(
+    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> MessageOut:
+    """Always for the signed-in caller's own address.
+
+    Not a public "resend to this email" endpoint: that would let anyone spam
+    verification mail at an address they don't own, and would double as a way
+    to probe which addresses have an account at all.
+    """
+    if user.email_verified_at is not None:
+        return MessageOut(message="This email is already confirmed.")
+
+    raw_verify_token = issue_verification_token(user)
+    db.commit()
+    try:
+        send_verification_email(user, raw_verify_token)
+    except Exception as exc:  # noqa: BLE001 — see signup's identical guard
+        log.warning("Could not resend verification email to %s: %s", user.email, exc)
+    return MessageOut(message="Verification email sent.")
 
 
 @router.get("/me", response_model=UserOut)

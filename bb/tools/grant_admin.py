@@ -111,12 +111,11 @@ def main() -> int:
             print(f"Created platform user {email} with no tenant.\n")
             print(f"  password: {password}")
             print("\nShown once — only the hash is stored.")
-            print("\nThey sign in at the console door, not the customer one:")
-            print("    <dashboard URL>/#/staff/login")
-            print("The customer login will turn them away: they have no workspace "
-                  "of their\nown, which is deliberate. Console sessions are also "
-                  "short-lived, so\nexpect to sign in again more often than on the "
-                  "customer side.")
+            print("\nThey sign in at the normal dashboard sign-in, like everyone else:")
+            print("    <dashboard URL>/#/login")
+            print("With no workspace of their own they land straight in the console. "
+                  "Console\nsessions are short-lived, so expect to sign in again more "
+                  "often than on the\ncustomer side.")
             return 0
 
         if user is None:
@@ -148,14 +147,12 @@ def main() -> int:
         db.commit()
         print(f"\n{user.email}: is_platform_admin = {target}")
         if target:
-            # The flag is necessary and not sufficient: the console also requires
-            # a session minted at its own door, so "sign in again" is not enough
-            # if they sign in at the same place as before.
-            print("\nThe flag alone does not open the console. They must sign in at")
-            print("    <dashboard URL>/#/staff/login")
-            print("Any session they are holding now is a customer one and the "
-                  "console will\nrefuse it. If they also have their own workspace, "
-                  "the sidebar there now\nlinks across to the console door.")
+            # The flag is necessary and not sufficient: the console also needs a
+            # console-scoped session, which the dashboard opens at sign-in.
+            print("\nThe flag alone does not open the console for a session they "
+                  "already hold.")
+            print("They sign out and sign in again at the normal sign-in; from then on")
+            print("the sidebar switches between their workspace and the console.")
         else:
             print("\nTheir console sessions stop working immediately, and any "
                   "refresh of one\nis refused.")

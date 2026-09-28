@@ -2,9 +2,10 @@
    No external fonts or CDNs: this ships inside the container and must render
    on a customer LAN with no internet.
 
-   Palette: teal. One interactive accent (--accent, #0f766e in light, #2dd4bf in
-   dark) used for every button, link, tab and highlight, on cool grey-green
-   neutrals, with a dark sidebar framing the page in both themes. The state
+   Palette: indigo. One interactive accent (--accent, #4f46e5 in light, #818cf8
+   in dark) for every button, link, tab and highlight, on cool neutral greys,
+   with a light sidebar and generous spacing — see "roomier layout" at the end
+   of this file for the spacing, radius and depth that go with it. The state
    colours (ok / warn / bad) are kept clearly apart from the accent so a green
    "synced" pill never reads as "just the brand colour". Text/background pairs
    were checked for WCAG AA contrast (4.5:1+).
@@ -14,38 +15,40 @@
    before first paint, so there is no flash of the wrong theme). */
 
 :root {
-  --ground: #f2f6f5;
+  --ground: #f6f7fb;
   --panel: #ffffff;
-  --panel-2: #e8f0ee;
-  --ink: #10201f;
-  --muted: #4b605d;
-  --faint: #627875;
-  --rule: #d2dedb;
-  --rule-soft: #e4ecea;
-  --accent: #0f766e;
+  --panel-2: #f2f4f9;
+  --ink: #111827;
+  --muted: #4b5563;
+  --faint: #636b78;
+  --rule: #e3e6ee;
+  --rule-soft: #eef0f5;
+  --accent: #4f46e5;
   --accent-ink: #ffffff;
-  --accent-soft: #e2f3ef;
-  --accent-2: #0d5f58;
+  --accent-soft: #eef0ff;
+  --accent-2: #4f46e5;
   --accent-2-ink: #ffffff;
-  --ok: #166534;
-  --ok-soft: #dcf2e3;
-  --warn: #92400e;
-  --warn-soft: #fbeedd;
-  --bad: #9f2d2d;
-  --bad-soft: #f9e4e2;
-  --shadow: 0 1px 2px rgba(16, 32, 31, .07);
-  --scroll-fade: rgba(16, 32, 31, .18);
-  /* The sidebar is dark in both themes — a fixed frame the page sits in. */
-  --side-bg: #12232a;
-  --side-ink: #dbe8e6;
-  --side-muted: #9bb2af;
-  --side-faint: #7d9794;
-  --side-hover: #1b323a;
-  --side-rule: #223a42;
-  --side-active-bg: rgba(45, 212, 191, .14);
-  --side-accent: #5eead4;
+  --ok: #137035;
+  --ok-soft: #e7f6ec;
+  --warn: #b45309;
+  --warn-soft: #fdf3e2;
+  --bad: #b91c1c;
+  --bad-soft: #fdecec;
+  --shadow: 0 1px 2px rgba(17, 24, 39, .04), 0 4px 18px rgba(17, 24, 39, .05);
+  --scroll-fade: rgba(17, 24, 39, .12);
+  /* The sidebar is light too: white, set off by a hairline, the active item a
+     soft indigo pill. */
+  --side-bg: #ffffff;
+  --side-ink: #1f2937;
+  --side-muted: #4b5563;
+  --side-faint: #6b7280;
+  --side-hover: #f3f4f8;
+  --side-rule: #e5e7eb;
+  --side-active-bg: #eef0ff;
+  --side-accent: #4338ca;
   color-scheme: light;
-  --radius: 8px;
+  --radius: 12px;
+  --radius-sm: 8px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   /* "Noto Sans" first because it's Cybrosys's own site face and ships
      preinstalled on Android/ChromeOS/most Linux desktops — a free nod to
@@ -56,58 +59,68 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --ground: #0c1514;
-    --panel: #13201f;
-    --panel-2: #1a2a29;
-    --ink: #e2eeec;
-    --muted: #a1b6b3;
-    --faint: #839b98;
-    --rule: #263b3a;
-    --rule-soft: #1d2f2e;
-    --accent: #2dd4bf;
-    --accent-ink: #042f2c;
-    --accent-soft: #10312d;
-    --accent-2: #14b8a6;
-    --accent-2-ink: #042f2c;
-    --ok: #5fc58a;
-    --ok-soft: #12291d;
-    --warn: #e0a458;
-    --warn-soft: #2a2115;
-    --bad: #ef8a80;
-    --bad-soft: #2e1a18;
-    --shadow: 0 1px 2px rgba(0, 0, 0, .4);
-    --scroll-fade: rgba(0, 0, 0, .5);
-    --side-bg: #08110f;
-    --side-hover: #13201f;
-    --side-rule: #1a2a29;
-    color-scheme: dark;
+  --ground: #0e1018;
+  --panel: #161924;
+  --panel-2: #1d2130;
+  --ink: #e7e9f2;
+  --muted: #a3a9bd;
+  --faint: #8e94aa;
+  --rule: #2a2f40;
+  --rule-soft: #222637;
+  --accent: #818cf8;
+  --accent-ink: #13142b;
+  --accent-soft: #23254a;
+  --accent-2: #818cf8;
+  --accent-2-ink: #13142b;
+  --ok: #58c98a;
+  --ok-soft: #132a1e;
+  --warn: #f0b35b;
+  --warn-soft: #2c2314;
+  --bad: #f28b82;
+  --bad-soft: #311b1c;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .35), 0 6px 20px rgba(0, 0, 0, .25);
+  --scroll-fade: rgba(0, 0, 0, .5);
+  --side-bg: #12151f;
+  --side-ink: #e2e5ef;
+  --side-muted: #a3a9bd;
+  --side-faint: #8e94aa;
+  --side-hover: #1b1f2c;
+  --side-rule: #232838;
+  --side-active-bg: rgba(129, 140, 248, .15);
+  --side-accent: #a5b4fc;
+  color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --ground: #0c1514;
-  --panel: #13201f;
-  --panel-2: #1a2a29;
-  --ink: #e2eeec;
-  --muted: #a1b6b3;
-  --faint: #839b98;
-  --rule: #263b3a;
-  --rule-soft: #1d2f2e;
-  --accent: #2dd4bf;
-  --accent-ink: #042f2c;
-  --accent-soft: #10312d;
-  --accent-2: #14b8a6;
-  --accent-2-ink: #042f2c;
-  --ok: #5fc58a;
-  --ok-soft: #12291d;
-  --warn: #e0a458;
-  --warn-soft: #2a2115;
-  --bad: #ef8a80;
-  --bad-soft: #2e1a18;
-  --shadow: 0 1px 2px rgba(0, 0, 0, .4);
+  --ground: #0e1018;
+  --panel: #161924;
+  --panel-2: #1d2130;
+  --ink: #e7e9f2;
+  --muted: #a3a9bd;
+  --faint: #8e94aa;
+  --rule: #2a2f40;
+  --rule-soft: #222637;
+  --accent: #818cf8;
+  --accent-ink: #13142b;
+  --accent-soft: #23254a;
+  --accent-2: #818cf8;
+  --accent-2-ink: #13142b;
+  --ok: #58c98a;
+  --ok-soft: #132a1e;
+  --warn: #f0b35b;
+  --warn-soft: #2c2314;
+  --bad: #f28b82;
+  --bad-soft: #311b1c;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .35), 0 6px 20px rgba(0, 0, 0, .25);
   --scroll-fade: rgba(0, 0, 0, .5);
-  --side-bg: #08110f;
-  --side-hover: #13201f;
-  --side-rule: #1a2a29;
+  --side-bg: #12151f;
+  --side-ink: #e2e5ef;
+  --side-muted: #a3a9bd;
+  --side-faint: #8e94aa;
+  --side-hover: #1b1f2c;
+  --side-rule: #232838;
+  --side-active-bg: rgba(129, 140, 248, .15);
+  --side-accent: #a5b4fc;
   color-scheme: dark;
 }
 
@@ -129,11 +142,18 @@ a { color: var(--accent); }
 .auth-wrap {
   min-height: 100vh;
   display: grid;
-  place-items: center;
+  place-content: center;
+  justify-items: center;
+  gap: 14px;
   padding: 24px 16px;
 }
+/* The line under the sign-in card: "Log in as admin", or the way back. Low
+   emphasis on purpose — most people signing in are customers. */
+.auth-foot { margin: 0; font-size: 13px; color: var(--muted); }
+.auth-foot a { color: var(--muted); }
+.auth-foot a:hover { color: var(--accent); }
 .auth-card {
-  width: 100%;
+  width: min(380px, calc(100vw - 32px));
   max-width: 380px;
   background: var(--panel);
   border: 1px solid var(--rule);
@@ -181,7 +201,7 @@ a { color: var(--accent); }
 
 /* Wide enough for the plan-card grid to lay two or more columns out side by
    side — the signup screen only, when there's a set of plans to compare. */
-.auth-card.wide { max-width: 640px; }
+.auth-card.wide { max-width: 640px; width: min(640px, calc(100vw - 32px)); }
 
 .auth-card h1 { font-size: 19px; margin: 18px 0 4px; letter-spacing: -.01em; }
 .auth-card .sub { color: var(--muted); margin: 0 0 20px; font-size: 13.5px; }
@@ -326,7 +346,7 @@ a { color: var(--accent); }
 
 /* The same idea one level down: a connection inside the Biometric card, and
    the add/edit form, each carry their own actions at their top-right. */
-.item-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
+.item-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
 .form-head {
   display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;
   padding-bottom: 10px; margin-bottom: 12px; border-bottom: 1px solid var(--rule-soft);
@@ -339,7 +359,7 @@ a { color: var(--accent); }
   margin: 0 0 14px;
 }
 .card .card .sourceForm { margin: 14px 0 0; }
-.confirm-row { margin-top: 10px; gap: 8px; }
+.confirm-row { margin: -2px 0 12px; gap: 8px; }
 
 /* 1 Fill in → 2 Test → 3 Connect, above a new connection's form. */
 .steps { display: flex; gap: 6px 16px; flex-wrap: wrap; margin: 0 0 12px; font-size: 12.5px; color: var(--muted); }
@@ -375,14 +395,9 @@ a { color: var(--accent); }
 .grid { display: grid; gap: 14px; }
 .grid.cols-2 { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
 
-/* An expanded row in the staff console. Tinted and inset so a settings form
-   nested inside a table still reads as belonging to the row above it. */
-.detail-row > td {
-  background: var(--panel-2);
-  padding: 18px 20px;
-  box-shadow: inset 3px 0 0 var(--accent);
-}
-.detail-row h3 { color: var(--muted); letter-spacing: .04em; text-transform: uppercase; }
+/* Section labels inside the account-configuration dialog (platform.js
+   openConfigDialog) — "Account", "Pairing", "Subscription". */
+.config-dialog h3 { color: var(--muted); letter-spacing: .04em; text-transform: uppercase; }
 .grid.cols-4 { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
 
 .stat { background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius); padding: 15px 17px; }
@@ -471,6 +486,108 @@ input, select, textarea {
 .plan-card-features { list-style: none; margin: 8px 0 0; padding: 0; font-size: 11.5px; color: var(--muted); }
 .plan-card-features li { position: relative; padding-left: 13px; margin-top: 3px; }
 .plan-card-features li::before { content: "✓"; position: absolute; left: 0; color: var(--accent); font-weight: 700; }
+
+/* --- pricing page (ui.js pricingCards) -------------------------------------
+   The richer, one-card-per-plan grid for the two screens whose whole job is
+   picking a plan: the public pricing page ahead of signup, and "Choose a
+   plan" from Settings. Reuses the app's single accent color rather than a
+   different hue per tier — see the palette note at the top of this file. */
+.pricing-header { text-align: center; max-width: 640px; margin: 0 auto 32px; }
+.pricing-header h1 { font-size: 26px; margin: 0 0 8px; letter-spacing: -.01em; }
+.pricing-header .sub { color: var(--muted); font-size: 14.5px; margin: 0; }
+.pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+.pricing-card {
+  position: relative;
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 22px 20px 20px;
+  display: flex;
+  flex-direction: column;
+}
+.pricing-card.tagged { padding-top: 30px; }
+.pricing-card.locked { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.pricing-tag {
+  position: absolute;
+  top: 14px;
+  right: 20px;
+  font: 600 10.5px/1 var(--mono);
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 20px;
+}
+.pricing-tag.ok { background: var(--ok-soft); color: var(--ok); }
+.pricing-tag.warn { background: var(--warn-soft); color: var(--warn); }
+.pricing-tag.current { background: var(--accent-soft); color: var(--accent); }
+.pricing-card-name { font-size: 15px; font-weight: 650; color: var(--ink); }
+.pricing-card-price { margin: 8px 0 4px; }
+.pricing-card-price .amt { font-size: 30px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.pricing-card-price .amt.custom { font-size: 18px; font-weight: 600; }
+.pricing-card-price .per { font-size: 13px; color: var(--muted); margin-left: 2px; }
+.pricing-card-desc { font-size: 12.5px; color: var(--muted); margin: 0 0 16px; line-height: 1.5; min-height: 19px; }
+.pricing-cta {
+  width: 100%;
+  padding: 9px 13px;
+  font-weight: 550;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.pricing-cta:hover:not(:disabled) { filter: brightness(1.08); }
+.pricing-cta:disabled {
+  background: var(--panel-2); border-color: var(--rule); color: var(--muted);
+  font-weight: 500; opacity: 1; cursor: default;
+}
+.pricing-includes {
+  font: 500 10.5px/1 var(--mono);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin: 18px 0 8px;
+}
+.pricing-features { list-style: none; margin: 0; padding: 0; font-size: 12.5px; color: var(--muted); }
+.pricing-features li { position: relative; padding-left: 16px; margin-top: 6px; line-height: 1.4; }
+.pricing-features li::before { content: "✓"; position: absolute; left: 0; color: var(--accent); font-weight: 700; }
+
+/* The dedicated pricing page (auth.js renderPlans) — reached from "Explore
+   plans" during signup, or from "Choose a plan"/"Change plan" in Settings.
+   Wider than the narrow .auth-card, since the whole point is comparing
+   several cards side by side. */
+.pricing-page {
+  width: min(920px, calc(100vw - 32px));
+  padding: 32px 0 48px;
+}
+.pricing-page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 28px;
+}
+.pricing-page-head .link { font-size: 13px; color: var(--muted); text-decoration: none; }
+.pricing-page-head .link:hover { color: var(--accent); }
+
+/* The compact plan summary on the signup form itself — one line naming the
+   plan and price plus a way out to the full comparison, in place of the
+   card grid it used to inline. */
+.plan-picked {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: 10px 13px;
+  background: var(--panel-2);
+}
+.plan-picked strong { font-size: 13px; }
+.plan-picked .hint { color: var(--muted); font-size: 12px; margin-left: 6px; }
+
 .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 .row.end { justify-content: flex-end; }
 
@@ -528,11 +645,9 @@ td.mono { font-family: var(--mono); font-size: 12px; }
 /* The edge shadow says "there is more" — it does not solve scrolling past
    the one column that says *what row this is* (account, badge, punch time)
    while reading the columns that say what happened to it. Pin the first
-   column so identity survives the scroll; everything else moves under it.
-   Skipped on the platform console's own expanded config row, which spans
-   every column already and is not an identity cell to pin. */
+   column so identity survives the scroll; everything else moves under it. */
 .scroll table thead th:first-child,
-.scroll table tbody tr:not(.detail-row) > td:first-child {
+.scroll table tbody tr > td:first-child {
   position: sticky;
   left: 0;
   z-index: 1;
@@ -618,7 +733,8 @@ pre.log {
 /* The sidebar's switch between a dual-role person's workspace and the staff
    console — a real button, since it does something rather than going
    somewhere, and it sits where the old "Open the staff console" link did. */
-.hat-switch { width: 100%; margin: 8px 0 4px; text-align: left; font-weight: 550; }
+a.btn { display: inline-block; text-decoration: none; }
+.hat-switch { display: block; width: 100%; margin: 8px 0 4px; text-align: left; font-weight: 550; }
 .sidebar .hat-switch {
   background: transparent; color: var(--side-ink); border-color: var(--side-rule);
 }
@@ -653,3 +769,383 @@ pre.log {
 .choice-title { font-weight: 600; font-size: 14px; }
 .choice-example { font-size: 12px; color: var(--accent); }
 .choice-body { font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+
+/* --- the add-connection wizard (settings.js openAddWizard) ----------------- */
+dialog.wizard {
+  width: min(620px, calc(100vw - 24px));
+  max-height: min(760px, calc(100vh - 24px));
+  padding: 0;
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .28);
+  overflow: hidden;
+}
+dialog.wizard[open] { display: flex; flex-direction: column; }
+dialog.wizard::backdrop { background: rgba(8, 17, 15, .55); }
+
+/* --- the account configuration dialog (platform.js openConfigDialog) ------
+   Same chrome as the add-connection wizard above (it carries both classes),
+   just wider: it shows every field at once rather than one step at a time,
+   so it needs room for the Account/Pairing/Subscription grids to stay two
+   columns instead of collapsing to one. */
+dialog.config-dialog {
+  width: min(760px, calc(100vw - 24px));
+  max-height: min(820px, calc(100vh - 24px));
+}
+
+.wiz-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 20px; border-bottom: 1px solid var(--rule-soft); font-size: 15px;
+}
+.wiz-x { font-size: 22px; line-height: 1; padding: 0 4px; color: var(--muted); }
+.wiz-steps {
+  display: flex; gap: 6px; list-style: none; margin: 0; padding: 12px 20px;
+  border-bottom: 1px solid var(--rule-soft); background: var(--panel-2);
+}
+.wiz-steps li { flex: 1; display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--faint); }
+.wiz-steps li b {
+  display: inline-grid; place-items: center; width: 22px; height: 22px; flex: none;
+  border-radius: 50%; font-size: 11.5px; border: 1px solid var(--rule); background: var(--panel);
+}
+.wiz-steps li.current { color: var(--ink); font-weight: 600; }
+.wiz-steps li.current b { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.wiz-steps li.done { color: var(--accent); }
+.wiz-steps li.done b { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.wiz-body { padding: 18px 20px 6px; overflow-y: auto; flex: 1; }
+.wiz-foot {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  padding: 12px 20px; border-top: 1px solid var(--rule-soft);
+}
+.choice.picked { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.wiz-summary {
+  display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px;
+  margin: 0 0 14px; font-size: 13px;
+}
+.wiz-summary dt { color: var(--muted); }
+.wiz-summary dd { margin: 0; overflow-wrap: anywhere; }
+.test-result.pending { border-left-color: var(--accent); background: var(--accent-soft); }
+@media (max-width: 520px) {
+  .wiz-steps li { font-size: 0; gap: 0; justify-content: center; }
+  .wiz-steps li.current { font-size: 12.5px; gap: 7px; }
+}
+
+/* --- navigation and page chrome ------------------------------------------- */
+.nav-label { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
+.nav-icon { flex: none; opacity: .85; }
+.sidebar a.nav.active .nav-icon { opacity: 1; }
+.title-block { min-width: 0; }
+.page-sub { font-size: 12.5px; color: var(--muted); margin-top: 1px; }
+.top-actions { display: flex; align-items: center; gap: 10px; }
+.last-sync { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); display: inline-block; }
+.dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); }
+#topSync { display: inline-flex; align-items: center; gap: 6px; }
+#topSync.spinning svg { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (max-width: 820px) {
+  .page-sub, .last-sync { display: none; }
+}
+
+/* A number tile that opens the list behind it. */
+a.stat-link { display: block; position: relative; text-decoration: none; color: inherit; transition: border-color .12s, box-shadow .12s; }
+a.stat-link:hover { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.stat-go { position: absolute; top: 12px; right: 14px; color: var(--faint); font-size: 18px; line-height: 1; }
+a.stat-link:hover .stat-go { color: var(--accent); }
+.banner-action { font-weight: 600; }
+
+/* --- the Overview's setup checklist ---------------------------------------- */
+.checklist .card-head { position: static; }
+.progress { width: 160px; height: 6px; border-radius: 3px; background: var(--panel-2); overflow: hidden; }
+.progress span { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+.steps-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.steps-list li {
+  display: grid; grid-template-columns: 30px 1fr auto; gap: 12px; align-items: center;
+  padding: 10px 12px; border-radius: var(--radius);
+}
+.steps-list li.next { background: var(--accent-soft); }
+.step-mark {
+  display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%;
+  font-size: 12px; font-weight: 600; border: 1px solid var(--rule); color: var(--muted); background: var(--panel);
+}
+.steps-list li.next .step-mark { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.steps-list li.done .step-mark { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); }
+.step-text { display: grid; gap: 1px; min-width: 0; }
+.step-text strong { font-size: 13.5px; }
+.step-text span { font-size: 12.5px; color: var(--muted); }
+.steps-list li.done .step-text strong { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--faint); }
+a.btn.primary-link { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 550; }
+@media (max-width: 560px) {
+  .steps-list li { grid-template-columns: 26px 1fr; }
+  .steps-list li > .btn, .steps-list li > button { grid-column: 2; justify-self: start; }
+}
+
+/* --- filters: quick-pick chips and a compact filter row -------------------- */
+.filter-bar { display: grid; gap: 12px; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 4px; }
+.chip {
+  display: inline-block; padding: 5px 12px; border-radius: 999px; font-size: 12.5px;
+  border: 1px solid var(--rule); color: var(--ink); text-decoration: none; background: var(--panel);
+}
+.chip:hover { border-color: var(--accent); color: var(--accent); }
+.chip.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 550; }
+.filter-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+.inline-field { display: grid; gap: 3px; margin: 0; font-size: 12px; font-weight: 550; color: var(--muted); }
+.inline-field input { width: 165px; }
+.inline-field.grow { flex: 1; min-width: 180px; }
+.inline-field.grow input { width: 100%; }
+.compact-search { width: 220px; padding: 5px 10px; font-size: 13px; }
+
+/* --- the Odoo employee picker on the Employees page ------------------------ */
+.match-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.picker { position: relative; min-width: 240px; flex: 1; }
+.picker input { width: 100%; }
+.picker.chosen input { border-color: var(--ok); background: var(--ok-soft); }
+.picker-list {
+  position: absolute; z-index: 20; left: 0; right: 0; top: calc(100% + 4px);
+  margin: 0; padding: 4px; list-style: none; max-height: 260px; overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .14);
+}
+.picker-list li {
+  display: flex; justify-content: space-between; gap: 10px; padding: 7px 9px;
+  border-radius: 6px; cursor: pointer; font-size: 13px;
+}
+.picker-list li:hover { background: var(--accent-soft); }
+.picker-list li.taken { opacity: .55; cursor: not-allowed; }
+.picker-list li.picker-note { cursor: default; color: var(--muted); font-size: 12.5px; }
+.picker-list li.picker-note:hover { background: none; }
+/* .search-select: field()'s searchable-dropdown timezone fields. A caret
+   marks it as a dropdown even though, unlike .picker's other use (the Odoo
+   employee search), it isn't a search box by shape — and the keyboard
+   active state needs its own look since there's no live :hover to lean on. */
+.search-select { min-width: 0; }
+.search-select .ss-input { padding-right: 28px; }
+.search-select .ss-caret {
+  position: absolute; right: 12px; top: 40%; width: 7px; height: 7px;
+  transform: translateY(-50%) rotate(45deg);
+  border-right: 1.5px solid var(--faint); border-bottom: 1.5px solid var(--faint);
+  pointer-events: none;
+}
+.picker-list li.active { background: var(--accent-soft); }
+.banner .banner-action { display: block; width: fit-content; margin-top: 6px; }
+.topbar h1 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 820px) {
+  #tenantPill { display: none; }
+  #topSync .sync-label { display: none; }
+  #topSync { padding: 7px 9px; }
+}
+
+/* ===========================================================================
+   Roomier layout — larger type, more space, rounder corners, softer depth.
+   Kept as one block of overrides so the spacing scale lives in one place:
+   cards are 24px in from their edge, and everything that bleeds to a card's
+   edge (.card-head, .scroll) is offset by exactly that.
+   ======================================================================== */
+body { font-size: 14.5px; line-height: 1.6; }
+.content { padding: 28px 32px 48px; max-width: 1240px; }
+.grid { gap: 18px; }
+
+.card { padding: 22px 24px; border-radius: var(--radius); border-color: var(--rule-soft); }
+.card > h2, .card-head h2 { font-size: 15px; font-weight: 650; letter-spacing: -.005em; }
+.card > h2 { margin-bottom: 16px; }
+.card-head {
+  margin: -22px -24px 20px; padding: 16px 24px;
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+.scroll { margin: 0 -24px -22px; padding: 0 24px; }
+.card .card { border-color: var(--rule); box-shadow: none; }
+
+.stat { padding: 20px 22px; border-radius: var(--radius); border-color: var(--rule-soft); box-shadow: var(--shadow); }
+.stat .v { font-size: 30px; margin-top: 10px; }
+.stat .k { font-size: 11px; }
+
+th, td { padding: 12px 14px; }
+thead th { font-size: 11px; padding-top: 10px; padding-bottom: 10px; }
+tbody tr:hover td { background: var(--panel-2); }
+.scroll table tbody tr:hover > td:first-child { background: var(--panel-2); }
+
+button, .btn { font-size: 13.5px; padding: 9px 16px; border-radius: var(--radius-sm); font-weight: 500; }
+button.sm { padding: 6px 12px; font-size: 12.5px; }
+button.primary, a.btn.primary-link { box-shadow: 0 1px 2px rgba(79, 70, 229, .25); }
+input, select, textarea { font-size: 14px; padding: 10px 12px; border-radius: var(--radius-sm); }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+label { font-size: 13px; margin-bottom: 6px; }
+.field { margin-bottom: 18px; }
+.field .help { font-size: 12.5px; margin-top: 6px; }
+
+.banner { padding: 14px 18px; border-radius: var(--radius-sm); border-left-width: 4px; margin-bottom: 16px; }
+.test-result { border-radius: var(--radius-sm); padding: 12px 16px; }
+.pill { padding: 2px 9px; font-size: 11px; }
+.tabs { margin-bottom: 22px; }
+.tabs a { padding: 9px 16px; font-size: 14px; }
+
+/* the shell */
+.shell { grid-template-columns: 240px 1fr; }
+.sidebar { padding: 20px 0; box-shadow: 1px 0 0 var(--side-rule); border-right: none; }
+.sidebar .brand { padding: 0 22px 20px; font-size: 18px; }
+.brand-mark {
+  width: 28px; height: 28px; border-radius: 8px; font-size: 14px;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6); color: #fff;
+}
+.sidebar .brand-word b { color: var(--side-ink); }
+.sidebar .brand-word span { color: var(--side-accent); }
+.nav-group { padding: 16px 22px 6px; }
+.sidebar a.nav {
+  margin: 1px 12px; padding: 9px 12px; border-left: none; border-radius: var(--radius-sm);
+  font-size: 14px; color: var(--side-ink);
+}
+.sidebar a.nav.active { background: var(--side-active-bg); color: var(--side-accent); font-weight: 600; }
+.sidebar a.nav:not(.active):hover { background: var(--side-hover); }
+/* Settings: a main item with its submenus nested underneath, always shown.
+   The parent gets a quiet "you're in this section" cue (icon + text pick up
+   the accent colour) rather than the full pill — that stays reserved for
+   whichever submenu is actually open, so the two never compete. */
+.sidebar a.nav.nav-parent.in-section { color: var(--side-accent); font-weight: 600; }
+.sidebar a.nav.nav-parent.in-section .nav-icon { opacity: 1; }
+.sidebar a.nav.nav-child { margin-left: 30px; padding: 7px 12px; font-size: 13px; color: var(--side-muted); }
+.sidebar a.nav.nav-child.active { color: var(--side-accent); }
+.side-foot { padding: 16px 22px 6px; }
+.topbar { padding: 18px 32px; border-bottom-color: var(--rule-soft); }
+.topbar h1 { font-size: 20px; font-weight: 650; letter-spacing: -.015em; }
+.page-sub { font-size: 13px; margin-top: 2px; }
+
+/* sign-in */
+.auth-card { padding: 34px 32px; border-radius: 16px; border-color: var(--rule-soft); box-shadow: var(--shadow); }
+.auth-card h1 { font-size: 22px; margin-top: 22px; }
+.auth-card .brand-mark { width: 28px; height: 28px; }
+
+/* wizard, chips, lists */
+dialog.wizard { border-radius: 16px; }
+.chip { padding: 6px 14px; font-size: 13px; }
+.choice { border-radius: var(--radius); padding: 18px; }
+.plan-card { border-radius: var(--radius); padding: 14px 16px; }
+.steps-list li { padding: 12px 14px; border-radius: var(--radius-sm); }
+
+@media (max-width: 820px) {
+  .shell { grid-template-columns: 1fr; }
+  .content { padding: 18px 16px 40px; }
+  .topbar { padding: 12px 16px; }
+  .topbar h1 { font-size: 17px; }
+  .sidebar a.nav { padding: 11px 12px; }
+  .card { padding: 18px; }
+  .card-head { margin: -18px -18px 16px; padding: 14px 18px; }
+  .scroll { margin: 0 -18px -18px; padding: 0 18px; }
+}
+
+/* --- row actions: every button for a table row on one line ---------------- */
+td.actions-cell { text-align: right; white-space: nowrap; width: 1%; vertical-align: middle; }
+.row-actions { display: inline-flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: nowrap; }
+.row-actions .gate { display: inline-flex; align-items: center; gap: 6px; }
+.row-actions .gate-reason { width: 160px; padding: 6px 10px; font-size: 12.5px; }
+.btn.sm { padding: 6px 12px; font-size: 12.5px; }
+a.btn { display: inline-flex; align-items: center; }
+button.danger-outline { color: var(--bad); border-color: var(--rule); }
+button.danger-outline:hover { border-color: var(--bad); background: var(--bad-soft); }
+.match-row { flex-wrap: nowrap; }
+td { vertical-align: middle; }
+.row-actions.confirming > .save, .row-actions.confirming > a.btn { display: none; }
+.row-actions .gate-reason { width: 124px; }
+.row-actions > *, .row-actions .gate > * { flex: none; white-space: nowrap; }
+/* The console's account list: seven things per row, so it runs a little
+   tighter than other tables to keep every row's buttons on one line without
+   a sideways scroll on a laptop screen. */
+.accounts-table th, .accounts-table td { padding-left: 10px; padding-right: 10px; }
+.accounts-table td.sync-cell .pill { margin: 0 2px; }
+.accounts-table td:first-child { min-width: 160px; }
+/* Anchored to the top of the row, not centered in it (overrides both the
+   page-wide `td` default and the actions cell's own middle-align, above).
+   The first column's status stack varies a lot from one account to the
+   next — slug/timezone/users, plan and renewal, a queued-plan or
+   renewal-warning line, a stopped reason, a connection warning — so rows
+   are far from a uniform height. Centering every other column within that
+   variable height made the mins box, sync text, Automatic select and
+   buttons drift to a different depth on every row; anchoring them all to
+   the same offset from the row's top edge is what actually reads as
+   "lined up" scanning down the table. */
+.accounts-table td, .accounts-table td.actions-cell { vertical-align: top; }
+.inline-field select { width: 170px; }
+.filter-row .row-actions { padding-bottom: 1px; }
+.filter-row input, .filter-row select { padding: 8px 11px; }
+.inline-field input, .inline-field select { font-weight: 400; color: var(--ink); height: 40px; }
+.inline-field > span { line-height: 1.2; }
+
+.card.flash { animation: flash 1.6s ease-out; }
+@keyframes flash { 0% { box-shadow: 0 0 0 3px var(--accent); } 100% { box-shadow: var(--shadow); } }
+a.btn.warn-link { border-color: var(--warn); color: var(--warn); font-weight: 600; }
+.page-bar { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 16px; }
+
+/* --- a small tag with its explanation in a hover / focus label ------------- */
+.tip-tag {
+  position: relative; display: inline-flex; align-items: center; gap: 4px;
+  margin-left: 6px; padding: 2px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600;
+  white-space: nowrap; cursor: help; vertical-align: middle;
+  background: var(--panel-2); color: var(--muted); border: 1px solid var(--rule);
+}
+.tip-tag.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.tip-tag::before { content: "⏱"; font-size: 11px; }
+/* The label itself: one floating box for the whole app (ui.js wireTips),
+   fixed-positioned so a table's scroll container can never clip it. */
+#tip {
+  position: fixed; z-index: 60; max-width: 280px; padding: 8px 11px; border-radius: 8px;
+  font-size: 12.5px; line-height: 1.45; background: var(--ink); color: var(--panel);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .2); pointer-events: none;
+  opacity: 0; transition: opacity .1s;
+}
+#tip.on { opacity: 1; }
+.accounts-table td.num { white-space: nowrap; }
+
+/* A table runs to its card's bottom edge only when it is the last thing in the
+   card. With a note, a "Show more" or anything else after it, the negative
+   bottom margin pulled that content up under the table's last row. */
+.scroll:not(:last-child) { margin-bottom: 16px; }
+
+/* --- the console overview (pages/console.js) ------------------------------- */
+.console-grid { grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); }
+@media (max-width: 1000px) { .console-grid { grid-template-columns: 1fr; } }
+
+.chart { width: 100%; height: auto; display: block; overflow: visible; }
+.chart .gridline { stroke: var(--rule-soft); stroke-width: 1; }
+.chart .axis { fill: var(--faint); font: 11px var(--sans); }
+.chart .hit { fill: transparent; cursor: default; }
+.chart .bar { fill: var(--accent); transition: opacity .12s; }
+.chart .bar.today { fill: var(--accent); opacity: .55; }
+.chart:hover .bar { opacity: .45; }
+.chart .bar-col:hover .bar { opacity: 1; }
+.table-view { margin-top: 10px; font-size: 12.5px; }
+.table-view summary { cursor: pointer; color: var(--muted); width: fit-content; }
+.table-view table { margin-top: 8px; }
+.table-view td, .table-view th { padding: 6px 10px; }
+
+.seg-bar { display: flex; gap: 2px; height: 14px; border-radius: 7px; overflow: hidden; margin: 4px 0 14px; background: var(--panel-2); }
+.seg-bar .seg { min-width: 6px; cursor: default; }
+.seg.ok, .swatch.ok { background: var(--ok); }
+.seg.accent, .swatch.accent { background: var(--accent); }
+.seg.warn, .swatch.warn { background: var(--warn); }
+.seg.bad, .swatch.bad { background: var(--bad); }
+.seg.mute, .swatch.mute { background: var(--faint); }
+.legend { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 13px; }
+.legend li { display: flex; align-items: center; gap: 8px; color: var(--ink); }
+.legend li b { margin-left: auto; font-variant-numeric: tabular-nums; font-weight: 600; }
+.swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.sub-h { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: .03em; text-transform: uppercase; margin: 18px 0 8px; }
+
+.item-list { list-style: none; margin: 0; padding: 0; }
+.item-list li {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 11px 0; border-bottom: 1px solid var(--rule-soft);
+}
+.item-list li:last-child { border-bottom: none; padding-bottom: 0; }
+.item-list li:first-child { padding-top: 0; }
+.item-main { min-width: 0; display: grid; gap: 4px; }
+.pills { display: flex; flex-wrap: wrap; gap: 4px; }
+.clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+/* Past due (amber) and suspended (red) sit side by side in the status bar and
+   are close for red-green colour blindness, so suspended also carries a
+   diagonal texture — its state is never told by colour alone. */
+.seg.bad, .swatch.bad {
+  background-image: repeating-linear-gradient(45deg, transparent 0 3px, rgba(255, 255, 255, .45) 3px 5px);
+}
+.console-grid { align-items: start; }
+.scroll table.fit { min-width: 0; }

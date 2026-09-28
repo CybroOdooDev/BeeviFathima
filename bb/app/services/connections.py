@@ -92,3 +92,35 @@ def build_source_provider(tenant: Tenant, source: DeviceSource) -> AttendancePro
             options=options,
         ),
     )
+
+
+_DEFAULT_PORTS = {"http": 80, "https": 443, "zk": 4370}
+
+
+def address_key(base_url: str) -> str:
+    """What makes two biometric connections the *same* endpoint.
+
+    Host and port, case-insensitive, with each scheme's default port filled in
+    — so ``zk://10.0.11.43`` and ``zk://10.0.11.43:4370``, or
+    ``https://BioTime.acme.com`` and ``https://biotime.acme.com:443/``, are one
+    address. The scheme itself is left out on purpose: one port does not serve
+    both http and https, so ``http://host:8081`` and ``https://host:8081`` are
+    the same server typed two ways. For a BioTime-style URL the path is kept
+    (a server mounted under a prefix is a different app from one at the root).
+
+    No DNS lookup: ``localhost`` and ``127.0.0.1`` count as different. This is
+    about stopping the same address being added twice, not about proving two
+    names are one machine.
+    """
+    value = (base_url or "").strip()
+    if "://" not in value:
+        value = f"zk://{value}"
+    parsed = urlparse(value)
+    scheme = (parsed.scheme or "").lower()
+    host = (parsed.hostname or "").lower()
+    try:
+        port = parsed.port or _DEFAULT_PORTS.get(scheme)
+    except ValueError:  # a malformed port: compare the raw text instead
+        return value.lower().rstrip("/")
+    path = "" if scheme == "zk" else parsed.path.rstrip("/")
+    return f"{host}:{port}{path}"

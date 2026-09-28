@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!--
+        Without this, ir.model.access.csv's read/write grants are the only
+        restriction on biobridge.device: any internal user with access can
+        see every terminal in the database, in every company, regardless of
+        which company is active in the UI's own switcher. company_id being
+        set (and required) on the model does nothing on its own — Odoo only
+        filters rows by company when a rule tells it to.
+
+        No `groups_id` here on purpose: an ir.rule with none set is global —
+        applied to every user, not just members of some group — which is the
+        standard shape for "company-owned record, filtered by the session's
+        active companies" (the same pattern res.partner, crm.lead and most of
+        Odoo's own multi-company models use). `company_ids` is not something
+        this module defines — it's a variable ir.rule always makes available
+        to domain_force, evaluating to whichever companies the current user
+        session has enabled (the ones ticked in the company switcher, or
+        BioBridge's own OdooConnection.company_id via the allowed_company_ids
+        XML-RPC context it sends — see app/integrations/odoo.py).
+    -->
+    <record id="biobridge_device_company_rule" model="ir.rule">
+        <field name="name">Biometric Device: only the active company's own devices</field>
+        <field name="model_id" ref="model_biobridge_device"/>
+        <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+    </record>
+</odoo>

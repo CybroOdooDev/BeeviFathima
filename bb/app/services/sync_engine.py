@@ -98,9 +98,22 @@ class AllSourcesUnreachable(SyncAborted):
 class SyncEngine:
     """Runs one full cycle for one tenant."""
 
-    def __init__(self, db: Session, tenant: Tenant, triggered_by: str = "schedule") -> None:
+    def __init__(
+        self,
+        db: Session,
+        tenant: Tenant,
+        triggered_by: str = "schedule",
+        only_source_id: str | None = None,
+    ) -> None:
         self.db = db
         self.tenant = tenant
+        #: A "Sync now" pressed on one connection — a standalone device, say —
+        #: fetches from that source alone. Everything after the fetch (badge
+        #: matching, the push to Odoo) is the same as a full cycle. A scoped run
+        #: that fails does not count toward the account's failure streak: one
+        #: switched-off terminal must not slow-lane every other site.
+        self.only_source_id = only_source_id
+        self._failures_before = tenant.consecutive_failures
         # Held locally as well as on the row: the run commits mid-cycle, which
         # expires the ORM object, and a reloaded value can come back naive.
         self._started_at = datetime.now(timezone.utc)
@@ -161,7 +174,12 @@ class SyncEngine:
             odoo_conn = self._active_odoo_connection()
             sources = self._active_sources()
             if not sources:
-                raise SyncAborted("No attendance platform is connected.")
+                raise SyncAborted(
+                    "That connection is switched off or no longer exists."
+                    if self.only_source_id else "No attendance platform is connected."
+                )
+            if self.only_source_id:
+                self._log(f"Syncing '{sources[0].name}' only")
 
             # Ingest first, and independently of Odoo. Device platforms prune old
             # transactions, so a punch not captured now may be gone by the next
@@ -266,6 +284,8 @@ class SyncEngine:
             self._log(f"Unexpected error: {exc}", "exception")
             self._mark_degraded_if_needed()
         finally:
+            if self.only_source_id and self.run.status == SyncStatus.failed.value:
+                self.tenant.consecutive_failures = self._failures_before
             finished = datetime.now(timezone.utc)
             self.run.finished_at = finished
             self.run.duration_ms = int((finished - self._started_at).total_seconds() * 1000)
@@ -1106,16 +1126,17 @@ class SyncEngine:
         ).first()
 
     def _active_sources(self) -> list[DeviceSource]:
-        return list(
-            self.db.scalars(
-                select(DeviceSource).where(
-                    DeviceSource.tenant_id == self.tenant.id,
-                    DeviceSource.is_active.is_(True),
-                )
-            ).all()
+        stmt = select(DeviceSource).where(
+            DeviceSource.tenant_id == self.tenant.id,
+            DeviceSource.is_active.is_(True),
         )
+        if self.only_source_id:
+            stmt = stmt.where(DeviceSource.id == self.only_source_id)
+        return list(self.db.scalars(stmt).all())
 
     def _mark_degraded_if_needed(self) -> None:
+        if self.only_source_id:
+            return  # see __init__: a one-connection sync never degrades the rest
         if self.tenant.consecutive_failures < settings.max_consecutive_failures:
             return
         for source in self._active_sources():

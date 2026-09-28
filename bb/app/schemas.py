@@ -646,6 +646,9 @@ class MappingOut(ORMModel):
 
 class MappingUpdate(BaseModel):
     odoo_employee_id: int | None = None
+    #: Display only — the name the picker showed, so the Employees list reads
+    #: a name rather than a bare id until the next sync refreshes it.
+    odoo_employee_name: str | None = Field(default=None, max_length=200)
     status: Literal["mapped", "unmapped", "ignored", "ambiguous"] | None = None
 
 

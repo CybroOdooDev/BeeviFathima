@@ -6,47 +6,84 @@
  */
 
 import { api, auth, loadSession, switchSession } from './api.js';
-import { $, esc, toast } from './ui.js';
-import { renderLogin, renderSignup, renderStaffLogin } from './pages/auth.js';
+import { $, esc, fmtAgo, toast, wireSearchSelects, wireTips } from './ui.js';
+import { renderLogin, renderPlans, renderSignup } from './pages/auth.js';
 import { render as renderOverview } from './pages/overview.js';
 import { renderActivity, renderAttendance, renderEmployees } from './pages/data.js';
+import { renderTerminals } from './pages/terminals.js';
 import { render as renderSettings } from './pages/settings.js';
 import { render as renderPlatform } from './pages/platform.js';
+import { renderConsoleOverview } from './pages/console.js';
 
-const PUBLIC = new Set(['/login', '/signup', '/staff/login']);
+const PUBLIC = new Set(['/login', '/signup', '/staff/login', '/plans']);
 
 /** Where an unauthenticated visitor lands, by path.
  *
- * The staff console has its own entry so a console credential is never typed
- * into the customer form. It is unadvertised — nothing links to it from the
- * product — which is not a security measure (the server checks the scope of
- * every token) but does keep the two audiences from drifting onto each
- * other's page. */
+ * There is one sign-in for everyone. Platform staff type their password in
+ * the same form as customers; it opens a console session as well (see signIn
+ * in pages/auth.js), and the sidebar switches between the two. */
 const DOORS = {
-  '/staff/login': renderStaffLogin,
   '/signup': renderSignup,
+  // "Log in as admin" — the same page, aimed at the console. Linked from
+  // under the sign-in card; see renderLogin.
+  '/staff/login': renderLogin,
+  // The full pricing comparison — reached from "Explore plans" on signup, and
+  // from "Choose a plan"/"Change plan" in Settings for a signed-out visitor
+  // who followed a bookmarked or shared link. Public: no session is needed to
+  // compare plans, only to act on one.
+  '/plans': renderPlans,
 };
+
+/* Small line icons for the sidebar, inline so nothing is fetched. */
+const ICON = {
+  overview: '<path d="M4 13h6V4H4zM14 20h6v-9h-6zM4 20h6v-4H4zM14 4v4h6V4z"/>',
+  attendance: '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4M8.5 14.5l2 2 4-4"/>',
+  activity: '<path d="M3 12h4l3-8 4 16 3-8h4"/>',
+  employees: '<circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.8-3.2 3-5 5.5-5s4.7 1.8 5.5 5"/><circle cx="17" cy="9" r="2.4"/><path d="M16 14c2.4 0 4 1.5 4.6 4"/>',
+  connections: '<path d="M9 7H6a4 4 0 0 0 0 8h3M15 7h3a4 4 0 0 1 0 8h-3M8 11h8"/>',
+  terminals: '<rect x="6" y="2.5" width="12" height="19" rx="2"/><rect x="8.5" y="5.5" width="7" height="5" rx="1"/><circle cx="12" cy="15.5" r="2.2"/>',
+  platform: '<rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/><path d="M7 7h.01M7 17h.01"/>',
+  // A cog: toothed wheel with a hub.
+  settings: '<path d="M10.3 3.2h3.4l.5 2.4 1.9.8 2-1.4 2.4 2.4-1.4 2 .8 1.9 2.4.5v3.4l-2.4.5-.8 1.9 1.4 2-2.4 2.4-2-1.4-1.9.8-.5 2.4h-3.4l-.5-2.4-1.9-.8-2 1.4-2.4-2.4 1.4-2-.8-1.9-2.4-.5v-3.4l2.4-.5.8-1.9-1.4-2 2.4-2.4 2 1.4 1.9-.8z"/><circle cx="12" cy="12" r="3.2"/>',
+};
+const icon = (name) => `<svg class="nav-icon" viewBox="0 0 24 24" width="17" height="17" fill="none"
+  stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name]}</svg>`;
 
 const NAV = [
   {
     label: 'Monitor',
-    // Everything in these two groups is tenant-scoped. A platform user with no
-    // customer account of their own has nothing to show there — every one of
-    // these screens would answer 403 — so the whole group is hidden and the
-    // console is all they see.
+    // Everything here is tenant-scoped. A platform user with no customer
+    // account of their own has nothing to show — every one of these screens
+    // would answer 403 — so the group is hidden and the console is all they see.
     tenantOnly: true,
     items: [
-      { path: '/', title: 'Overview' },
-      { path: '/attendance', title: 'Attendance' },
-      { path: '/activity', title: 'Activity' },
+      { path: '/', title: 'Overview', icon: 'overview' },
+      { path: '/attendance', title: 'Attendance', icon: 'attendance' },
+      { path: '/employees', title: 'Employees', badge: 'unmapped', icon: 'employees' },
+      { path: '/terminals', title: 'Terminals', icon: 'terminals' },
+      { path: '/activity', title: 'Activity', icon: 'activity' },
     ],
   },
   {
-    label: 'Configure',
+    // A single main item, Settings, with every submenu nested under it and
+    // always shown — the account's own rules, then the two connections
+    // (Odoo: where attendance is written; Biometric: what it's written
+    // from) — so the whole configuration menu is visible in the sidebar
+    // itself, with nothing hidden behind a second click or an in-page tab
+    // bar.
     tenantOnly: true,
     items: [
-      { path: '/employees', title: 'Employees', badge: 'unmapped' },
-      { path: '/settings', title: 'Settings' },
+      {
+        path: '/settings/general', title: 'Settings', icon: 'settings', prefix: '/settings',
+        children: [
+          { path: '/settings/general', title: 'General' },
+          { path: '/settings/pairing', title: 'Pairing' },
+          { path: '/settings/hours', title: 'Working hours' },
+          { path: '/settings/plan', title: 'Plan' },
+          { path: '/settings/odoo', title: 'Odoo connection' },
+          { path: '/settings/biometric', title: 'Biometric connections' },
+        ],
+      },
     ],
   },
   {
@@ -55,7 +92,10 @@ const NAV = [
     // request is checked server-side, so a hand-typed #/platform gets a
     // refusal rather than data.
     staffOnly: true,
-    items: [{ path: '/platform', title: 'All accounts' }],
+    items: [
+      { path: '/console', title: 'Overview', icon: 'overview' },
+      { path: '/platform', title: 'All accounts', icon: 'platform' },
+    ],
   },
 ];
 
@@ -72,21 +112,27 @@ const REDIRECTS = {
   '/settings': '/settings/general',
 };
 
+/* Each screen's title, and one line under it saying what the screen is for. */
 const ROUTES = {
-  '/': { title: 'Overview', render: renderOverview },
-  '/attendance': { title: 'Attendance', render: renderAttendance },
-  '/activity': { title: 'Activity', render: renderActivity },
-  '/employees': { title: 'Employees', render: renderEmployees },
-  '/settings/general': { title: 'Settings', render: renderSettings },
-  '/settings/pairing': { title: 'Settings', render: renderSettings },
-  '/settings/hours': { title: 'Settings', render: renderSettings },
-  '/settings/plan': { title: 'Settings', render: renderSettings },
-  '/settings/odoo': { title: 'Settings', render: renderSettings },
-  '/settings/biometric': { title: 'Settings', render: renderSettings },
-  '/platform': { title: 'All accounts', render: renderPlatform },
+  '/': { title: 'Overview', sub: 'Is attendance flowing, and what needs you', render: renderOverview },
+  '/attendance': { title: 'Attendance', sub: 'Shifts written to Odoo, in your timezone', render: renderAttendance },
+  '/activity': { title: 'Activity', sub: 'Every punch pulled, and every sync run', render: renderActivity },
+  '/employees': { title: 'Employees', sub: 'Badges matched to Odoo employees', render: renderEmployees },
+  '/terminals': { title: 'Terminals', sub: 'Every device your biometric connections bring in', render: renderTerminals },
+  '/settings/general': { title: 'General', sub: 'Company, timezone and sync schedule', render: renderSettings },
+  '/settings/pairing': { title: 'Pairing', sub: 'How raw punches become shifts', render: renderSettings },
+  '/settings/hours': { title: 'Working hours', sub: 'Working hours for late arrivals', render: renderSettings },
+  '/settings/plan': { title: 'Plan', sub: 'Your subscription plan', render: renderSettings },
+  '/settings/plan/choose': { title: 'Choose a plan', sub: 'Compare plans and switch', render: renderSettings },
+  '/settings/odoo': { title: 'Odoo connection', sub: 'Odoo connection, and badges waiting for a match', render: renderSettings },
+  '/settings/biometric': { title: 'Biometric connections', sub: 'Biometric connections — where punches come from', render: renderSettings },
+  '/console': { title: 'Platform overview', sub: 'Every account at a glance — health, growth and what needs a person', render: renderConsoleOverview },
+  '/platform': { title: 'All accounts', sub: 'Every customer account on this platform', render: renderPlatform },
 };
 
 const badges = { unmapped: 0 };
+/** What the top bar's sync button needs, from the last /dashboard read. */
+const syncState = { lastRun: null, needsSetup: true };
 
 function parseHash() {
   const raw = window.location.hash.replace(/^#/, '') || '/';
@@ -121,8 +167,12 @@ function mountShell() {
       <div class="main">
         <div class="topbar">
           <button id="menuToggle" class="sm">Menu</button>
-          <h1 id="pageTitle"></h1>
+          <div class="title-block">
+            <h1 id="pageTitle"></h1>
+            <div class="page-sub" id="pageSub"></div>
+          </div>
           <div class="spacer"></div>
+          <div class="top-actions" id="topActions"></div>
           <span id="tenantPill"></span>
         </div>
         <div class="content" id="content"></div>
@@ -143,8 +193,8 @@ function mountShell() {
 
   // One click between a dual-role person's workspace and the console. If the
   // session for the other side is still open it is just made active; if not
-  // (never opened, or the short console session expired) the matching door
-  // asks for the password only.
+  // (the console session lives a day at most) the sign-in asks for the
+  // password again, email filled in, and reopens both.
   $('#consoleSwitch', root).addEventListener('click', async (event) => {
     const button = event.target.closest('[data-switch]');
     if (!button) return;
@@ -155,9 +205,10 @@ function mountShell() {
       switched = await switchSession(target);
     } catch { /* fall through to the password prompt */ }
     button.disabled = false;
+    if (switched) rememberHat(target);
     const destination = switched
-      ? (target === 'staff' ? '#/platform' : '#/')
-      : (target === 'staff' ? '#/staff/login' : '#/login');
+      ? (target === 'staff' ? '#/console' : '#/')
+      : `#/login?reauth=${target}`;
     if (window.location.hash === destination) resolve();
     else window.location.hash = destination;
   });
@@ -166,6 +217,25 @@ function mountShell() {
   $('#themeSwitch', root).addEventListener('click', (event) => {
     const button = event.target.closest('[data-theme-choice]');
     if (button) setTheme(button.dataset.themeChoice);
+  });
+
+  // Sync now, from any screen — it used to live only on the Overview card.
+  $('#topActions', root).addEventListener('click', async (event) => {
+    const button = event.target.closest('#topSync');
+    if (!button) return;
+    button.disabled = true;
+    button.classList.add('spinning');
+    try {
+      const result = await api.post('/sync/run-inline');
+      toast(`Sync ${result.status} — ${result.punches_new} new punch${result.punches_new === 1 ? '' : 'es'}, `
+        + `${result.attendances_created} created, ${result.attendances_closed} closed`,
+      result.status === 'failed' ? 'bad' : 'ok');
+    } catch (error) {
+      if (error.status !== 401) toast(error.message || 'Sync failed', 'bad');
+    }
+    button.disabled = false;
+    button.classList.remove('spinning');
+    resolve();   // every screen shows something the sync may have changed
   });
 
   $('#menuToggle', root).addEventListener('click', () =>
@@ -210,6 +280,13 @@ function paintThemeSwitch() {
       ${t.label}</button>`).join('');
 }
 
+/** Which hat to land in at the next sign-in on this browser. */
+function rememberHat(scope) {
+  try {
+    localStorage.setItem('bb.hat', scope);
+  } catch { /* a convenience only */ }
+}
+
 function renderChrome(path) {
   $('#sidenav').innerHTML = NAV.filter(
     (group) => (!group.staffOnly || auth.isPlatformAdmin)
@@ -217,14 +294,44 @@ function renderChrome(path) {
   ).map((group) => `
     <div class="nav-group"><div class="nav-group-label">${esc(group.label)}</div></div>
     ${group.items.map((item) => {
-      const active = item.path === path
-        || (item.path !== '/' && path.startsWith(item.path + '/'));
+      if (item.children) {
+        // A parent with its submenus nested under it, always expanded — the
+        // whole configuration menu is visible in the sidebar itself, nothing
+        // hidden behind a second click. The parent itself is a real link (to
+        // its first submenu) and only picks up the subtle "current section"
+        // treatment; the pill highlight belongs to whichever child is open.
+        const inSection = item.prefix && path.startsWith(item.prefix);
+        const childrenHtml = item.children.map((child) => {
+          const childActive = child.path === path;
+          return `<a class="nav nav-child ${childActive ? 'active' : ''}" href="#${esc(child.path)}"${childActive ? ' aria-current="page"' : ''}>
+            <span class="nav-label">${esc(child.title)}</span>
+          </a>`;
+        }).join('');
+        return `<a class="nav nav-parent ${inSection ? 'in-section' : ''}" href="#${esc(item.path)}">
+          <span class="nav-label">${item.icon ? icon(item.icon) : ''}${esc(item.title)}</span>
+        </a>${childrenHtml}`;
+      }
+      const active = item.activeFor
+        ? item.activeFor.includes(path)
+        : item.path === path || (item.path !== '/' && path.startsWith(item.path + '/'));
       const count = item.badge ? badges[item.badge] : 0;
-      return `<a class="nav ${active ? 'active' : ''}" href="#${esc(item.path)}">
-        <span>${esc(item.title)}</span>
+      return `<a class="nav ${active ? 'active' : ''}" href="#${esc(item.path)}"${active ? ' aria-current="page"' : ''}>
+        <span class="nav-label">${item.icon ? icon(item.icon) : ''}${esc(item.title)}</span>
         ${count ? `<span class="nav-badge">${esc(count)}</span>` : ''}
       </a>`;
     }).join('')}`).join('');
+
+  // The top bar's sync button: a customer session, a role that can write,
+  // and both sides connected — otherwise it would only fail.
+  const run = syncState.lastRun;
+  $('#topActions').innerHTML = auth.tenant && !auth.isStaffSession ? `
+    <span class="last-sync" title="${esc(run ? `Last sync ${run.status}` : 'No sync has run yet')}">
+      ${run ? `<span class="dot ${run.status === 'success' ? 'ok' : run.status === 'failed' ? 'bad' : 'warn'}"></span>
+        Synced ${esc(fmtAgo(run.started_at))}` : 'Never synced'}
+    </span>
+    ${auth.canWrite ? `<button class="sm" id="topSync" aria-label="Sync now" ${syncState.needsSetup ? 'disabled title="Connect Odoo and a biometric source first"' : ''}>
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5"/></svg>
+      <span class="sync-label">Sync now</span></button>` : ''}` : '';
 
   const sideUser = $('#sideUser');
   sideUser.textContent = auth.user?.email || '';
@@ -264,6 +371,9 @@ async function refreshBadges() {
   try {
     const data = await api.get('/dashboard');
     badges.unmapped = data.unmapped_employees || 0;
+    syncState.lastRun = data.last_run || null;
+    const health = data.connection_health || {};
+    syncState.needsSetup = health.odoo === 'missing' || health.source === 'missing';
   } catch { /* leave the previous value */ }
 }
 
@@ -282,6 +392,7 @@ async function resolve() {
   try {
     const route = parseHash();
 
+
     // Rehydrate from a refresh token surviving a page reload.
     if (!auth.isAuthenticated && auth.restore()) {
       try {
@@ -299,26 +410,19 @@ async function resolve() {
     }
 
     if (!auth.isAuthenticated) {
-      return (DOORS[route.path] || renderLogin)();
+      return (DOORS[route.path] || renderLogin)(route);
     }
 
     if (PUBLIC.has(route.path)) {
-      // One exception to the bounce: someone who holds the staff flag but is
-      // signed in to their own workspace has no other route to the console,
-      // and signing in at that door swaps the session rather than adding a
-      // second one. Without this they would have to sign out first to find a
-      // page nothing links to.
-      const switchingHats = (route.path === '/staff/login'
-        && auth.user?.is_platform_admin === true
-        && !auth.isStaffSession)
-        // …and the way back: a console session whose workspace session has
-        // expired reopens it at the customer door, password only.
-        || (route.path === '/login' && auth.isStaffSession && Boolean(auth.user?.tenant_id));
-      if (!switchingHats) {
-        window.location.hash = '#/';
-        return;
+      // Signed in already. The one reason to show the sign-in anyway: a
+      // switch to the other session found it expired, so it asks for the
+      // password again — see the #consoleSwitch handler.
+      if (route.path === '/login' && route.query.reauth) {
+        if (!auth.user) await loadSession();
+        return renderLogin(route);
       }
-      return route.path === '/login' ? renderLogin() : renderStaffLogin();
+      window.location.hash = '#/';
+      return;
     }
 
     if (!auth.user) {
@@ -326,15 +430,16 @@ async function resolve() {
         await loadSession();
       } catch {
         auth.clear();
-        return (DOORS[route.path] || renderLogin)();
+        return (DOORS[route.path] || renderLogin)(route);
       }
     }
 
     // A platform user with no customer account has no Overview to land on —
     // every tenant-scoped screen would 403. Send them to the console instead of
     // showing an error page on the way in.
-    if (!auth.tenant && auth.isPlatformAdmin && route.path !== '/platform') {
-      window.location.hash = '#/platform';
+    // The console's landing page is its overview.
+    if (!auth.tenant && auth.isPlatformAdmin && !['/platform', '/console'].includes(route.path)) {
+      window.location.hash = '#/console';
       return;
     }
 
@@ -347,6 +452,7 @@ async function resolve() {
     mountShell();
     renderChrome(route.path);
     $('#pageTitle').textContent = entry ? entry.title : 'Not found';
+    $('#pageSub').textContent = entry?.sub || '';
 
     const content = $('#content');
     if (!entry) {
@@ -378,6 +484,7 @@ window.addEventListener('bb:signed-in', async () => {
   try {
     await loadSession();
   } catch { /* resolve() will retry */ }
+  if (auth.user?.is_platform_admin) rememberHat(auth.scope);
   window.location.hash = '#/';
   resolve();
 });
@@ -395,7 +502,7 @@ window.addEventListener('bb:signed-out', async (event) => {
       toast(other === 'tenant'
         ? 'Your console session expired — you are back in your workspace.'
         : 'Your workspace session expired — you are in the staff console.', 'ok');
-      window.location.hash = other === 'staff' ? '#/platform' : '#/';
+      window.location.hash = other === 'staff' ? '#/console' : '#/';
       resolve();
       return;
     }
@@ -404,14 +511,13 @@ window.addEventListener('bb:signed-out', async (event) => {
   $('#app-root').classList.add('hidden');
   $('#app-root').innerHTML = '';
   delete $('#app-root').dataset.built;
-  // Back to the door this session came in through. Sending a support engineer
-  // to the customer login would have them type a console credential into the
-  // customer form, which is the one habit the split is meant to break.
-  window.location.hash = auth.lastDoor === 'staff' ? '#/staff/login' : '#/login';
+  window.location.hash = '#/login';
   resolve();
 });
 
 window.addEventListener('bb:toast', (event) => toast(event.detail, 'ok'));
 window.addEventListener('hashchange', resolve);
+wireTips();
+wireSearchSelects();
 
 resolve();

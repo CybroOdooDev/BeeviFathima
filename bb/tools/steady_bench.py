@@ -80,7 +80,9 @@ class QuietOdoo:
         self.calls += 1
         return None
 
-    def create_attendance(self, employee_id, check_in, check_out=None, biotime_ref=None):
+    def create_attendance(
+        self, employee_id, check_in, check_out=None, biotime_ref=None, device_id=None
+    ):
         self.calls += 1
         self._next += 1
         self.attendances[self._next] = {"id": self._next, "employee_id": employee_id,

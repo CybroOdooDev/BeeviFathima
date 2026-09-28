@@ -87,7 +87,9 @@ class CountingOdoo:
                 return rec["id"]
         return None
 
-    def create_attendance(self, employee_id, check_in, check_out=None, biotime_ref=None):
+    def create_attendance(
+        self, employee_id, check_in, check_out=None, biotime_ref=None, device_id=None
+    ):
         self._hit("create_attendance")
         self._next += 1
         self.attendances[self._next] = {

@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.deps import Principal, audit, get_principal, require_writer
+from app.api.deps import Principal, audit, get_principal, require_syncable, require_writer
 from app.core.crypto import encrypt
 from app.db.session import get_db
 from app.integrations.base import (
@@ -27,6 +27,7 @@ from app.models import (
     EmployeeMapping,
     MappingStatus,
     OdooConnection,
+    SyncRun,
 )
 from app.schemas import (
     DeviceOut,
@@ -41,14 +42,17 @@ from app.schemas import (
     SourceOut,
     SourceTestIn,
     SourceUpdate,
+    SyncRunOut,
     TestResult,
 )
 from app.services.connections import (
     UnsafeTargetError,
+    address_key,
     build_odoo_client,
     build_source_provider,
 )
 from app.services.provisioning import provision_unmapped
+from app.services.sync_engine import SyncEngine
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["connections"])
@@ -281,6 +285,64 @@ def bootstrap_device_tracking(
     return result
 
 
+@router.get("/odoo-employees")
+def search_odoo_employees(
+    q: str = "",
+    limit: int = 20,
+    principal: Principal = Depends(get_principal),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    """Find Odoo employees by name, for matching a badge on the Employees page.
+
+    Matching used to mean typing a raw Odoo record id, which nobody has to
+    hand. This searches the connected Odoo (scoped to the connection's
+    company, like every other call) and says which employees already carry a
+    badge here, so the picker can steer away from a match the PATCH would
+    refuse anyway.
+    """
+    conn = db.scalar(
+        select(OdooConnection).where(
+            OdooConnection.tenant_id == principal.tenant.id,
+            OdooConnection.is_active.is_(True),
+        )
+    )
+    if conn is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Connect Odoo first.")
+    try:
+        client = build_odoo_client(principal.tenant, conn)
+        available = client.fields_of("hr.employee")
+        domain = [("name", "ilike", q.strip())] if q.strip() else []
+        domain += client._company_domain(available)
+        fields = ["id", "name"] + (["department_id"] if "department_id" in available else [])
+        rows = client.execute(
+            "hr.employee", "search_read", [domain],
+            {"fields": fields, "limit": max(1, min(limit, 50)), "order": "name"},
+        ) or []
+    except (OdooError, UnsafeTargetError) as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Odoo: {exc}") from exc
+
+    taken = {
+        m.odoo_employee_id: m.emp_code
+        for m in db.scalars(
+            select(EmployeeMapping).where(
+                EmployeeMapping.tenant_id == principal.tenant.id,
+                EmployeeMapping.status == MappingStatus.mapped.value,
+                EmployeeMapping.odoo_employee_id.is_not(None),
+            )
+        ).all()
+    }
+    return [
+        {
+            "id": r["id"],
+            "name": r.get("name") or f"Employee {r['id']}",
+            "department": (r.get("department_id") or [None, None])[1]
+            if isinstance(r.get("department_id"), (list, tuple)) else None,
+            "matched_badge": taken.get(r["id"]),
+        }
+        for r in rows
+    ]
+
+
 @router.delete(
     "/odoo-connections/{conn_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None
 )
@@ -331,6 +393,31 @@ def _require_provider_fields(provider_cls, payload: SourceIn) -> None:
             status.HTTP_400_BAD_REQUEST,
             f"{', '.join(missing)} required for {provider_cls.label}.",
         )
+
+
+def _refuse_duplicate_address(
+    db: Session, principal: Principal, base_url: str, except_id: str | None = None
+) -> None:
+    """One connection per address, per account.
+
+    Adding the same BioTime server or the same device IP twice would pull
+    every punch twice under two sources — the ledger dedupes per source, not
+    across them — so it is refused, with the name of the connection that
+    already has it. Addresses are compared by ``address_key`` (host and port,
+    default port filled in), so a retyped port or a capital letter does not
+    slip past. Per account only: two customers can each have a device at
+    192.168.1.201 on their own networks.
+    """
+    wanted = address_key(base_url)
+    for other in db.scalars(
+        select(DeviceSource).where(DeviceSource.tenant_id == principal.tenant.id)
+    ).all():
+        if other.id != except_id and address_key(other.base_url) == wanted:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"This address is already connected as '{other.name}'. "
+                "Edit that connection instead of adding it again.",
+            )
 
 
 def _get_source(db: Session, principal: Principal, source_id: str) -> DeviceSource:
@@ -425,6 +512,7 @@ def create_source(
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, f"A connection named '{payload.name}' already exists."
         )
+    _refuse_duplicate_address(db, principal, payload.base_url)
 
     source = DeviceSource(
         tenant_id=principal.tenant.id,
@@ -487,6 +575,8 @@ def update_source(
                 status.HTTP_400_BAD_REQUEST,
                 f"A connection named '{data['name']}' already exists.",
             )
+    if data.get("base_url"):
+        _refuse_duplicate_address(db, principal, data["base_url"], except_id=source.id)
     for key, value in data.items():
         setattr(source, key, value)
     if password:
@@ -511,6 +601,9 @@ def test_source_unsaved(
     way: the throwaway ``DeviceSource`` below is never added to the session.
     """
     stored = _get_source(db, principal, payload.source_id) if payload.source_id else None
+    # Before any network call: the wizard's test step is where this should
+    # surface, not a Connect that fails after a green tick.
+    _refuse_duplicate_address(db, principal, payload.base_url, except_id=payload.source_id)
     provider = payload.provider or (stored.provider if stored else None) or "biotime"
     try:
         provider_cls = get_provider_class(provider)
@@ -552,6 +645,25 @@ def test_source_unsaved(
         config=payload.config or (dict(stored.config or {}) if stored else {}),
     )
     return _probe_source(principal, draft)
+
+
+@router.post("/sources/{source_id}/sync", response_model=SyncRunOut)
+def sync_one_source(
+    source_id: str,
+    request: Request,
+    principal: Principal = Depends(require_syncable),
+    db: Session = Depends(get_db),
+) -> SyncRun:
+    """Sync now, for one connection — each standalone device's own button.
+
+    Pulls from this source only, then matches and pushes to Odoo as a full
+    cycle would. Recorded as an ordinary run (triggered "device"), so it shows
+    in Activity with the rest.
+    """
+    source = _get_source(db, principal, source_id)
+    audit(db, principal, "sync.source", source.id, source.name, request)
+    db.commit()
+    return SyncEngine(db, principal.tenant, "device", only_source_id=source.id).run_cycle()
 
 
 @router.post("/sources/{source_id}/test", response_model=TestResult)

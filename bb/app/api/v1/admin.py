@@ -26,6 +26,8 @@ from sqlalchemy.orm import Session
 from app.api.deps import audit_platform, get_platform_admin
 from app.core.config import settings
 from app.core.security import hash_password
+from app.services.email_check import UngenuineEmailError, assert_genuine_email
+from app.services.email_verification import issue_verification_token, send_verification_email
 from app.db.session import get_db
 from app.models import (
     DeviceSource,
@@ -181,6 +183,175 @@ def platform_scheduler(
                 Tenant.sync_enabled.is_(True), Tenant.status.in_(SYNCABLE)
             )
         ) or 0,
+    }
+
+
+@router.get("/overview", tags=["platform"])
+def platform_overview(
+    days: int = Query(default=14, ge=7, le=60),
+    _: User = Depends(get_platform_admin),
+    db: Session = Depends(get_db),
+) -> dict:
+    """The console's landing page: the whole platform at a glance.
+
+    Counts and states only — the same line the rest of the console holds.
+    Nothing here reads a punch's content, an attendance record or an employee:
+    punch volume is a count per day across every account, and the error text
+    from failed runs is scrubbed of employee names (``_redact``) exactly as the
+    per-account diagnostics are.
+    """
+    now = datetime.now(timezone.utc)
+    tenants = db.scalars(select(Tenant).order_by(Tenant.name)).all()
+    rows = [(t, _to_out(db, t)) for t in tenants]
+
+    by_status = {s.value: 0 for s in TenantStatus}
+    for t, _o in rows:
+        by_status[t.status] = by_status.get(t.status, 0) + 1
+
+    def aware(value):
+        return value if value is None or value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+    new_30d = sum(1 for t, _o in rows if t.created_at and aware(t.created_at) >= now - timedelta(days=30))
+
+    ready = sum(1 for _t, o in rows if o.odoo_connected and o.source_connected)
+    none_connected = sum(1 for _t, o in rows if not o.odoo_connected and not o.source_connected)
+
+    plans = {p.id: p for p in db.scalars(select(SubscriptionPlan)).all()}
+    by_plan: dict[str, dict] = {}
+    mrr = 0
+    for t, _o in rows:
+        plan = plans.get(t.plan_id)
+        key = plan.name if plan else "No plan"
+        entry = by_plan.setdefault(key, {"name": key, "accounts": 0, "paying": 0, "mrr_cents": 0,
+                                         "price_cents": plan.monthly_price_cents if plan else None})
+        entry["accounts"] += 1
+        if t.status == TenantStatus.active.value and plan and plan.monthly_price_cents:
+            entry["paying"] += 1
+            entry["mrr_cents"] += plan.monthly_price_cents
+            mrr += plan.monthly_price_cents
+
+    # Punch volume per UTC day, every account together.
+    start = (now - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    counts = dict(
+        db.execute(
+            select(func.date(PunchRecord.punch_time_utc), func.count(PunchRecord.id))
+            .where(PunchRecord.punch_time_utc >= start.replace(tzinfo=None))
+            .group_by(func.date(PunchRecord.punch_time_utc))
+        ).all()
+    )
+    series = []
+    for i in range(days):
+        day = (start + timedelta(days=i)).date()
+        series.append({"day": day.isoformat(), "punches": int(counts.get(day.isoformat(), counts.get(day, 0)) or 0)})
+
+    since = now - timedelta(hours=24)
+    runs_24h = {"success": 0, "partial": 0, "failed": 0}
+    for status_, n in db.execute(
+        select(SyncRun.status, func.count(SyncRun.id))
+        .where(SyncRun.started_at >= since, SyncRun.status != "running")
+        .group_by(SyncRun.status)
+    ).all():
+        runs_24h[status_] = n
+
+    # Who needs a person, most urgent first.
+    names = {t.id: t.name for t, _o in rows}
+    attention = []
+    for t, o in rows:
+        reasons = []
+        severity = 0
+        if t.status in ("past_due", "suspended"):
+            reasons.append({"tone": "bad", "text": t.status.replace("_", " ")})
+            severity = max(severity, 3)
+        if o.syncable and o.last_run_status == "failed":
+            reasons.append({"tone": "bad", "text": "last sync failed"})
+            severity = max(severity, 3)
+        if o.interval_widened:
+            reasons.append({"tone": "warn", "text": f"backed off to {o.effective_interval_minutes} min"})
+            severity = max(severity, 2)
+        if o.renewal_warning:
+            days_left = o.renewal_warning.days_left if hasattr(o.renewal_warning, "days_left") else o.renewal_warning["days_left"]
+            urgent = o.renewal_warning.urgent if hasattr(o.renewal_warning, "urgent") else o.renewal_warning["urgent"]
+            reasons.append({"tone": "bad" if urgent else "warn",
+                            "text": "renews today" if days_left <= 0 else f"renews in {days_left} d"})
+            severity = max(severity, 3 if urgent else 1)
+        if t.status not in ("cancelled",) and not (o.odoo_connected and o.source_connected):
+            reasons.append({"tone": "mute", "text": "nothing connected" if not o.odoo_connected and not o.source_connected
+                            else "no Odoo" if not o.odoo_connected else "no device"})
+            severity = max(severity, 1)
+        if reasons:
+            attention.append({"id": t.id, "name": t.name, "status": t.status,
+                              "reasons": reasons, "severity": severity})
+    attention.sort(key=lambda a: (-a["severity"], a["name"].lower()))
+
+    renewals = sorted(
+        (
+            {"id": t.id, "name": t.name, "status": t.status, "plan_name": o.plan_name,
+             "renews_at": aware(t.subscription_renews_at).isoformat()}
+            for t, o in rows
+            if t.subscription_renews_at
+            and now <= aware(t.subscription_renews_at) <= now + timedelta(days=14)
+            # Only accounts that are still current: a lapsed or stopped one
+            # already shows under Needs attention, for the reason that matters.
+            and t.status in (TenantStatus.trialing.value, TenantStatus.active.value)
+        ),
+        key=lambda r: r["renews_at"],
+    )
+
+    failed = db.scalars(
+        select(SyncRun).where(SyncRun.status == "failed").order_by(SyncRun.started_at.desc()).limit(8)
+    ).all()
+    failed_runs = []
+    for r in failed:
+        people = {
+            n for (n,) in db.execute(
+                select(EmployeeMapping.odoo_employee_name).where(EmployeeMapping.tenant_id == r.tenant_id)
+            ).all() if n
+        } | {
+            n for (n,) in db.execute(
+                select(EmployeeMapping.source_name).where(EmployeeMapping.tenant_id == r.tenant_id)
+            ).all() if n
+        }
+        failed_runs.append({
+            "tenant_id": r.tenant_id,
+            "tenant_name": names.get(r.tenant_id, "—"),
+            "started_at": aware(r.started_at).isoformat(),
+            "triggered_by": r.triggered_by,
+            "message": _redact(r.error_message or "", people)[:300],
+        })
+
+    health = scheduler_health(db)
+    return {
+        "generated_at": now.isoformat(),
+        "accounts": {"total": len(rows), "by_status": by_status, "new_30d": new_30d},
+        "setup": {"ready": ready, "partial": len(rows) - ready - none_connected, "none": none_connected},
+        "health": {
+            "failing": sum(1 for _t, o in rows if o.syncable and o.last_run_status == "failed"),
+            "backed_off": sum(1 for _t, o in rows if o.interval_widened),
+            "sync_off": sum(1 for _t, o in rows if not o.sync_enabled),
+        },
+        "activity": {
+            "punches_today": series[-1]["punches"] if series else 0,
+            "punches_period": sum(d["punches"] for d in series),
+            "runs_24h": runs_24h,
+            "error_punches": db.scalar(
+                select(func.count(PunchRecord.id)).where(PunchRecord.process_state == PunchState.error.value)
+            ) or 0,
+            "unmatched_badges": db.scalar(
+                select(func.count(EmployeeMapping.id)).where(EmployeeMapping.status == MappingStatus.unmapped.value)
+            ) or 0,
+        },
+        "revenue": {"mrr_cents": mrr, "paying": by_status.get("active", 0), "by_plan": sorted(
+            by_plan.values(), key=lambda p: (-p["accounts"], p["name"]))},
+        "punches_by_day": series,
+        "attention": attention[:12],
+        "attention_total": len(attention),
+        "renewals": renewals[:10],
+        "failed_runs": failed_runs,
+        "scheduler": {
+            "running": health["running"],
+            "mode": health["mode"],
+            "last_tick_at": health["last_tick_at"].isoformat() + "Z" if health["last_tick_at"] else None,
+        },
     }
 
 
@@ -468,7 +639,10 @@ def create_tenant(
     default: a staff member inventing passwords under time pressure invents weak
     ones, and reuses them.
     """
-    email = payload.owner_email.lower()
+    try:
+        email = assert_genuine_email(payload.owner_email).lower()
+    except UngenuineEmailError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     if db.scalar(select(func.count(User.id)).where(User.email == email)):
         raise HTTPException(
             status.HTTP_409_CONFLICT, "A user with that email already exists"
@@ -503,15 +677,17 @@ def create_tenant(
     db.add(tenant)
     db.flush()
 
-    db.add(
-        User(
-            tenant_id=tenant.id,
-            email=email,
-            full_name=payload.owner_name,
-            hashed_password=hash_password(password),
-            role=UserRole.owner.value,
-        )
+    owner = User(
+        tenant_id=tenant.id,
+        email=email,
+        full_name=payload.owner_name,
+        hashed_password=hash_password(password),
+        role=UserRole.owner.value,
     )
+    db.add(owner)
+    db.flush()
+    raw_verify_token = issue_verification_token(owner)
+
     audit_platform(
         db,
         actor,
@@ -523,6 +699,14 @@ def create_tenant(
     )
     db.commit()
     db.refresh(tenant)
+
+    # Best effort, same as self-signup — staff already hand the password to
+    # the owner directly, so a failed send here delays confirmation, not
+    # access. See app.services.email_verification.
+    try:
+        send_verification_email(owner, raw_verify_token)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Could not send verification email to %s: %s", owner.email, exc)
 
     log.info("Platform user %s created tenant %s", actor.email, tenant.slug)
     return TenantCreateOut(

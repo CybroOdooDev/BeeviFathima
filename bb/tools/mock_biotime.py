@@ -109,7 +109,7 @@ DATASETS: dict[int, dict] = {
         _COMPANY_4_DEPTS,
         [
             _emp(41, "5", "Beevi", "", _COMPANY_4_DEPTS[0]),
-            _emp(42, "6001", "marc", "", _COMPANY_4_DEPTS[1]),
+            _emp(42, "6001", "Marc", "", _COMPANY_4_DEPTS[1]),
         ],
         [
             _term(401, "MOCK-GATE-05", "East Entrance", "10.0.2.11"),

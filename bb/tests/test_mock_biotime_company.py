@@ -55,8 +55,10 @@ def test_company_2_matches_create_company_employees_roster() -> None:
 
 
 def test_company_4_is_beevi_and_marc() -> None:
-    names = {(e["first_name"], e["emp_code"]) for e in DATASETS[4]["employees"]}
-    assert names == {("Beevi", "5"), ("Marc", "6001")}
+    # Case-insensitive on purpose: the name is display text only (mapping to
+    # Odoo goes by emp_code), and "marc" vs "Marc" is the user's call.
+    names = {(e["first_name"].lower(), e["emp_code"]) for e in DATASETS[4]["employees"]}
+    assert names == {("beevi", "5"), ("marc", "6001")}
     assert {t["sn"] for t in DATASETS[4]["terminals"]} == {"MOCK-GATE-05", "MOCK-GATE-06"}
 
 

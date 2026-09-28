@@ -140,7 +140,9 @@ def make_odoo(client, token):
 
 
 def make_source(client, token, name=None):
-    payload = {"provider": DISCOVERABLE_SLUG, "base_url": "https://device.test"}
+    # Its own address per name: one account cannot add the same address twice.
+    host = (name or "device").lower().replace(" ", "-")
+    payload = {"provider": DISCOVERABLE_SLUG, "base_url": f"https://{host}.test"}
     if name is not None:
         payload["name"] = name
     response = client.post("/api/v1/sources", headers=auth(token), json=payload)

@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="biobridge_device_view_tree" model="ir.ui.view">
+        <field name="name">biobridge.device.tree</field>
+        <field name="model">biobridge.device</field>
+        <field name="arch" type="xml">
+            <tree string="Biometric Devices">
+                <field name="name"/>
+                <field name="serial_number"/>
+                <field name="location"/>
+                <field name="terminal_model"/>
+                <field name="ip_address"/>
+                <field name="attendance_count" string="Punches"/>
+                <field name="active" invisible="1"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="biobridge_device_view_form" model="ir.ui.view">
+        <field name="name">biobridge.device.form</field>
+        <field name="model">biobridge.device</field>
+        <field name="arch" type="xml">
+            <form string="Biometric Device">
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_view_attendances"
+                                type="object" class="oe_stat_button" icon="fa-clock-o"
+                                invisible="not attendance_count">
+                            <field name="attendance_count" widget="statinfo" string="Punches"/>
+                        </button>
+                    </div>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1><field name="name" placeholder="Front Entrance Terminal"/></h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="serial_number"/>
+                            <field name="location" placeholder="Main Entrance"/>
+                        </group>
+                        <group>
+                            <field name="terminal_model"/>
+                            <field name="ip_address"/>
+                            <field name="company_id" groups="base.group_multi_company"/>
+                            <field name="active"/>
+                        </group>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="biobridge_device_view_search" model="ir.ui.view">
+        <field name="name">biobridge.device.search</field>
+        <field name="model">biobridge.device</field>
+        <field name="arch" type="xml">
+            <search string="Biometric Devices">
+                <field name="name"/>
+                <field name="serial_number"/>
+                <field name="location"/>
+                <filter name="inactive" string="Archived" domain="[('active', '=', False)]"/>
+            </search>
+        </field>
+    </record>
+
+    <record id="biobridge_device_action" model="ir.actions.act_window">
+        <field name="name">Biometric Devices</field>
+        <field name="res_model">biobridge.device</field>
+        <field name="view_mode">tree,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                No biometric devices yet
+            </p>
+            <p>
+                BioBridge registers a device here automatically the first
+                time it pushes a punch from it — there is usually nothing to
+                add by hand. Give one a location once it appears, and every
+                attendance record it produces will show it.
+            </p>
+        </field>
+    </record>
+
+    <!-- A standalone top-level menu on purpose: nesting under hr_attendance's
+         own menu tree means guessing at an external id whose name has
+         actually changed release to release (the Officer group alone is
+         named differently in 14 vs 17+), and getting that wrong breaks the
+         whole module's installation, not just where this menu sits. -->
+    <menuitem id="biobridge_device_menu_root" name="Biometric Devices" sequence="90"/>
+    <menuitem id="biobridge_device_menu" name="Devices"
+              parent="biobridge_device_menu_root" action="biobridge_device_action"
+              sequence="10"/>
+</odoo>

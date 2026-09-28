@@ -78,18 +78,26 @@ export const pill = (state, label) =>
   `<span class="pill ${tone(state)}">${esc(label ?? state ?? '—')}</span>`;
 
 /* --- components ----------------------------------------------------------- */
-export const stat = ({ label, value, note, tone: t }) => `
-  <div class="stat">
+/** A number tile. With ``href`` the whole tile is a link to the list behind
+ * the number — "2 errors" should take you to the two errors. */
+export const stat = ({ label, value, note, tone: t, href }) => {
+  const inner = `
     <div class="k">${esc(label)}</div>
     <div class="v ${t || ''}">${esc(value)}</div>
-    ${note ? `<div class="note">${esc(note)}</div>` : ''}
-  </div>`;
+    ${note ? `<div class="note">${esc(note)}</div>` : ''}`;
+  return href
+    ? `<a class="stat stat-link" href="${esc(href)}">${inner}<span class="stat-go" aria-hidden="true">&rsaquo;</span></a>`
+    : `<div class="stat">${inner}</div>`;
+};
 
 export const empty = (title, body) => `
   <div class="empty"><strong>${esc(title)}</strong>${body ? esc(body) : ''}</div>`;
 
-export const banner = (title, body, kind = '') => `
-  <div class="banner ${kind}"><strong>${esc(title)}</strong>${body ? esc(body) : ''}</div>`;
+/** A notice. ``action`` ({ href, label }) adds the one link that fixes it,
+ * so a banner never tells you about a problem without saying where to go. */
+export const banner = (title, body, kind = '', action = null) => `
+  <div class="banner ${kind}"><strong>${esc(title)}</strong>${body ? esc(body) : ''}${
+    action ? `<a class="banner-action" href="${esc(action.href)}">${esc(action.label)} &rarr;</a>` : ''}</div>`;
 
 export const loading = () => '<div class="skeleton">Loading…</div>';
 
@@ -98,7 +106,6 @@ export function field({ name, label, type = 'text', value = '', help, required, 
   // "false" — truthy everywhere on the server. data-bool tells readForm to
   // convert it. Explicit rather than sniffing the value, so a genuinely
   // string-valued "true" option never gets silently rewritten.
-  const listId = datalist && datalist.length ? `${esc(name)}-list` : null;
   const control = options
     ? `<select name="${esc(name)}" id="${esc(name)}"${boolean ? ' data-bool="1"' : ''}>${options
         .map((o) => {
@@ -107,11 +114,22 @@ export function field({ name, label, type = 'text', value = '', help, required, 
           return `<option value="${esc(v)}"${v === value ? ' selected' : ''}>${esc(l)}</option>`;
         })
         .join('')}</select>`
+    : datalist && datalist.length
+    // A searchable dropdown, not a plain <input list>/<datalist> (browsers
+    // render that inconsistently, and it never really reads as "a dropdown").
+    // The visible box is filter-as-you-type; the real value for the form
+    // lives in the paired hidden input — see wireSearchSelects.
+    ? `<div class="picker search-select" data-search-select>
+         <input type="text" id="${esc(name)}" class="ss-input" autocomplete="off" spellcheck="false"
+                role="combobox" aria-expanded="false" aria-autocomplete="list"
+                value="${esc(value)}" ${placeholder ? `placeholder="${esc(placeholder)}"` : ''}>
+         <span class="ss-caret" aria-hidden="true"></span>
+         <input type="hidden" name="${esc(name)}" value="${esc(value)}">
+         <ul class="picker-list hidden" role="listbox"></ul>
+       </div>`
     : `<input type="${esc(type)}" name="${esc(name)}" id="${esc(name)}"
          value="${esc(value)}" ${required ? 'required' : ''}
-         ${placeholder ? `placeholder="${esc(placeholder)}"` : ''}
-         ${listId ? `list="${listId}" autocomplete="off"` : ''}>
-       ${listId ? `<datalist id="${listId}">${datalist.map((v) => `<option value="${esc(v)}">`).join('')}</datalist>` : ''}`;
+         ${placeholder ? `placeholder="${esc(placeholder)}"` : ''}>`;
   return `
     <div class="field">
       <label for="${esc(name)}">${esc(label)}${required ? '' : ' <span class="opt">optional</span>'}</label>
@@ -120,12 +138,12 @@ export function field({ name, label, type = 'text', value = '', help, required, 
     </div>`;
 }
 
-// Suggestions only, not enforcement — the field stays a free-text input (a
-// <datalist> never blocks a value that isn't in it), so a browser without
-// Intl.supportedValuesOf (older Safari) just gets no suggestions rather than
-// an error. What actually rejects an unrecognized zone name is the server:
-// every schema with a timezone field validates it against the same IANA
-// database this list comes from (see app/schemas.py's _validate_timezone).
+// A browser without Intl.supportedValuesOf (older Safari) just gets an empty
+// list — the search-select then shows "No matching timezone" for everything,
+// rather than erroring. What actually rejects an unrecognized zone name is
+// the server: every schema with a timezone field validates it against the
+// same IANA database this list comes from (see app/schemas.py's
+// _validate_timezone).
 let _tzNamesCache = null;
 export function timezoneNames() {
   if (_tzNamesCache) return _tzNamesCache;
@@ -143,6 +161,115 @@ export function timezoneNames() {
   return _tzNamesCache;
 }
 
+/** Wires every field() search-select (currently: the timezone fields) — one
+ * delegated listener set for the whole document, so it works for any of them
+ * any page ever renders, present or future, with nothing per-page to call.
+ *
+ * Each is a text box that filters a dropdown list as you type, backed by a
+ * hidden input that holds the real value read by readForm(). Click, Enter,
+ * or arrow-then-Enter picks an option; Escape or a blur that lands on
+ * anything other than a real option reverts to the last value actually
+ * picked — this is a dropdown you can search, not a free-text field with
+ * suggestions, so it never leaves a half-typed filter sitting in the form. */
+export function wireSearchSelects() {
+  const isInput = (event) => event.target.classList?.contains('ss-input');
+  const boxOf = (event) => event.target.closest?.('[data-search-select]');
+  const listOf = (box) => box.querySelector('.picker-list');
+  const hiddenOf = (box) => box.querySelector('input[type=hidden]');
+
+  const open = (box, query) => {
+    const q = query.trim().toLowerCase();
+    const all = timezoneNames();
+    const matches = (q ? all.filter((z) => z.toLowerCase().includes(q)) : all).slice(0, 200);
+    const list = listOf(box);
+    list.innerHTML = matches.length
+      ? matches.map((z) => `<li role="option" data-value="${esc(z)}">${esc(z)}</li>`).join('')
+      : `<li class="picker-note">No matching timezone</li>`;
+    list.classList.remove('hidden');
+    box.querySelector('.ss-input').setAttribute('aria-expanded', 'true');
+  };
+  const close = (box) => {
+    const list = listOf(box);
+    list.classList.add('hidden');
+    list.innerHTML = '';
+    box.querySelector('.ss-input').setAttribute('aria-expanded', 'false');
+  };
+  const move = (list, delta) => {
+    const items = [...list.querySelectorAll('li[data-value]')];
+    if (!items.length) return;
+    const from = items.findIndex((li) => li.classList.contains('active'));
+    items.forEach((li) => li.classList.remove('active'));
+    const next = items[(from + delta + items.length) % items.length];
+    next.classList.add('active');
+    next.scrollIntoView({ block: 'nearest' });
+  };
+  const commit = (box, value) => {
+    const input = box.querySelector('.ss-input');
+    const hidden = hiddenOf(box);
+    input.value = value;
+    if (hidden.value !== value) {
+      hidden.value = value;
+      hidden.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    close(box);
+  };
+
+  document.addEventListener('input', (event) => {
+    if (!isInput(event)) return;
+    open(boxOf(event), event.target.value);
+  });
+  document.addEventListener('focusin', (event) => {
+    if (!isInput(event)) return;
+    // The box usually already holds a real value (the tenant's current
+    // timezone, a sensible default) — filtering by that on focus would
+    // collapse the list to just the one match already sitting there.
+    // Show everything to browse, and select it so typing replaces rather
+    // than appends.
+    open(boxOf(event), '');
+    event.target.select();
+  });
+  document.addEventListener('focusout', (event) => {
+    if (!isInput(event)) return;
+    const box = boxOf(event);
+    // A mousedown on a list item fires before this box loses focus to it —
+    // give that a beat to land before deciding nothing was picked.
+    setTimeout(() => {
+      if (box.contains(document.activeElement)) return;
+      const input = box.querySelector('.ss-input');
+      const hidden = hiddenOf(box);
+      const all = timezoneNames();
+      const exact = all.includes(input.value)
+        ? input.value
+        : all.find((z) => z.toLowerCase() === input.value.trim().toLowerCase());
+      if (exact) commit(box, exact);
+      else { input.value = hidden.value; close(box); }
+    }, 150);
+  });
+  document.addEventListener('keydown', (event) => {
+    if (!isInput(event)) return;
+    const box = boxOf(event);
+    const list = listOf(box);
+    if (event.key === 'Escape') {
+      event.target.value = hiddenOf(box).value;
+      close(box);
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      const chosen = list.querySelector('li.active[data-value]') || list.querySelector('li[data-value]');
+      if (chosen) commit(box, chosen.dataset.value);
+    } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      if (list.classList.contains('hidden')) open(box, event.target.value);
+      else move(list, event.key === 'ArrowDown' ? 1 : -1);
+    }
+  });
+  document.addEventListener('mousedown', (event) => {
+    const li = event.target.closest?.('.search-select .picker-list li[data-value]');
+    if (!li) return;
+    event.preventDefault();   // keep focus in the text box rather than blurring first
+    commit(li.closest('[data-search-select]'), li.dataset.value);
+  });
+}
+
 /**
  * A grid of selectable plan cards — the richer alternative to field()'s
  * plain <select> for a choice worth seeing laid out: each plan's price,
@@ -155,7 +282,9 @@ export function timezoneNames() {
  * script only to repaint the `.selected` highlight on change — wiring left
  * to the caller since that also differs by page (see pages/auth.js).
  */
-export function planCards({ id, name, label, plans, value, required, help }) {
+export function planCards({
+  id, name, label, plans, value, required, help, tags = {}, showRecommended = true,
+}) {
   const cards = plans.map((p) => {
     const price = p.monthly_price_cents != null
       ? `$${(p.monthly_price_cents / 100).toFixed(0)}/mo`
@@ -174,7 +303,8 @@ export function planCards({ id, name, label, plans, value, required, help }) {
         <div class="plan-card-body">
           <div class="plan-card-head">
             <span class="plan-card-name">${esc(p.name)}</span>
-            ${p.is_default ? '<span class="pill ok">Recommended</span>' : ''}
+            ${tags[p.id] ? `<span class="pill ${esc(tags[p.id].tone || 'ok')}">${esc(tags[p.id].label)}</span>` : ''}
+            ${showRecommended && p.is_default && !tags[p.id] ? '<span class="pill ok">Recommended</span>' : ''}
           </div>
           <div class="plan-card-price">${esc(price)}</div>
           ${p.description ? `<div class="plan-card-desc">${esc(p.description)}</div>` : ''}
@@ -191,6 +321,65 @@ export function planCards({ id, name, label, plans, value, required, help }) {
       <div class="plan-grid" role="radiogroup" aria-label="${esc(label)}">${cards}</div>
       ${help ? `<div class="help">${esc(help)}</div>` : ''}
     </div>`;
+}
+
+/**
+ * A full pricing-style grid — one big card per plan, price out front, a
+ * checklist under "Includes", one button per card. The richer alternative to
+ * planCards() for a screen whose whole job is comparing and picking a plan
+ * (the pricing page ahead of signup, "Choose a plan" from Settings), rather
+ * than one field within a longer form.
+ *
+ * Unlike planCards() this renders plain buttons, not radios — there is
+ * nothing else on these screens for a plan to be one field among, and the
+ * two contexts that use it want different button behaviour (carry the pick
+ * back to signup; PATCH the tenant immediately), which only the caller
+ * knows. wirePricingCards() below wires whichever one it is.
+ */
+export function pricingCards({ plans, tags = {}, showRecommended = true, ctaLabel = 'Get started' }) {
+  const cards = plans.map((p) => {
+    const employees = p.max_employees != null
+      ? `Up to ${p.max_employees} employee${p.max_employees === 1 ? '' : 's'}`
+      : 'Unlimited employees';
+    const speed = p.min_sync_interval_minutes != null
+      ? `Syncs as often as every ${p.min_sync_interval_minutes} min`
+      : 'No sync-speed limit';
+    const tag = tags[p.id] || (showRecommended && p.is_default ? { label: 'Recommended', tone: 'ok' } : null);
+    // 'current' (this plan, today) and 'warn' (a switch to it is already
+    // queued) both default to locked — the button has nothing left to do —
+    // only 'ok' (Recommended) is a plain badge that leaves the card pickable.
+    // A caller can override either way with tag.locked (see the "cancel a
+    // scheduled switch by picking the current plan again" case in
+    // settings.js, where a 'current' tag stays clickable).
+    const locked = tag?.locked ?? (tag?.tone === 'current' || tag?.tone === 'warn');
+    const label = locked ? tag.label : (tag?.ctaLabel || ctaLabel);
+    return `
+      <div class="pricing-card${tag ? ' tagged' : ''}${locked ? ' locked' : ''}">
+        ${tag ? `<span class="pricing-tag ${esc(tag.tone || 'ok')}">${esc(tag.label)}</span>` : ''}
+        <div class="pricing-card-name">${esc(p.name)}</div>
+        <div class="pricing-card-price">${p.monthly_price_cents != null
+          ? `<span class="amt">$${(p.monthly_price_cents / 100).toFixed(0)}</span><span class="per">/mo</span>`
+          : '<span class="amt custom">Custom pricing</span>'}</div>
+        <p class="pricing-card-desc">${esc(p.description || '')}</p>
+        <button type="button" class="pricing-cta"${locked ? ' disabled' : ''} data-pick="${esc(p.id)}">
+          ${esc(label)}
+        </button>
+        <div class="pricing-includes">Includes</div>
+        <ul class="pricing-features">
+          <li>${esc(employees)}</li>
+          <li>${esc(speed)}</li>
+        </ul>
+      </div>`;
+  }).join('');
+  return `<div class="pricing-grid">${cards}</div>`;
+}
+
+/** Wires a pricingCards() grid's buttons to one callback — onPick(planId) —
+ * so the caller (signup vs. Settings) supplies the one thing that differs. */
+export function wirePricingCards(root, onPick) {
+  $$('.pricing-cta[data-pick]', root).forEach((button) => {
+    button.addEventListener('click', () => onPick(button.dataset.pick, button));
+  });
 }
 
 /** Read every [name] control under a root into a plain object. */
@@ -244,4 +433,33 @@ export async function busy(button, fn) {
     button.disabled = false;
     button.textContent = label;
   }
+}
+
+/** Hover / focus labels for anything with ``data-tip``.
+ *
+ * One floating box, positioned in the viewport, so a label inside a scrolling
+ * table is never cut off by the table's edge. Keyboard focus shows it too. */
+export function wireTips() {
+  const box = document.createElement('div');
+  box.id = 'tip';
+  box.setAttribute('role', 'tooltip');
+  document.body.append(box);
+  const show = (el) => {
+    box.textContent = el.dataset.tip;
+    box.classList.add('on');
+    const r = el.getBoundingClientRect();
+    const w = box.offsetWidth;
+    const h = box.offsetHeight;
+    const left = Math.min(Math.max(8, r.left + r.width / 2 - w / 2), window.innerWidth - w - 8);
+    const top = r.top - h - 8 >= 8 ? r.top - h - 8 : r.bottom + 8;
+    box.style.left = `${left}px`;
+    box.style.top = `${top}px`;
+  };
+  const hide = () => box.classList.remove('on');
+  const find = (event) => event.target.closest?.('[data-tip]');
+  document.addEventListener('mouseover', (event) => { const el = find(event); if (el) show(el); });
+  document.addEventListener('mouseout', (event) => { if (find(event)) hide(); });
+  document.addEventListener('focusin', (event) => { const el = find(event); if (el) show(el); });
+  document.addEventListener('focusout', hide);
+  window.addEventListener('scroll', hide, true);
 }

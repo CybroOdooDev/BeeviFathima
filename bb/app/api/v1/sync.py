@@ -438,6 +438,7 @@ def update_mapping(
                 "Unmap it first, or set a separate badge on the Odoo record.",
             )
         mapping.odoo_employee_id = data["odoo_employee_id"]
+        mapping.odoo_employee_name = data.get("odoo_employee_name")
         mapping.status = MappingStatus.mapped.value
         mapping.match_method = "manual"
         mapping.match_note = None

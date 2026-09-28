@@ -309,14 +309,14 @@ the two doors below are for; `--list` says who is which.
 
 #### Two doors, two kinds of session
 
-Staff sign in at **`/#/staff/login`**, customers at `/#/login`, and the token a
-door mints is scoped to that surface:
+Everyone signs in on the same page (`/#/login`). Underneath there are still two
+doors, and the token each one mints is scoped to its surface:
 
 | | Customer door | Console door |
 | --- | --- | --- |
 | Endpoint | `POST /auth/login` | `POST /auth/staff/login` |
 | Token scope | `tenant` | `staff` |
-| Reaches `/admin/*` | never | yes |
+| Reaches `/api/v1/admin/*` | never | yes |
 | Reaches tenant routes | yes | never |
 | Access token life | 12 h | 1 h |
 | Refresh token life | 30 d | 1 d |
@@ -331,28 +331,33 @@ started on, so a customer session can never renew itself into a console one.
 
 Two consequences worth knowing:
 
-- **The flag alone no longer opens the console.** After `grant_admin.py`, the
-  person must sign in *at the staff door*; an existing session will not do. If
-  they also have their own workspace, the sidebar there has a switch across.
+- **The flag alone does not open the console for a session already held.**
+  After `grant_admin.py`, the person signs out and in again; the sign-in then
+  opens the console session alongside their workspace.
+- **A staff account with no workspace is turned away by the customer door**
+  itself (the API refuses to mint a session that would fail on every screen);
+  the sign-in page takes that as its cue to use the console door instead.
 
-**Switching hats without signing in twice.** A dual-role person can hold both
-sessions in one tab and flip between them with the sidebar's *Staff console ›* /
-*‹ My workspace* button. They stay two separately-scoped tokens — only the
-active one is sent — so none of the separation above changes. How they get
-opened:
+**One sign-in, both hats.** The sign-in page calls the customer door and, for an
+account that holds the staff flag, the console door too, with the password
+already typed — so a platform admin signs in once and switches between their
+workspace and the console from the sidebar (*Staff console ›* / *‹ My
+workspace*) without being asked again. Staff with no workspace of their own are
+turned away by the customer door (403), so the page goes to the console door
+and they land in the console. Nothing server-side changed: they are still two
+separately-scoped tokens, only one is sent at a time, and each is refused at the
+other's routes.
 
-- Signing in **at the staff door** also opens the person's workspace session with
-  the same password, so one sign-in gives both.
-- Signing in **at the customer door** opens only the workspace. The first switch
-  to the console asks for the password again (email pre-filled): a console
-  session is the one worth stealing, so it is never minted as a side effect of
-  an ordinary sign-in. After that, switching is instant both ways.
-- When one session expires (the console's after a day at most), the tab carries
-  on in the other; switching back asks for the password once more. *Sign out*
-  ends both.
-- **A staff account with no workspace is turned away from the customer door**,
-  with the address of the right one, rather than being given a session that
-  authenticates and then fails on every screen.
+- The next sign-in on the same browser lands in whichever of the two was used
+  last. **Log in as admin**, the link under the sign-in card (`/#/staff/login`),
+  is the same form aimed at the console door first: it always lands in the
+  console, and answers a non-staff account exactly like a wrong password.
+- The console session still lives a day at most. When it has expired, the
+  switch asks for the password again on the same page, email filled in, and
+  reopens both.
+- *Sign out* ends both.
+- A customer without the flag only ever gets a workspace session; the page
+  never tries the console door for them.
 
 The console door answers a non-staff account exactly as it answers a wrong
 password. Saying "you are not staff" would turn it into a lookup for which

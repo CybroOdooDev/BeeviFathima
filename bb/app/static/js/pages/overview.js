@@ -73,16 +73,81 @@ function scheduleCard(schedule, needsSetup) {
     </div>`;
 }
 
+/* Getting started: the five things between signing up and attendance
+ * arriving in Odoo, in order, each with the button that does it. Shown until
+ * the first four are done — the fifth (matching badges) keeps coming back as
+ * new people punch, and has its own banner for that. */
+function setupChecklist({ health, devices, run, unmapped }) {
+  const connected = (state) => state && state !== 'missing';
+  const steps = [
+    {
+      done: connected(health.odoo),
+      title: 'Connect Odoo',
+      body: 'Where attendance is written. You need the server URL, database, login and an API key.',
+      action: { href: '#/settings/odoo', label: 'Connect Odoo' },
+    },
+    {
+      done: connected(health.source),
+      title: 'Add a biometric connection',
+      body: 'A BioTime server, or a device by its IP address.',
+      action: { href: '#/settings/biometric?add=1', label: 'Add connection' },
+    },
+    {
+      done: devices > 0,
+      title: 'Import your terminals',
+      body: 'So each punch knows which device it came from. “Import terminals” on the connection.',
+      action: { href: '#/settings/biometric', label: 'Open connections' },
+    },
+    {
+      done: Boolean(run),
+      title: 'Run the first sync',
+      body: 'Pulls punches and writes attendance. After this it runs on its own schedule.',
+      action: { sync: true, label: 'Sync now' },
+    },
+    {
+      done: Boolean(run) && unmapped === 0,
+      title: 'Match any unknown badges',
+      body: 'Badges no Odoo employee carries yet are held until they are matched.',
+      action: { href: '#/settings/odoo?show=unmapped', label: 'Match badges' },
+    },
+  ];
+  if (steps.slice(0, 4).every((s) => s.done)) return '';
+  const next = steps.findIndex((s) => !s.done);
+  const doneCount = steps.filter((s) => s.done).length;
+  return `
+    <div class="card checklist" style="margin-bottom:14px">
+      <div class="card-head">
+        <h2>Get set up <span class="hint">${doneCount} of ${steps.length} done</span></h2>
+        <div class="progress" aria-hidden="true"><span style="width:${(doneCount / steps.length) * 100}%"></span></div>
+      </div>
+      <ol class="steps-list">
+        ${steps.map((s, i) => `
+          <li class="${s.done ? 'done' : i === next ? 'next' : ''}">
+            <span class="step-mark">${s.done ? '✓' : i + 1}</span>
+            <div class="step-text"><strong>${esc(s.title)}</strong><span>${esc(s.body)}</span></div>
+            ${!s.done && auth.canWrite ? (s.action.sync
+              ? `<button class="${i === next ? 'primary' : ''} sm" data-checklist-sync="1" ${
+                  !connected(health.odoo) || !connected(health.source) ? 'disabled' : ''}>${esc(s.action.label)}</button>`
+              : `<a class="btn sm${i === next ? ' primary-link' : ''}" href="${esc(s.action.href)}">${esc(s.action.label)}</a>`) : ''}
+          </li>`).join('')}
+      </ol>
+    </div>`;
+}
+
 export async function render(mount) {
   mount.innerHTML = loading();
-  const [data, runs] = await Promise.all([
+  const [data, runs, devices] = await Promise.all([
     api.get('/dashboard'),
     api.get('/sync/runs?limit=5').catch(() => []),
+    api.get('/devices').catch(() => []),
   ]);
 
   const health = data.connection_health || {};
   const needsSetup = health.odoo === 'missing' || health.source === 'missing';
   const run = data.last_run;
+  const checklist = setupChecklist({
+    health, devices: devices.length, run, unmapped: data.unmapped_employees,
+  });
 
   const banners = [];
   if (!auth.tenant?.syncable) {
@@ -99,7 +164,7 @@ export async function render(mount) {
       'bad'
     ));
   }
-  if (needsSetup) {
+  if (needsSetup && !checklist) {
     banners.push(banner(
       'Finish connecting',
       health.odoo === 'missing' && health.source === 'missing'
@@ -110,58 +175,78 @@ export async function render(mount) {
       'warn'
     ));
   }
-  if (data.renewal_warning) {
+  // The server sends the same renewal_warning for a trial and a paid
+  // subscription — both are just "this account's access is good until
+  // subscription_renews_at" (see app.services.scheduling.renewal_warning).
+  // Which one it actually is, and what to say about it, is decided here:
+  //  - trialing: always a trial ending, whether or not a plan is picked —
+  //    signup always assigns one (the default, if none was chosen), so
+  //    "no plan chosen" is not a real state to guard here.
+  //  - active with no plan_id: an edge case (an account a staff member
+  //    created with no plan and no platform default configured) with
+  //    nothing to actually renew — say nothing rather than "your
+  //    subscription ends" for a subscription that was never really there.
+  //  - active with a plan: the paid-subscription warning, as before.
+  const isTrial = auth.tenant?.status === 'trialing';
+  const hasPlan = Boolean(auth.tenant?.plan_id);
+  if (data.renewal_warning && (isTrial || hasPlan)) {
     // Ranked above the routine operational banners below (unmapped badges,
     // failed punches) even though nothing is actually broken yet — an
     // account about to stop syncing entirely is more consequential than
     // either, and the whole point of a warning is to be seen before it
     // becomes one of those two banners instead.
     const { days_left: daysLeft, urgent } = data.renewal_warning;
+    const subject = isTrial ? 'free trial' : 'subscription';
     banners.push(banner(
-      daysLeft <= 0 ? 'Your subscription ends today'
-        : `Your subscription ends in ${daysLeft} day${daysLeft === 1 ? '' : 's'}`,
+      daysLeft <= 0 ? `Your ${subject} ends today`
+        : `Your ${subject} ends in ${daysLeft} day${daysLeft === 1 ? '' : 's'}`,
       'Syncing stops automatically when it does. Nothing already recorded is '
         + 'ever affected — only the collection of new punches would stop. '
-        + 'Contact support to renew.',
+        + (isTrial ? 'Choose a plan to continue.' : 'Contact support to renew.'),
       // Same message either way — just louder once it's close. 'bad' inside
       // subscription_urgent_days (default 3), 'warn' from the wider
       // subscription_warning_days window down to that point.
-      urgent ? 'bad' : 'warn'
+      urgent ? 'bad' : 'warn',
+      isTrial ? { href: '#/settings/plan', label: 'Choose a plan' } : null,
     ));
   }
   if (data.unmapped_employees > 0) {
     banners.push(banner(
       `${data.unmapped_employees} badge${data.unmapped_employees === 1 ? '' : 's'} waiting to be matched`,
       'Their attendance is held until each badge is matched to an Odoo employee.',
-      'warn'
+      'warn',
+      { href: '#/settings/odoo?show=unmapped', label: 'Match badges' },
     ));
   }
   if (data.punches_error > 0) {
     banners.push(banner(
       `${data.punches_error} punch${data.punches_error === 1 ? '' : 'es'} failed to reach Odoo`,
-      'Open Activity to see the error on each one.',
-      'bad'
+      'Each one shows the reason Odoo gave. Fix the cause, then Retry.',
+      'bad',
+      { href: '#/activity?state=error', label: 'Review errors' },
     ));
   }
 
+  const today = new Date().toISOString().slice(0, 10);
   mount.innerHTML = `
     ${banners.join('')}
+    ${checklist}
     ${scheduleCard(data.schedule, needsSetup)}
 
     <div class="grid cols-4" style="margin-bottom:14px">
-      ${stat({ label: 'Punches today', value: data.punches_today })}
+      ${stat({ label: 'Punches today', value: data.punches_today, href: `#/activity?date_from=${today}` })}
       ${stat({
         label: 'Pending', value: data.punches_pending,
         tone: data.punches_pending > 0 ? 'warn' : '',
-        note: 'awaiting the next run',
+        note: 'awaiting the next run', href: '#/activity?state=pending',
       })}
       ${stat({
         label: 'Unmatched badges', value: data.unmapped_employees,
-        tone: data.unmapped_employees > 0 ? 'warn' : '',
+        tone: data.unmapped_employees > 0 ? 'warn' : '', href: '#/settings/odoo?show=unmapped',
       })}
       ${stat({
         label: 'Errors', value: data.punches_error,
-        tone: data.punches_error > 0 ? 'bad' : '',
+        tone: data.punches_error > 0 ? 'bad' : '', href: '#/activity?state=error',
       })}
     </div>
 
@@ -175,7 +260,7 @@ export async function render(mount) {
           </tbody>
         </table>
         <div class="row" style="margin-top:14px">
-          <a class="btn" href="#/settings/odoo">Manage connections</a>
+          <a class="btn" href="#/settings/biometric">Manage connections</a>
         </div>
       </div>
 
@@ -222,6 +307,9 @@ export async function render(mount) {
         </div>
       </div>` : ''}
   `;
+
+  // The checklist's "Sync now" is the top bar's, pressed from here.
+  mount.querySelector('[data-checklist-sync]')?.addEventListener('click', () => $('#topSync')?.click());
 
   const button = $('#syncNow', mount);
   if (button) {
