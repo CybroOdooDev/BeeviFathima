@@ -1,5 +1,7 @@
 /* Terminals: every device the account's biometric connections bring in.
  *
+ * Two tabs, one per kind, because the two kinds are configured differently and so
+ * carry their controls in different places:
  * Standalone devices are each their own connection, so each row has its own
  * Sync now. Terminals behind a platform server (BioTime) are all read through
  * that server in one go, so the Sync now sits on the platform, once. */
@@ -22,24 +24,27 @@ function standaloneCard(sources, devicesBySource) {
   if (!sources.length) return '';
   return `
     <div class="card" style="margin-bottom:18px">
-      <h2>Standalone devices <span class="hint">${sources.length} connected directly</span></h2>
       <div class="scroll">
-        <table>
-          <thead><tr><th>Device</th><th>Address</th><th>Serial</th><th>Connection</th>
-            <th class="num">Punches</th><th>Last seen</th><th></th></tr></thead>
+        <table class="tight-table">
+          <thead><tr><th>Device</th><th>Address</th><th>Serial</th>
+            <th class="num">Punches</th><th>Last seen</th><th>State</th><th>Connection</th><th></th></tr></thead>
           <tbody>
             ${sources.map((s) => {
               const d = (devicesBySource[s.id] || [])[0];
+              // One line per cell, laid out like the platform tables below: the
+              // device state gets its own column and "checked … ago" moves into
+              // the connection pill's hover label, so badges no longer sit
+              // stacked under text at a different height from the rest of the row.
               return `
                 <tr>
-                  <td><div><strong>${esc(d?.alias || s.name)}</strong></div>
-                      ${d ? `<div class="hint">${deviceState(d)}</div>`
-                          : '<div class="hint">not imported yet — Import terminals in Settings</div>'}</td>
+                  <td><strong>${esc(d?.alias || s.name)}</strong></td>
                   <td class="mono">${esc(s.base_url.replace(/^zk:\/\//i, ''))}</td>
                   <td class="mono">${esc(d?.serial_number || '—')}</td>
-                  <td>${pill(s.status)}<div class="hint">checked ${esc(fmtAgo(s.last_checked_at))}</div></td>
                   <td class="num">${esc(d?.punch_count ?? '—')}</td>
                   <td>${esc(d?.last_seen_at ? fmtAgo(d.last_seen_at) : '—')}</td>
+                  <td>${d ? deviceState(d)
+                      : '<span class="hint" data-tip="Recorded the first time Test connection reaches the device (Settings → Biometric connections)">not recognised yet</span>'}</td>
+                  <td><span data-tip="Checked ${esc(fmtAgo(s.last_checked_at))}">${pill(s.status)}</span></td>
                   <td class="actions-cell"><div class="row-actions">${syncButton(s)}</div></td>
                 </tr>`;
             }).join('')}
@@ -53,10 +58,9 @@ function platformCard(source, devices) {
   return `
     <div class="card" style="margin-bottom:18px">
       <div class="card-head" style="position:static">
-        <h2>${esc(source.name)} <span class="hint">platform server · ${esc(source.base_url)}</span></h2>
+        <h2>${esc(source.name)}</h2>
         <div class="actions">
-          ${pill(source.status)}
-          <span class="hint">checked ${esc(fmtAgo(source.last_checked_at))}</span>
+          <span data-tip="Checked ${esc(fmtAgo(source.last_checked_at))}">${pill(source.status)}</span>
           ${syncButton(source)}
         </div>
       </div>
@@ -83,7 +87,7 @@ function platformCard(source, devices) {
     </div>`;
 }
 
-export async function renderTerminals(mount) {
+export async function renderTerminals(mount, route) {
   mount.innerHTML = loading();
   const [sources, devices] = await Promise.all([
     api.get('/sources'),
@@ -93,6 +97,11 @@ export async function renderTerminals(mount) {
   devices.forEach((d) => { (devicesBySource[d.source_id] ||= []).push(d); });
   const standalone = sources.filter((s) => s.connection_kind === 'device');
   const platforms = sources.filter((s) => s.connection_kind !== 'device');
+  // One kind at a time, as tabs: ?view= picks, otherwise whichever kind this
+  // account actually has (standalone first when it has both).
+  const asked = route?.query?.view;
+  const view = asked === 'platforms' || asked === 'standalone' ? asked
+    : standalone.length || !platforms.length ? 'standalone' : 'platforms';
   const count = standalone.length + platforms.reduce((n, s) => n + (devicesBySource[s.id] || []).length, 0);
 
   mount.innerHTML = sources.length ? `
@@ -100,8 +109,17 @@ export async function renderTerminals(mount) {
       <span class="hint">${count} terminal${count === 1 ? '' : 's'} across ${sources.length} connection${sources.length === 1 ? '' : 's'}</span>
       <a class="btn sm" href="#/settings/biometric">Manage connections</a>
     </div>
-    ${standaloneCard(standalone, devicesBySource)}
-    ${platforms.map((s) => platformCard(s, devicesBySource[s.id] || [])).join('')}
+    <nav class="tabs" aria-label="Connection type">
+      <a href="#/terminals?view=standalone" class="${view === 'standalone' ? 'active' : ''}"
+         ${view === 'standalone' ? 'aria-current="page"' : ''}>Standalone devices <span class="tab-count">${standalone.length}</span></a>
+      <a href="#/terminals?view=platforms" class="${view === 'platforms' ? 'active' : ''}"
+         ${view === 'platforms' ? 'aria-current="page"' : ''}>Platform servers <span class="tab-count">${platforms.length}</span></a>
+    </nav>
+    ${view === 'standalone'
+      ? (standalone.length ? standaloneCard(standalone, devicesBySource)
+        : `<div class="card">${empty('No standalone devices', 'Add one in Settings → Biometric connections.')}</div>`)
+      : (platforms.length ? platforms.map((s) => platformCard(s, devicesBySource[s.id] || [])).join('')
+        : `<div class="card">${empty('No platform servers', 'Add one in Settings → Biometric connections.')}</div>`)}
   ` : `
     <div class="card">
       ${empty('No biometric connections yet', 'Add a BioTime server or a standalone device, then its terminals show up here.')}
@@ -116,7 +134,7 @@ export async function renderTerminals(mount) {
       await syncSource(button.dataset.syncSource);
       button.disabled = false;
       button.textContent = label;
-      await renderTerminals(mount);
+      await renderTerminals(mount, route);
     });
   });
 }

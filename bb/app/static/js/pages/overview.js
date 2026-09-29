@@ -2,7 +2,7 @@
 
 import { api, auth } from '../api.js';
 import {
-  $, banner, busy, empty, esc, fmtAgo, fmtIn, guard, loading, pill, stat,
+  $, banner, busy, empty, esc, fmtAgo, fmtIn, guard, loading, pill, stat, fmtUtc,
 } from '../ui.js';
 
 /* The automatic-sync strip.
@@ -228,8 +228,16 @@ export async function render(mount) {
   }
 
   const today = new Date().toISOString().slice(0, 10);
+  // What needs attention sits in a narrow column on the right rather than
+  // stacked full-width above everything — still the first thing in reading
+  // order (and on top again on narrow screens, see .notice-rail), without
+  // pushing the page's actual content below the fold.
+  const rail = banners.length
+    ? `<aside class="notice-rail" aria-label="Needs attention">${banners.join('')}</aside>` : '';
   mount.innerHTML = `
-    ${banners.join('')}
+    <div class="${rail ? 'with-rail' : ''}">
+    ${rail}
+    <div class="rail-main">
     ${checklist}
     ${scheduleCard(data.schedule, needsSetup)}
 
@@ -265,12 +273,11 @@ export async function render(mount) {
       </div>
 
       <div class="card">
-        <h2>Last sync</h2>
+        <h2>Last sync${run ? ` <span class="pill mute" data-tip="${esc(fmtUtc(run.started_at))} UTC">${esc(fmtAgo(run.started_at))}</span>` : ''}</h2>
         ${run ? `
           <table>
             <tbody>
               <tr><td>Result</td><td style="text-align:right">${pill(run.status)}</td></tr>
-              <tr><td>When</td><td style="text-align:right">${esc(fmtAgo(run.started_at))}</td></tr>
               <tr><td>New punches</td><td class="num" style="text-align:right">${esc(run.punches_new)}</td></tr>
               <tr><td>Attendance created</td><td class="num" style="text-align:right">${esc(run.attendances_created)}</td></tr>
               <tr><td>Attendance closed</td><td class="num" style="text-align:right">${esc(run.attendances_closed)}</td></tr>
@@ -306,6 +313,8 @@ export async function render(mount) {
           </table>
         </div>
       </div>` : ''}
+    </div>
+    </div>
   `;
 
   // The checklist's "Sync now" is the top bar's, pressed from here.

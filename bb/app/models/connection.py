@@ -161,6 +161,18 @@ class DeviceSource(Base, UUIDPk, Timestamped):
         back_populates="source", cascade="all, delete-orphan"
     )
 
+    @property
+    def location(self) -> str | None:
+        """Where a standalone device physically is ("Main entrance"), as the
+        customer typed it when adding it. Kept in ``config`` rather than a
+        column: it only means something for a single-terminal connection, and
+        it is copied onto that terminal's Device.area (and Odoo's device
+        record) whenever the device is recognised — see
+        app.api.v1.connections._register_standalone_device."""
+        value = (self.config or {}).get("location")
+        return value or None
+
+
 
 class Device(Base, UUIDPk, Timestamped):
     __tablename__ = "device"

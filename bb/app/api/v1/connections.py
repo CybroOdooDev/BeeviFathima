@@ -251,6 +251,30 @@ def test_odoo(
     return result
 
 
+@router.get("/odoo-connections/{conn_id}/companies")
+def list_odoo_companies(
+    conn_id: str,
+    principal: Principal = Depends(get_principal),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    """The companies a saved connection's Odoo login can reach — what fills
+    the Settings page's company dropdown without a Test connection first.
+
+    Deliberately not scoped to the connection's own company (see
+    ``OdooClient.list_companies``): this is the list a customer picks from,
+    including when the company currently set is the wrong one. Only ids and
+    names, never HR data.
+    """
+    conn = _get_odoo(db, principal, conn_id)
+    try:
+        client = build_odoo_client(principal.tenant, conn)
+        client.authenticate()
+        companies = client.list_companies()
+    except (OdooError, UnsafeTargetError) as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    return [{"id": c["id"], "name": c["name"]} for c in companies]
+
+
 @router.post("/odoo-connections/{conn_id}/device-tracking/bootstrap", response_model=TestResult)
 def bootstrap_device_tracking(
     conn_id: str,
@@ -519,7 +543,10 @@ def create_source(
         name=payload.name,
         provider=payload.provider,
         connection_kind=payload.connection_kind,
-        config=payload.config or {},
+        config={**(payload.config or {}),
+                **({"location": payload.location.strip()}
+                   if payload.connection_kind == "device" and payload.location and payload.location.strip()
+                   else {})},
         base_url=payload.base_url,
         username=payload.username,
         password_enc=encrypt(payload.password, principal.tenant.crypto_key),
@@ -530,7 +557,9 @@ def create_source(
     )
     db.add(source)
     _dupe_name_guard(db, payload.name)
-    _probe_source(principal, source)
+    probe = _probe_source(principal, source)
+    if probe.ok:
+        _register_standalone_device(db, principal, source)
     audit(db, principal, "source.create", source.id, payload.base_url, request)
     db.commit()
     db.refresh(source)
@@ -548,6 +577,14 @@ def update_source(
     source = _get_source(db, principal, source_id)
     data = payload.model_dump(exclude_unset=True)
     password = data.pop("password", None)
+    location = data.pop("location", None) if "location" in data else ...
+    if location is not ... and source.connection_kind == "device":
+        config = dict(source.config or {})
+        if location and location.strip():
+            config["location"] = location.strip()
+        else:
+            config.pop("location", None)
+        source.config = config
     if data.get("auto_provision_employees"):
         try:
             provider_cls = get_provider_class(source.provider)
@@ -674,6 +711,10 @@ def test_source(
 ) -> TestResult:
     source = _get_source(db, principal, source_id)
     result = _probe_source(principal, source)
+    if result.ok:
+        note = _register_standalone_device(db, principal, source)
+        if note:
+            result.message = f"{result.message}. {note}"
     db.commit()
     return result
 
@@ -763,6 +804,75 @@ def _push_devices_to_odoo(
     if len(failures) == len(devices):
         return "Could not register any device in Odoo — " + "; ".join(failures)
     return "Could not register some devices in Odoo — " + "; ".join(failures)
+
+
+
+def _register_standalone_device(
+    db: Session, principal: Principal, source: DeviceSource
+) -> str | None:
+    """A standalone device that answers is recorded as a terminal right away.
+
+    There is exactly one terminal behind a standalone connection, so there is
+    nothing to "import": the moment a connection test reaches it, its serial
+    number is known, and waiting for a separate Import terminals click (or for
+    its first punch) only leaves it off the Terminals page and out of Odoo's
+    device model in the meantime. The record takes the name the customer gave
+    the connection ("Front door"), the location they typed, the address, and
+    the device's own system name as its model; then it is pushed to Odoo the
+    same way Import terminals pushes a platform's terminals.
+
+    Returns a short sentence to add to the test result, or None. Never raises:
+    a connection test that worked must not turn into an error because the
+    follow-up registration hit something.
+    """
+    if source.connection_kind != "device":
+        return None
+    if not source.id:
+        db.flush()  # a just-created connection needs its id for the device row
+    provider = None
+    try:
+        provider = build_source_provider(principal.tenant, source)
+        caps = getattr(provider, "capabilities", ())
+        if Capability.LIST_TERMINALS not in caps or not hasattr(provider, "fetch_terminals"):
+            return None
+        terminal = next(iter(provider.fetch_terminals()), None)
+    except (ProviderError, UnsafeTargetError) as exc:
+        log.warning("Could not read terminal details from %s: %s", source.name, exc)
+        return None
+    finally:
+        if provider is not None:
+            provider.close()
+    serial = (getattr(terminal, "serial_number", None) or "").strip()
+    if not serial:
+        return None
+
+    known = {
+        d.serial_number: d
+        for d in db.scalars(select(Device).where(Device.source_id == source.id)).all()
+    }
+    device = known.get(serial)
+    created = device is None
+    if created:
+        device = Device(tenant_id=principal.tenant.id, source_id=source.id, serial_number=serial)
+        db.add(device)
+    device.alias = source.name
+    device.area = source.location or device.area
+    device.ip_address = terminal.ip_address or device.ip_address
+    # The device's own system name ("uFace202/ID") — a better model label
+    # than nothing when the protocol reports no separate model string.
+    device.model = terminal.model or terminal.alias or device.model
+    device.missing_since = None
+    # A different serial at this address means the unit was swapped: the old
+    # record stays (its history is real) but is flagged as no longer there.
+    now = datetime.now(timezone.utc)
+    for other_serial, other in known.items():
+        if other_serial != serial and other.missing_since is None:
+            other.missing_since = now
+    db.flush()
+
+    problem = _push_devices_to_odoo(db, principal, [device])
+    what = f"{'Registered' if created else 'Updated'} terminal {serial}"
+    return f"{what}; {problem}" if problem else f"{what}."
 
 
 @router.post("/sources/{source_id}/discover-devices", response_model=list[DeviceOut])

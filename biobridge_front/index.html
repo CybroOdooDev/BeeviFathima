@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BioBridge — biometric attendance, synced into Odoo</title>
+<meta name="description" content="BioBridge connects ZKTeco BioTime servers and standalone terminals to Odoo, pairs raw punches into clean attendance, and syncs it on a schedule.">
+<meta property="og:title" content="BioBridge — biometric attendance, synced into Odoo">
+<meta property="og:description" content="Every fingerprint and face scan in Odoo, without anyone touching a spreadsheet.">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="index.html" aria-label="BioBridge home"><span class="brand-mark">B</span><span>Bio<b>Bridge</b></span></a>
+    <nav class="nav" aria-label="Main">
+      <a href="#how">How it works</a>
+      <a href="#features">Features</a>
+      <a href="pricing.html">Pricing</a>
+      <a href="setup.html">Setup guide</a>
+      <a href="contact.html">Contact</a>
+    </nav>
+    <div class="header-cta">
+      <a class="btn btn-ghost btn-sm" data-app="signin" href="#">Sign in / Sign up</a>
+      <a class="btn btn-primary btn-sm" data-app="signup" href="#">Start free trial</a>
+    </div>
+    <button class="menu-btn" type="button" aria-label="Menu" aria-expanded="false">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+  </div>
+</header>
+
+<main id="main">
+<section class="hero">
+  <div class="wrap">
+    <div class="hero-copy">
+      <span class="chip">For Odoo Attendances · Online, Odoo.sh or self-hosted</span>
+      <h1>Every fingerprint and face scan, in Odoo — without anyone touching a spreadsheet.</h1>
+      <p class="lead">BioBridge connects your ZKTeco BioTime server or standalone terminals to Odoo, pairs raw punches into clean check-ins and check-outs, and writes them as attendance records on a schedule you set.</p>
+      <div class="hero-actions">
+        <a class="btn btn-primary" data-app="signup" href="#">Start a 10-day free trial</a>
+        <a class="btn btn-ghost" href="contact.html">Book a demo</a>
+      </div>
+      <p class="fine">No card needed for the trial. No Odoo add-on to install.</p>
+    </div>
+
+    <div class="flow" role="img" aria-label="Punches flow from terminals through BioBridge into Odoo attendance">
+      <div class="flow-row">
+        <div class="flow-node">
+          <div class="label">TERMINALS</div>
+          <div class="t">Front gate</div><div class="s">09:02 · in</div>
+          <div class="t" style="margin-top:10px">Warehouse</div><div class="s">17:04 · out</div>
+        </div>
+        <div class="flow-link"></div>
+        <div class="flow-node core">
+          <div class="t">BioBridge</div>
+          <p>Drops double-taps, pairs in and out, caps forgotten check-outs, matches badges to employees.</p>
+        </div>
+        <div class="flow-link"></div>
+        <div class="flow-node">
+          <div class="label">ODOO</div>
+          <div class="t">hr.attendance</div>
+          <div class="s" style="color:var(--ok)">09:02 → 17:04</div>
+          <div class="s">7 h 58 min</div>
+        </div>
+      </div>
+      <div class="flow-status">
+        <div><b style="font-size:14px">Last sync</b><div class="fine" style="font-size:13px">48 new punches · 23 attendances created · 0 errors</div></div>
+        <span class="pill-ok">success · 3 min ago</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="compat">
+  <div class="wrap">
+    <span class="muted">Works with</span>
+    <span>ZKTeco BioTime</span>
+    <span>ZKTeco standalone terminals</span>
+    <span>Odoo [SUPPORTED VERSIONS]</span>
+    <span>Odoo Online, Odoo.sh, self-hosted</span>
+  </div>
+</div>
+
+<section id="how">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="eyebrow">How it works</span>
+      <h2>Connected in an afternoon. Hands-off after that.</h2>
+    </div>
+    <div class="grid cols-4">
+      <div class="card"><span class="step-num">01</span><h3>Connect Odoo</h3><p>Server URL, database, login and an API key. On a multi-company Odoo, pick the company from the list.</p></div>
+      <div class="card"><span class="step-num">02</span><h3>Add your devices</h3><p>A BioTime server, or a terminal by its IP. Name it "Front door", give it a location — the connection test registers it in Odoo.</p></div>
+      <div class="card"><span class="step-num">03</span><h3>Match badges</h3><p>Badges match Odoo employees by barcode, PIN, registration number or work email. Anything unclear waits for you.</p></div>
+      <div class="card"><span class="step-num">04</span><h3>It syncs on its own</h3><p>Every 5 minutes to every few hours, your choice. You only hear from BioBridge when something needs you.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="features" class="band">
+  <div class="wrap">
+    <div class="split-head">
+      <div class="section-head">
+        <span class="eyebrow">Why BioBridge</span>
+        <h2>Raw punches are messy. Your attendance shouldn't be.</h2>
+      </div>
+      <p>People double-tap, forget to badge out, work past midnight — and half the terminals in the field have no IN/OUT keys. BioBridge handles all of it before Odoo sees a single record.</p>
+    </div>
+    <div class="grid cols-3">
+      <div class="card">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M7 8h10M7 12h10M7 16h6"/></svg>
+        <h3>Three pairing modes</h3><p>Alternating, trust-the-device, or first-in/last-out per day — with automatic fallback when a terminal stamps everything "Check In".</p>
+      </div>
+      <div class="card">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+        <h3>Guard rails, not surprises</h3><p>Double-taps are dropped, night shifts stay one record, and a forgotten check-out is capped and flagged — never a 300-hour shift.</p>
+      </div>
+      <div class="card">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16v12H4z"/><path d="M8 7V5h8v2M4 12h16"/></svg>
+        <h3>Nothing lost in an outage</h3><p>Punches are captured first and pushed when Odoo is reachable. Odoo down for a day costs a delay, never data.</p>
+      </div>
+      <div class="card">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M10 17h4"/></svg>
+        <h3>Knows which door</h3><p>Each attendance carries the terminal it came from — on Odoo Online too, with no add-on to install.</p>
+      </div>
+      <div class="card">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21h18M5 21V8l7-4 7 4v13M9 21v-6h6v6"/></svg>
+        <h3>Multi-company, multi-site</h3><p>Several BioTime servers and standalone terminals side by side, each connection scoped to the right Odoo company.</p>
+      </div>
+      <div class="card">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M17 8v6M14 11h6"/></svg>
+        <h3>New hires onto the device</h3><p>Odoo employees with a badge ID or PIN are created on your ZKTeco terminal, ready to enrol their fingerprint.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap grid cols-2" style="gap:56px;align-items:center">
+    <div class="section-head" style="margin:0">
+      <span class="eyebrow">Pricing</span>
+      <h2>Simple monthly plans, priced by headcount.</h2>
+      <p class="muted" style="font-size:17px">Every plan includes every feature. Plans differ only in how many employees you match and how often BioBridge syncs.</p>
+      <a href="pricing.html" style="font-weight:600">Compare plans →</a>
+    </div>
+    <div class="grid cols-3" style="gap:14px">
+      <div class="mini-plan"><div class="name">Starter</div><div class="price">$49<small>/mo</small></div><div class="cap">Up to 25 employees</div></div>
+      <div class="mini-plan featured"><div class="name">Growth</div><div class="price">$149<small>/mo</small></div><div class="cap">Up to 150 employees</div></div>
+      <div class="mini-plan"><div class="name">Scale</div><div class="price">$399<small>/mo</small></div><div class="cap">No employee cap</div></div>
+    </div>
+  </div>
+</section>
+
+<section style="padding-top:0">
+  <div class="wrap">
+    <div class="cta">
+      <div>
+        <h2>Stop copying punches into Odoo by hand.</h2>
+        <p>Ten days free, every feature, no card. Connect one device and watch the first attendance land.</p>
+      </div>
+      <div class="actions">
+        <a class="btn btn-light" data-app="signup" href="#">Start free trial</a>
+        <a class="btn btn-outline-light" href="contact.html">Talk to us</a>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="brand-col">
+      <a class="brand" href="index.html"><span class="brand-mark">B</span><span>Bio<b>Bridge</b></span></a>
+      <p class="about">Biometric attendance, synced into Odoo. Built by [COMPANY NAME].</p>
+      <p class="copy">© <span data-year></span> [COMPANY NAME]</p>
+    </div>
+    <nav aria-label="Product"><b>Product</b><a href="#features">Features</a><a href="pricing.html">Pricing</a><a href="setup.html">Setup guide</a></nav>
+    <nav aria-label="Company"><b>Company</b><a href="contact.html">Contact sales</a><a href="contact.html">Book a demo</a><a data-app="signin" href="#">Sign in</a></nav>
+    <nav aria-label="Legal"><b>Legal</b><a href="[TERMS URL]">Terms</a><a href="[PRIVACY URL]">Privacy</a></nav>
+  </div>
+</footer>
+<script src="assets/site.js" defer></script>
+</body>
+</html>

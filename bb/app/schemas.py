@@ -507,6 +507,9 @@ class SourceIn(BaseModel):
     #: opts a source into this explicitly, same as auto_create_employees on
     #: the Odoo side of the mapping.
     auto_provision_employees: bool = False
+    #: Standalone devices only: where the terminal is ("Main entrance").
+    #: Stored in config and copied onto the device record when recognised.
+    location: str | None = Field(default=None, max_length=120)
 
     @field_validator("base_url")
     @classmethod
@@ -529,6 +532,7 @@ class SourceUpdate(BaseModel):
     verify_ssl: bool | None = None
     is_active: bool | None = None
     auto_provision_employees: bool | None = None
+    location: str | None = Field(default=None, max_length=120)
 
     @field_validator("base_url")
     @classmethod
@@ -586,6 +590,7 @@ class SourceOut(ORMModel):
     last_checked_at: datetime | None
     is_active: bool
     auto_provision_employees: bool
+    location: str | None = None
 
 
 class ProvisionedEmployee(BaseModel):

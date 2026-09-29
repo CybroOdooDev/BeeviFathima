@@ -101,7 +101,16 @@ export const banner = (title, body, kind = '', action = null) => `
 
 export const loading = () => '<div class="skeleton">Loading…</div>';
 
-export function field({ name, label, type = 'text', value = '', help, required, placeholder, options, strongHelp, boolean, datalist }) {
+const INFO_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">'
+  + '<circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.4"/>'
+  + '<path d="M8 7.2v3.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>'
+  + '<circle cx="8" cy="5" r=".85" fill="currentColor"/></svg>';
+
+/* ``tip`` moves ``help`` out of the flow and into a small (i) beside the label,
+ * shown by the app-wide hover / focus label (wireTips). For forms whose
+ * fields are self-explanatory most of the time, where a paragraph under
+ * every box is more noise than guidance. */
+export function field({ name, label, type = 'text', value = '', help, required, placeholder, options, strongHelp, boolean, datalist, tip }) {
   // A select always yields a string, so a "false" option would PATCH the string
   // "false" — truthy everywhere on the server. data-bool tells readForm to
   // convert it. Explicit rather than sniffing the value, so a genuinely
@@ -132,9 +141,11 @@ export function field({ name, label, type = 'text', value = '', help, required, 
          ${placeholder ? `placeholder="${esc(placeholder)}"` : ''}>`;
   return `
     <div class="field">
-      <label for="${esc(name)}">${esc(label)}${required ? '' : ' <span class="opt">optional</span>'}</label>
+      <label for="${esc(name)}">${esc(label)}${required ? '' : ' <span class="opt">optional</span>'}${
+        help && tip ? `<span class="field-tip${strongHelp ? ' strong' : ''}" tabindex="0" role="note"
+          aria-label="${esc(help)}" data-tip="${esc(help)}">${INFO_ICON}</span>` : ''}</label>
       ${control}
-      ${help ? `<div class="help ${strongHelp ? 'strong' : ''}">${esc(help)}</div>` : ''}
+      ${help && !tip ? `<div class="help ${strongHelp ? 'strong' : ''}">${esc(help)}</div>` : ''}
     </div>`;
 }
 

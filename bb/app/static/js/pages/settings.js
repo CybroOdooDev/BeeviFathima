@@ -10,9 +10,13 @@
 import { api, auth } from '../api.js';
 import { needsMatch, unmappedCard, wireUnmapped } from './data.js';
 import {
-  $, $$, banner, busy, empty, esc, field, fmtAgo, fmtIn, guard, loading, pill, pricingCards, readForm,
+  $, $$, banner, busy, empty, esc, field as baseField, fmtAgo, fmtIn, guard, loading, pill, pricingCards, readForm,
   timezoneNames, toast, wirePricingCards,
 } from '../ui.js';
+
+/* Every settings form shows its field help as an (i) beside the label,
+ * on hover / focus, rather than a paragraph under every box. */
+const field = (options) => baseField({ tip: true, ...options });
 
 /* Settings is the one configuration menu: the account's own rules, then the
  * two connections — Odoo (where attendance goes, and the badges still waiting
@@ -406,35 +410,25 @@ async function renderOdoo(mount, route) {
       <div id="odooStatusExtras">${trackingExtrasHtml(odoo)}</div>
       <form id="odooForm" ${readonly ? 'inert' : ''}>
         ${field({
-          name: 'url', label: 'Server URL', required: true,
+          name: 'url', label: 'Server URL', required: true, tip: true, strongHelp: true,
           value: odoo?.url || '', placeholder: 'https://acme.odoo.com',
-          help: 'Just the address — no /odoo or /web on the end. Odoo 17+ shows those in the browser bar, and they are the most common cause of a failed connection.',
-          strongHelp: true,
+          help: 'Just the address, without /odoo or /web on the end — the most common cause of a failed connection.',
         })}
         ${field({
-          name: 'db_name', label: 'Database', required: true, value: odoo?.db_name || '',
+          name: 'db_name', label: 'Database', required: true, tip: true, value: odoo?.db_name || '',
           help: 'On Odoo Online this is usually the subdomain.',
         })}
         ${field({ name: 'username', label: 'Login', required: true, value: odoo?.username || '' })}
         ${field({
-          name: 'api_key', label: 'API key', type: 'password',
+          name: 'api_key', label: 'API key', type: 'password', tip: true,
           required: !odoo,
           placeholder: odoo ? 'unchanged' : '',
           help: odoo
             ? 'Stored encrypted and never shown again. Leave blank to keep the current one.'
             : 'Odoo → Preferences → Account Security → New API Key.',
         })}
-        ${field({
-          name: 'company_id', label: 'Odoo company ID', type: 'number',
-          value: odoo?.company_id ?? '',
-          help: 'Only matters if this Odoo has more than one company. Leave blank for '
-            + 'a single-company Odoo. Set on a multi-company one, or this connection can '
-            + 'see and write every company the API user has access to, not just one — '
-            + 'Test connection lists the company IDs this login can reach.',
-          strongHelp: true,
-        })}
+        <div id="companyField">${companyFieldHtml(odoo, odooLastCompanies?.companies, odoo?.company_id)}</div>
       </form>
-      ${odooLastCompanies ? companiesHint(odoo, odooLastCompanies.companies) : ''}
     </div>
     ${odoo ? unmappedCard(mappings.filter(needsMatch)) : ''}`;
 
@@ -455,8 +449,35 @@ async function renderOdoo(mount, route) {
   const odooValues = () => {
     const values = readForm(form);
     if (odoo && !values.api_key) delete values.api_key;
+    if (!('company_id' in values)) {
+      // Picker not shown (Odoo not reached yet): send nothing, so a saved
+      // company is kept as it is rather than cleared by its absence.
+      delete values.company_id;
+    } else {
+      values.company_id = values.company_id === '' ? null : Number(values.company_id);
+    }
     return values;
   };
+
+  // Repaint just the company dropdown with a fresh list, keeping whatever is
+  // selected right now (which may be an unsaved change).
+  const paintCompanies = (companies) => {
+    const box = $('#companyField', mount);
+    if (!box) return;
+    const selected = box.querySelector('select')?.value ?? odoo?.company_id;
+    box.innerHTML = companyFieldHtml(odoo, companies, selected);
+  };
+  // A saved connection fills its list on its own, in the background — the
+  // page never waits on Odoo to render. Quiet on failure: the saved choice
+  // is still shown, and Test connection reports what is actually wrong.
+  if (odoo && !odooLastCompanies) {
+    api.get(`/odoo-connections/${odoo.id}/companies`)
+      .then((companies) => {
+        odooLastCompanies = { connId: odoo.id, companies };
+        paintCompanies(companies);
+      })
+      .catch(() => {});
+  }
 
   // The device-tracking rows live in their own container so a successful
   // Test connection can repaint just them — see the probe below — without
@@ -472,6 +493,7 @@ async function renderOdoo(mount, route) {
     commit: $('#saveOdoo', mount),
     result: $('#odooTestResult', mount),
     label: odoo ? 'Save changes' : 'Connect Odoo',
+    ignore: ['company_id'],
     gate: !odoo,
     probe: async () => {
       const result = await api.post('/odoo-connections/test', {
@@ -518,7 +540,20 @@ async function renderOdoo(mount, route) {
       }
       return result;
     },
-    after: (result) => companiesHint(odoo, result.detail?.companies || []),
+    after: (result) => {
+      if (!result.ok) {
+        // A failed test hides the picker again — it only belongs to a
+        // connection that works.
+        const box = $('#companyField', mount);
+        if (box) box.innerHTML = '';
+        return '';
+      }
+      if (Array.isArray(result.detail?.companies)) {
+        if (odoo) odooLastCompanies = { connId: odoo.id, companies: result.detail.companies };
+        paintCompanies(result.detail.companies);
+      }
+      return '';
+    },
   });
 
   form.addEventListener('submit', (event) => {
@@ -610,10 +645,16 @@ function testResultHtml(result, stale) {
  * toast instead — long enough to read, gone once read — and the panel here
  * is left for `after()` alone: follow-up detail a toast is too small for,
  * like Odoo's list of company ids to pick from. */
-function wireTestFirst({ form, test, commit, result, probe, label, gate, after }) {
+function wireTestFirst({ form, test, commit, result, probe, label, gate, after, ignore = [] }) {
   let tested = null;   // { fingerprint, ok } for the values last tested
   let last = null;     // the TestResult itself
-  const fingerprint = () => JSON.stringify(readForm(form));
+  // ``ignore``: fields a test does not need to be repeated for (the Odoo
+  // company picker, which the test itself is what reveals).
+  const fingerprint = () => {
+    const values = readForm(form);
+    ignore.forEach((name) => delete values[name]);
+    return JSON.stringify(values);
+  };
 
   const paint = () => {
     const current = Boolean(tested) && tested.fingerprint === fingerprint();
@@ -704,17 +745,39 @@ function trackingExtrasHtml(odoo) {
  * customer with several companies on this Odoo can read off the id to
  * type into the field above — and, if the id they already set doesn't
  * appear in this list, why the test just failed. */
-function companiesHint(odoo, companies) {
-  if (companies.length <= 1) return '';
-  const rows = companies
-    .map((c) => `<li><code>${esc(String(c.id))}</code> — ${esc(c.name)}</li>`)
-    .join('');
-  return `
-    <div class="note" style="margin-top:10px">
-      This Odoo login can see ${companies.length} companies — set <strong>Odoo company ID</strong>
-      above to isolate this connection to one of them:
-      <ul style="margin:6px 0 0 18px">${rows}</ul>
-    </div>`;
+/** The company picker. Its options come from Odoo itself — the companies
+ * this login can reach, fetched on its own for a saved connection and
+ * returned by every Test connection — so nobody has to go and look an id
+ * up. Until that list arrives it still shows what is saved, so the current
+ * choice is never lost or blanked while loading.
+ *
+ * ``companies``: [{id, name}] once known, or null while not (yet). */
+function companyFieldHtml(odoo, companies, selected) {
+  // Only once Odoo has actually answered with its companies — a successful
+  // Test connection, or the saved connection's own background fetch. Before
+  // that there is nothing real to choose from.
+  if (!Array.isArray(companies)) return '';
+  const current = selected === '' || selected == null ? '' : String(selected);
+  const known = true;
+  const list = known ? [...companies] : [];
+  // A saved choice missing from the list (not loaded yet, or no longer
+  // visible to this login) is kept as an option rather than silently dropped.
+  if (current && !list.some((c) => String(c.id) === current)) {
+    list.unshift({ id: current, name: odoo?.company_name || `Company ${current}` });
+  }
+  const single = known && companies.length <= 1;
+  const options = [
+    { value: '', label: single ? 'Not scoped — this Odoo has one company' : 'All companies this login can reach' },
+    ...list.map((c) => ({ value: String(c.id), label: `${c.name} (id ${c.id})` })),
+  ];
+  return field({
+    name: 'company_id', label: 'Odoo company', value: current, options,
+    strongHelp: !single,
+    help: single
+        ? 'This login sees a single company, so there is nothing to choose.'
+        : 'Pick the company whose employees and attendance this connection should use. '
+          + '"All companies" lets it write to every company the API user can reach.',
+  });
 }
 
 /* ===========================================================================
@@ -788,14 +851,14 @@ async function renderBiometric(mount, route) {
       ) : ''}
     </div>`;
 
-  wireBiometric(mount, providersFor);
+  wireBiometric(mount, providersFor, canProvision);
 
   // #/settings/biometric?add=1 — the Overview's setup checklist links here
   // to open the wizard straight away. Dropped from the address afterwards so
   // a reload does not open it again.
   if (route?.query?.add && auth.canWrite) {
     history.replaceState(null, '', '#/settings/biometric');
-    openAddWizard({ providersFor, onDone: () => renderBiometric(mount) });
+    openAddWizard({ providersFor, canProvision, onDone: () => renderBiometric(mount) });
   }
 }
 
@@ -812,7 +875,7 @@ async function renderBiometric(mount, route) {
  * trapping and Esc-to-close for free. Nothing is saved until Connect.
  * ======================================================================== */
 
-function openAddWizard({ providersFor, onDone }) {
+function openAddWizard({ providersFor, onDone, canProvision = new Set() }) {
   document.querySelector('dialog.wizard')?.remove();
   const dialog = document.createElement('dialog');
   dialog.className = 'wizard';
@@ -886,6 +949,7 @@ function openAddWizard({ providersFor, onDone }) {
       ['Type', isDevice() ? 'Standalone device' : 'Platform server'],
       ['Protocol', providers().find((p) => p.slug === state.provider)?.label || state.provider],
       ['Name', v.name],
+      ...(isDevice() ? [['Location', v.location]] : []),
       [isDevice() ? 'Device address' : 'Server URL', v.base_url],
       ...(v.username ? [['Username', v.username]] : []),
       ['Timezone', v.server_timezone],
@@ -1007,14 +1071,20 @@ function openAddWizard({ providersFor, onDone }) {
     // everything on the page, toasts included.
     dialog.querySelector('[data-wiz=connect]')?.addEventListener('click', (event) =>
       busy(event.target, async () => {
+        let created;
         try {
-          await api.post('/sources', payload());
+          created = await api.post('/sources', payload());
         } catch (error) {
           if (error.status !== 401) $('#wizError', dialog).textContent = error.message || 'Could not connect';
           return;
         }
         close();
-        toast('Connection added', 'ok');
+        toast(isDevice() ? 'Device connected and added to Terminals' : 'Connection added', 'ok');
+        // Connect already tested it; a device that answered also gets any
+        // Odoo employees it is missing, same as a later Test connection.
+        if (isDevice() && created?.status === 'connected' && canProvision.has(state.provider)) {
+          await provisionAfterTest(created.id);
+        }
         await onDone();
       })
     );
@@ -1041,6 +1111,24 @@ const KIND_ICON = {
 };
 
 /** One line for the toast after Import terminals created employees. */
+/** After a standalone device answers a test, put any Odoo employees it is
+ * missing onto it — what Import terminals used to do for it. Only speaks
+ * up when something happened: people added, or some could not be. A
+ * setup that simply has nothing to add (or no Odoo yet) stays quiet, since
+ * this runs on every test. */
+async function provisionAfterTest(sourceId) {
+  let result;
+  try {
+    result = await api.post(`/sources/${sourceId}/provision-employees`);
+  } catch (error) {
+    if (error.status >= 500) toast(`Employees not added to the device: ${error.message}`, 'bad');
+    return;
+  }
+  if (result.created.length || result.failed.length) {
+    toast(provisionSummary(result), result.failed.length ? 'bad' : 'ok');
+  }
+}
+
 function provisionSummary(r) {
   const parts = [];
   const names = (list) => list.slice(0, 5).map((e) => `${e.name} (${e.emp_code})`).join(', ')
@@ -1083,11 +1171,17 @@ function sourceCard(source, devices, readonly, canProvision = false) {
           <div class="actions">
             ${!isConfirming ? `<button type="button" class="sm link" data-remove="${esc(source.id)}">Remove</button>` : ''}
             <button type="button" class="sm" data-edit="${esc(source.id)}">${isEditing ? 'Close' : 'Edit'}</button>
-            <button type="button" class="sm" data-test="${esc(source.id)}">Test connection</button>
+            <button type="button" class="sm" data-test="${esc(source.id)}"
+                    ${source.connection_kind === 'device' && canProvision ? 'data-provision="1"' : ''}>Test connection</button>
+            ${source.connection_kind === 'device' ? ''
+              // One terminal, registered by the connection test itself (see
+              // _register_standalone_device), so nothing to import — and the
+              // other half of Import terminals, putting Odoo employees onto
+              // the device, now rides on Test connection too (data-provision).
+              : `<button type="button" class="sm" data-discover="${esc(source.id)}"
+                    ${canProvision ? 'data-provision="1" title="Also creates Odoo employees who have a Badge ID or PIN and aren\'t on the device yet."' : ''}>Import terminals</button>`}
             ${auth.canWrite && source.is_active !== false ? `<button type="button" class="sm primary" data-sync-source="${esc(source.id)}"
                     title="Pull this connection's punches now and push them to Odoo">Sync now</button>` : ''}
-            <button type="button" class="sm" data-discover="${esc(source.id)}"
-                    ${canProvision ? 'data-provision="1" title="Also creates Odoo employees who have a Badge ID or PIN and aren\'t on the device yet."' : ''}>Import terminals</button>
           </div>` : ''}
       </div>
       ${!readonly && isConfirming ? `
@@ -1097,7 +1191,7 @@ function sourceCard(source, devices, readonly, canProvision = false) {
           <button type="button" class="sm link" data-remove-cancel="${esc(source.id)}">Cancel</button>
         </div>` : ''}
       ${source.status_message ? banner('Last error', source.status_message, 'bad') : ''}
-      ${!readonly && isEditing ? sourceFormHtml(source, source.connection_kind, []) : ''}
+      ${!readonly && isEditing ? sourceFormHtml(source, source.connection_kind, [], undefined, source.connection_kind === 'device' && canProvision) : ''}
 
       ${devices.length ? `
         <div class="scroll" style="margin-top:12px">
@@ -1135,7 +1229,7 @@ function sourceCard(source, devices, readonly, canProvision = false) {
  * ZKTeco's has a genuinely different shape (a device address instead of a
  * server URL, no username, an optional comm key instead of a password), so
  * the field set itself now follows the chosen provider, not just `kind`. */
-function sourceFormHtml(source, kind, providers, currentProvider) {
+function sourceFormHtml(source, kind, providers, currentProvider, provision = false) {
   const isDevice = kind === 'device';
   const provider = source ? source.provider : (currentProvider || providers[0]?.slug || 'biotime');
   const commitLabel = source ? 'Save changes' : isDevice ? 'Connect device' : 'Connect platform';
@@ -1143,7 +1237,8 @@ function sourceFormHtml(source, kind, providers, currentProvider) {
   return `
     <form class="sourceForm" data-kind="${esc(kind)}" data-provider="${esc(provider)}"
           data-label="${esc(commitLabel)}"
-          ${source ? `data-editing="${esc(source.id)}"` : ''}>
+          ${source ? `data-editing="${esc(source.id)}"` : ''}
+          ${provision ? 'data-provision="1"' : ''}>
       <div class="form-head">
         <strong>${esc(source ? `Edit ${source.name}` : isDevice ? 'New standalone device' : 'New platform server')}</strong>
         <div class="actions">
@@ -1174,9 +1269,16 @@ function sourceFieldsHtml(source, kind, providers, provider) {
       }) : ''}
       ${field({
         name: 'name', label: 'Name', required: true, value: source?.name || '',
-        placeholder: isDevice ? 'Front door terminal' : 'Primary BioTime',
-        help: 'Shown in this list — worth naming for the site or terminal it is.',
+        placeholder: isDevice ? 'Front door' : 'Primary BioTime',
+        help: isDevice
+          ? 'What this device is called here, on the Terminals page, and on its device record in Odoo.'
+          : 'Shown in this list — worth naming for the site it serves.',
       })}
+      ${isDevice ? field({
+        name: 'location', label: 'Location', value: source?.location || '',
+        placeholder: 'Main entrance, ground floor',
+        help: 'Where the device is. Saved on its device record in Odoo once the connection test recognises it.',
+      }) : ''}
       ${field({
         name: 'base_url', label: isZk ? 'Device address' : isDevice ? 'Device address' : 'Server URL',
         required: true, value: addressValue,
@@ -1238,9 +1340,9 @@ function statusRow(connection) {
       ? banner('Last error', connection.status_message, 'bad') : ''}`;
 }
 
-function wireBiometric(mount, providersFor) {
+function wireBiometric(mount, providersFor, canProvision = new Set()) {
   $('#addConnection', mount)?.addEventListener('click', () => {
-    openAddWizard({ providersFor, onDone: () => renderBiometric(mount) });
+    openAddWizard({ providersFor, canProvision, onDone: () => renderBiometric(mount) });
   });
 
   mount.querySelectorAll('[data-edit]').forEach((button) => {
@@ -1288,6 +1390,7 @@ function wireBiometric(mount, providersFor) {
         guard(async () => {
           const result = await api.post(`/sources/${button.dataset.test}/test`);
           toast(result.message, result.ok ? 'ok' : 'bad');
+          if (result.ok && button.dataset.provision) await provisionAfterTest(button.dataset.test);
           await renderBiometric(mount);
         })
       )
@@ -1376,6 +1479,7 @@ function wireBiometric(mount, providersFor) {
             // the values just saved rather than "unverified".
             const result = await api.post(`/sources/${editing}/test`);
             toast(result.message, result.ok ? 'ok' : 'bad');
+            if (result.ok && form.dataset.provision) await provisionAfterTest(editing);
           } else {
             await api.post('/sources', values);
             toast('Connection added', 'ok');

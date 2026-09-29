@@ -2,7 +2,7 @@
   {
     "id": 1,
     "emp_code": "5",
-    "punch_time": "2026-09-21 09:04:00",
+    "punch_time": "2026-09-25 09:04:00",
     "punch_state": "0",
     "verify_type": "15",
     "terminal_sn": "MOCK-GATE-05",
@@ -12,7 +12,7 @@
   {
     "id": 2,
     "emp_code": "5",
-    "punch_time": "2026-09-21 16:57:00",
+    "punch_time": "2026-09-25 17:04:00",
     "punch_state": "1",
     "verify_type": "15",
     "terminal_sn": "MOCK-GATE-05",
@@ -22,7 +22,7 @@
   {
     "id": 3,
     "emp_code": "6001",
-    "punch_time": "2026-09-21 08:56:00",
+    "punch_time": "2026-09-25 09:03:00",
     "punch_state": "0",
     "verify_type": "15",
     "terminal_sn": "MOCK-GATE-06",
@@ -32,7 +32,7 @@
   {
     "id": 4,
     "emp_code": "6001",
-    "punch_time": "2026-09-21 17:02:00",
+    "punch_time": "2026-09-25 17:00:00",
     "punch_state": "1",
     "verify_type": "15",
     "terminal_sn": "MOCK-GATE-06",
@@ -42,7 +42,7 @@
   {
     "id": 5,
     "emp_code": "5",
-    "punch_time": "2026-09-22 09:02:00",
+    "punch_time": "2026-09-28 08:56:00",
     "punch_state": "0",
     "verify_type": "15",
     "terminal_sn": "MOCK-GATE-05",
@@ -52,7 +52,7 @@
   {
     "id": 6,
     "emp_code": "5",
-    "punch_time": "2026-09-22 16:57:00",
+    "punch_time": "2026-09-28 16:57:00",
     "punch_state": "1",
     "verify_type": "15",
     "terminal_sn": "MOCK-GATE-05",
@@ -62,7 +62,7 @@
   {
     "id": 7,
     "emp_code": "6001",
-    "punch_time": "2026-09-22 09:01:00",
+    "punch_time": "2026-09-28 09:01:00",
     "punch_state": "0",
     "verify_type": "15",
     "terminal_sn": "MOCK-GATE-06",
@@ -72,7 +72,7 @@
   {
     "id": 8,
     "emp_code": "6001",
-    "punch_time": "2026-09-22 17:02:00",
+    "punch_time": "2026-09-28 17:00:00",
     "punch_state": "1",
     "verify_type": "15",
     "terminal_sn": "MOCK-GATE-06",
@@ -82,7 +82,7 @@
   {
     "id": 9,
     "emp_code": "5",
-    "punch_time": "2026-09-23 08:58:00",
+    "punch_time": "2026-09-29 09:04:00",
     "punch_state": "0",
     "verify_type": "15",
     "terminal_sn": "MOCK-GATE-05",
@@ -91,48 +91,8 @@
   },
   {
     "id": 10,
-    "emp_code": "5",
-    "punch_time": "2026-09-23 17:03:00",
-    "punch_state": "1",
-    "verify_type": "15",
-    "terminal_sn": "MOCK-GATE-05",
-    "first_name": "",
-    "last_name": ""
-  },
-  {
-    "id": 11,
     "emp_code": "6001",
-    "punch_time": "2026-09-23 09:02:00",
-    "punch_state": "0",
-    "verify_type": "15",
-    "terminal_sn": "MOCK-GATE-06",
-    "first_name": "",
-    "last_name": ""
-  },
-  {
-    "id": 12,
-    "emp_code": "6001",
-    "punch_time": "2026-09-23 17:03:00",
-    "punch_state": "1",
-    "verify_type": "15",
-    "terminal_sn": "MOCK-GATE-06",
-    "first_name": "",
-    "last_name": ""
-  },
-  {
-    "id": 13,
-    "emp_code": "5",
-    "punch_time": "2026-09-24 09:04:00",
-    "punch_state": "0",
-    "verify_type": "15",
-    "terminal_sn": "MOCK-GATE-05",
-    "first_name": "",
-    "last_name": ""
-  },
-  {
-    "id": 14,
-    "emp_code": "6001",
-    "punch_time": "2026-09-24 09:02:00",
+    "punch_time": "2026-09-29 09:04:00",
     "punch_state": "0",
     "verify_type": "15",
     "terminal_sn": "MOCK-GATE-06",

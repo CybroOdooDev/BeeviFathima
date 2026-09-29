@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Contact — BioBridge</title>
+<meta name="description" content="Book a BioBridge demo or ask about a rollout across several sites.">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="index.html" aria-label="BioBridge home"><span class="brand-mark">B</span><span>Bio<b>Bridge</b></span></a>
+    <nav class="nav" aria-label="Main">
+      <a href="index.html#how">How it works</a>
+      <a href="index.html#features">Features</a>
+      <a href="pricing.html">Pricing</a>
+      <a href="setup.html">Setup guide</a>
+      <a href="contact.html" aria-current="page">Contact</a>
+    </nav>
+    <div class="header-cta">
+      <a class="btn btn-ghost btn-sm" data-app="signin" href="#">Sign in</a>
+      <a class="btn btn-primary btn-sm" data-app="signup" href="#">Start free trial</a>
+    </div>
+    <button class="menu-btn" type="button" aria-label="Menu" aria-expanded="false">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+  </div>
+</header>
+
+<main id="main" class="wrap contact">
+  <div style="display:flex;flex-direction:column;gap:20px">
+    <span class="eyebrow">Contact</span>
+    <h1>See it running on your own devices.</h1>
+    <p class="lead">Book a 30-minute demo, or ask about a rollout across several sites. We'll reply within [RESPONSE TIME].</p>
+    <div class="contact-lines">
+      <div class="contact-line">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>
+        <div><b>Email</b><a href="mailto:[SALES EMAIL]">[SALES EMAIL]</a></div>
+      </div>
+      <div class="contact-line">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/></svg>
+        <div><b>Phone</b><span class="muted">[PHONE NUMBER]</span></div>
+      </div>
+      <div class="contact-line">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="9" r="2.5"/></svg>
+        <div><b>Office</b><span class="muted">[OFFICE ADDRESS]</span></div>
+      </div>
+    </div>
+  </div>
+
+  <form id="contact-form" class="form" novalidate aria-label="Request a demo">
+    <fieldset class="seg">
+      <legend class="skip">What do you need?</legend>
+      <label><input type="radio" name="topic" value="Demo" checked><span>Book a demo</span></label>
+      <label><input type="radio" name="topic" value="Sales question"><span>Sales question</span></label>
+    </fieldset>
+    <div class="grid cols-2" style="gap:16px">
+      <label class="field">Full name<input type="text" name="name" autocomplete="name" required></label>
+      <label class="field">Work email<input type="email" name="email" autocomplete="email" required></label>
+      <label class="field">Company<input type="text" name="company" autocomplete="organization" required></label>
+      <label class="field">Employees
+        <select name="employees"><option>Up to 25</option><option>26–150</option><option>151–500</option><option>More than 500</option></select>
+      </label>
+      <label class="field">Odoo hosting
+        <select name="odoo"><option>Odoo Online</option><option>Odoo.sh</option><option>Self-hosted</option><option>Not on Odoo yet</option></select>
+      </label>
+      <label class="field">Devices
+        <select name="devices"><option>BioTime server</option><option>Standalone ZKTeco terminals</option><option>Both</option><option>Not sure</option></select>
+      </label>
+    </div>
+    <label class="field">Anything we should know?<textarea name="message" rows="4" placeholder="Number of sites, devices, go-live date…"></textarea></label>
+    <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+      <button type="submit" class="btn btn-primary">Send request</button>
+      <span class="form-status" role="status" aria-live="polite"></span>
+    </div>
+    <p class="fine">We only use these details to reply to you.</p>
+  </form>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="brand-col">
+      <a class="brand" href="index.html"><span class="brand-mark">B</span><span>Bio<b>Bridge</b></span></a>
+      <p class="about">Biometric attendance, synced into Odoo. Built by [COMPANY NAME].</p>
+      <p class="copy">© <span data-year></span> [COMPANY NAME]</p>
+    </div>
+    <nav aria-label="Product"><b>Product</b><a href="index.html#features">Features</a><a href="pricing.html">Pricing</a><a href="setup.html">Setup guide</a></nav>
+    <nav aria-label="Company"><b>Company</b><a href="contact.html">Contact sales</a><a href="contact.html">Book a demo</a><a data-app="signin" href="#">Sign in</a></nav>
+    <nav aria-label="Legal"><b>Legal</b><a href="[TERMS URL]">Terms</a><a href="[PRIVACY URL]">Privacy</a></nav>
+  </div>
+</footer>
+<script src="assets/site.js" defer></script>
+</body>
+</html>

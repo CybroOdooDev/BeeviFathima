@@ -1053,6 +1053,15 @@ td { vertical-align: middle; }
    a sideways scroll on a laptop screen. */
 .accounts-table th, .accounts-table td { padding-left: 10px; padding-right: 10px; }
 .accounts-table td.sync-cell .pill { margin: 0 2px; }
+/* Terminals' standalone table: eight columns, run a little tighter so the
+   Sync now button stays in view on a laptop-width screen. */
+/* A count beside a tab label (Terminals' connection-type tabs). */
+.tab-count {
+  display: inline-block; min-width: 18px; margin-left: 6px; padding: 1px 6px; border-radius: 999px;
+  font-size: 11px; font-weight: 600; text-align: center; background: var(--panel-2); color: var(--muted);
+}
+.tabs a.active .tab-count { background: var(--accent-soft); color: var(--accent); }
+.tight-table th, .tight-table td { padding-left: 10px; padding-right: 10px; }
 .accounts-table td:first-child { min-width: 160px; }
 /* Anchored to the top of the row, not centered in it (overrides both the
    page-wide `td` default and the actions cell's own middle-align, above).
@@ -1084,7 +1093,13 @@ a.btn.warn-link { border-color: var(--warn); color: var(--warn); font-weight: 60
   background: var(--panel-2); color: var(--muted); border: 1px solid var(--rule);
 }
 .tip-tag.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
-.tip-tag::before { content: "⏱"; font-size: 11px; }
+/* A line clock drawn in the tag's own text colour (mask, not an emoji), so
+   it stays crisp at 12px and matches the tag's tone. */
+.tip-tag::before {
+  content: ""; width: 12px; height: 12px; flex: none; background: currentColor;
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6.25' fill='none' stroke='black' stroke-width='1.5'/><path d='M8 4.6V8l2.3 1.5' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></svg>") center / contain no-repeat;
+          mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6.25' fill='none' stroke='black' stroke-width='1.5'/><path d='M8 4.6V8l2.3 1.5' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></svg>") center / contain no-repeat;
+}
 /* The label itself: one floating box for the whole app (ui.js wireTips),
    fixed-positioned so a table's scroll container can never clip it. */
 #tip {
@@ -1094,6 +1109,14 @@ a.btn.warn-link { border-color: var(--warn); color: var(--warn); font-weight: 60
   opacity: 0; transition: opacity .1s;
 }
 #tip.on { opacity: 1; }
+/* field({ tip: true }): the help text as a quiet (i) beside the label. */
+.field-tip {
+  display: inline-flex; vertical-align: -2px; margin-left: 5px;
+  color: var(--faint); cursor: help; border-radius: 50%;
+}
+.field-tip:hover, .field-tip:focus-visible { color: var(--accent); outline: none; }
+.field-tip:focus-visible { box-shadow: 0 0 0 2px var(--accent-soft); }
+.field-tip.strong { color: var(--warn); }
 .accounts-table td.num { white-space: nowrap; }
 
 /* A table runs to its card's bottom edge only when it is the last thing in the
@@ -1149,3 +1172,24 @@ a.btn.warn-link { border-color: var(--warn); color: var(--warn); font-weight: 60
 }
 .console-grid { align-items: start; }
 .scroll table.fit { min-width: 0; }
+
+/* --- Overview: attention banners as a right-hand rail ----------------------
+   The rail comes first in the markup, so it is still read first and sits on
+   top when the screen is too narrow for two columns. */
+.with-rail {
+  display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 18px; align-items: start;
+}
+.with-rail > .notice-rail { grid-column: 2; grid-row: 1; }
+.with-rail > .rail-main { grid-column: 1; grid-row: 1; min-width: 0; }
+.notice-rail { position: sticky; top: 16px; display: grid; gap: 10px; }
+/* The rail is extra, not carved out of the page: the content column grows by
+   the rail's width (plus the gap) so the main column keeps the same width it
+   has on a page without one, instead of shrinking beside empty screen. */
+.content:has(> .with-rail), .content:has(> * > .with-rail) { max-width: calc(1240px + 318px); }
+.notice-rail .banner { margin: 0; padding: 12px 14px; font-size: 12.5px; line-height: 1.45; }
+.notice-rail .banner strong { font-size: 13px; margin-bottom: 3px; }
+@media (max-width: 1100px) {
+  .with-rail { grid-template-columns: 1fr; }
+  .with-rail > .notice-rail, .with-rail > .rail-main { grid-column: 1; grid-row: auto; }
+  .notice-rail { position: static; }
+}
