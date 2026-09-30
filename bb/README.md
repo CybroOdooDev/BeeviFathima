@@ -461,20 +461,26 @@ has more mapped employees than its new cap allows does not unmap anyone —
 the badges already relying on it keep working, and only the next new one is
 held back, with a note explaining why instead of "no such employee".
 
-Manage plans with:
+Staff manage plans in the console under **Platform → Plans**: create a
+tier, change its price and limits (employees, devices, fastest sync), link a
+Stripe Price, make it the default for new accounts, or retire it. Plans are
+never deleted — an account on a retired plan keeps it. Limit changes apply to
+every account on the plan from its next sync.
+
+For one customer's exception, **All accounts → Configure → Limits for this
+account** overrides any limit for that account alone (empty = use the plan,
+0 = no limit). Overrides stay if the plan changes. The same dialog shows usage
+against the limits — employees matched, devices, held punches, sync speed.
+Assigning a plan raises a faster sync interval to the plan's floor.
+
+A fresh deployment gets its first tiers from:
 
 ```bash
-python3 tools/seed_plans.py     # create/update the starter Starter/Growth/Scale tiers
+python3 tools/seed_plans.py          # create Starter/Growth/Scale if missing
+python3 tools/seed_plans.py --reset  # overwrite them with the script's values
 ```
 
-Safe to re-run — it upserts by name and never deletes a plan, because a
-tenant already on one must keep existing regardless of what the script's
-defaults currently say. Plans are not created through the API on purpose:
-deciding what to sell is a business decision, not a customer- or
-staff-reachable action. The console only *assigns* one (`plan_id` on
-`PATCH /api/v1/admin/tenants/{id}/config`) or lists what exists
-(`GET /api/v1/admin/plans`). Whichever plan has `is_default` set is what a
-self-signup and a staff-created account get when nothing else is specified.
+Re-running it without `--reset` never undoes an edit made in the console.
 
 ### Choosing a plan yourself
 
@@ -604,6 +610,45 @@ trial ending in 2 days and a paid plan ending in 2 days read identically.
 | `TRIAL_DAYS` | `10` | Initial `subscription_renews_at` for a trial signup |
 | `BILLING_PERIOD_DAYS` | `30` | Initial `subscription_renews_at` for a signup that skips the trial (`SignupRequest.skip_trial`) — staff onboarding still always starts a trial, on `TRIAL_DAYS`, whichever plan it assigns |
 | `SUBSCRIPTION_WARNING_DAYS` | `7` | How close to the renewal date before the warning appears |
+
+## Online billing (Stripe)
+
+Off until `STRIPE_SECRET_KEY` is set; with it off, nothing below applies and
+plans work exactly as described above. Code: `app/services/billing.py`,
+`app/api/v1/billing.py`; tests: `tests/test_billing.py`.
+
+**Setting it up (test mode first):**
+
+1. In Stripe, create one **Product** per plan with a **monthly recurring
+   Price**, and note each `price_…` id.
+2. Add a webhook endpoint at `<PUBLIC_BASE_URL>/api/v1/billing/webhook` for
+   `checkout.session.completed`, `customer.subscription.created`,
+   `customer.subscription.updated`, `customer.subscription.deleted`,
+   `invoice.paid` and `invoice.payment_failed`. Locally:
+   `stripe listen --forward-to localhost:8000/api/v1/billing/webhook`.
+3. Turn on the **Customer Portal** (Settings → Billing → Customer portal) so
+   customers can update their card, see invoices and cancel.
+4. Set `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_STARTER`,
+   `STRIPE_PRICE_GROWTH`, `STRIPE_PRICE_SCALE` (see `.env.example`), then run
+   `python3 tools/migrate.py --apply` and `python3 tools/seed_plans.py`.
+
+**How it behaves:**
+
+- **No card at signup.** The trial is BioBridge's own. Choosing a plan opens
+  Stripe Checkout; the plan starts when Stripe confirms payment, not on the click.
+- **Stripe is the authority once subscribed.** Webhooks set `active`,
+  `past_due` (a failed payment) or `cancelled`, and `subscription_renews_at`
+  follows the paid period. The renewal-date sweep leaves these accounts alone.
+  Every webhook is signature-checked, recorded once (`stripe_event`), and
+  applied from a fresh read of the subscription, so retries and out-of-order
+  delivery are harmless.
+- **Plan switches wait for renewal**, as before. Stripe is given the new price
+  immediately with no proration, so the next invoice is at the new price and
+  nothing is charged or refunded mid-period.
+- **Manage billing** in Settings → Plan opens the Customer Portal.
+- **Staff suspension wins.** A webhook never lifts a `suspended` account.
+- A plan with no `stripe_price_id` can't be bought online; staff can still
+  assign it by hand from the console.
 
 ## How a sync run works
 
@@ -1248,3 +1293,349 @@ Two items formerly listed here are done: a second provider (ZKTeco standalone
 terminals — see `app/integrations/providers/zkteco.py`) and the reverse
 mapping direction, provisioning Odoo's roster onto a provider — see
 "Employee mapping" below.
+
+
+## Connection kinds
+
+Each provider declares the kinds it can be added under (`AttendanceProvider.kinds`),
+and the wizard and `POST /api/v1/sources` both enforce it:
+
+- **Platform server** — BioTime, BioStar 2, HikCentral Professional, Hik-Connect for Teams, COSEC CENTRA, CrossChex Cloud.
+- **Standalone device** — ZKTeco protocol, Hikvision ISAPI, Dahua, Matrix COSEC, Cams gateway (plus
+  the ZKTeco cloud-push card).
+
+BioTime used to be offered under both, from before there were real device
+protocols. Connections saved that way keep working. To re-file them as
+platform connections after upgrading:
+
+    python3 tools/fix_connection_kinds.py            # report
+    python3 tools/fix_connection_kinds.py --apply    # fix
+
+
+## Registration from the website
+
+The marketing site (separate folder, see its README) is where customers sign
+up. Set `SITE_URL` to its address and add that origin to `CORS_ORIGINS`.
+
+- `GET /api/v1/public/plans` — active plans, with `can_buy_online`.
+- `POST /api/v1/public/register` — `mode: "trial"` creates the account now
+  (trialing, no card); `mode: "buy"` returns a Stripe Checkout URL and creates
+  the account only when the `checkout.session.completed` webhook confirms
+  payment (a `pending_signup` row carries the details until then).
+- Either way the owner has **no password** until they confirm their email.
+  `POST /api/v1/auth/verify-email` then generates one and emails the login
+  details (address + password). Signing in before that says "confirm your
+  email first".
+- The first sign-in with the emailed password must set a new one
+  (`POST /api/v1/auth/change-password`); workspace routes refuse until then.
+  Customers can change it any time under Settings → Password.
+- `POST /api/v1/public/resend` — "didn't get the email": a new confirmation
+  link, or new login details if the emailed password was never used. Same
+  answer whether or not the address exists.
+- Registration and resend are rate limited per IP
+  (`REGISTRATION_RATE_PER_HOUR`) and the form has a hidden honeypot field.
+- Mail goes out through `SMTP_HOST`; with it empty, emails are only logged.
+
+Run `python3 tools/migrate.py --apply` to add the `pending_signup` table and
+the two new `app_user` columns.
+
+
+## Cloud push devices (ZKTeco ADMS)
+
+A third kind of biometric connection, beside BioTime and standalone ZKTeco:
+the terminal sends its punches to BioBridge itself, through its **Cloud Server
+Setting** (called ADMS on some models). Works for ZKTeco and ZKTeco-built
+terminals (eSSL, Realtime, Biomax, newer FingerTec), and needs nothing opened
+on the customer's network.
+
+**Customer setup:** Settings → Biometric → + Add connection → *Cloud push
+device*: name, location, the device's serial number and its timezone. On the
+device: Comm. → Cloud Server Setting → server address and port as shown in
+the form (`ADMS_SERVER_HOST` / `ADMS_SERVER_PORT`), HTTPS off. Test connection
+turns green once the device has called in.
+
+**How it works** (`app/api/adms.py`, `app/services/adms.py`,
+`app/integrations/providers/zkteco_adms.py`):
+
+- Terminals call `/iclock/cdata` (handshake, then `table=ATTLOG` punch uploads),
+  `/iclock/getrequest` (heartbeat every 30 s; replies carry queued commands) and
+  `/iclock/devicecmd` (command results). `.aspx` variants are served too.
+- Punches are written to the punch ledger as they arrive (deduplicated on
+  serial + PIN + time, so re-sends are harmless). The next sync run claims
+  them, pairs them and writes attendance to Odoo — no fetch needed.
+- A serial is claimed by one account platform-wide (`adms_device`). Uploads
+  from an unclaimed serial are refused, so the terminal keeps them and re-sends
+  once it's added. Removing the connection releases the serial.
+- An offline terminal marks the connection failed ("last called in …") but
+  never stops punches that already arrived from reaching Odoo.
+- On adding, BioBridge queues `DATA QUERY USERINFO` and `INFO`, so it learns
+  who is enrolled and the model. "Provision Odoo employees onto the device"
+  queues `DATA UPDATE USERINFO` commands the terminal picks up on its next
+  heartbeat (identity only — fingerprints and faces are enrolled on the device).
+
+**Deployment:** `/iclock/` must be reachable over plain HTTP on the advertised
+host and port (many terminals can't do HTTPS). If a reverse proxy forces
+HTTPS, exempt `/iclock/`. Run `python3 tools/migrate.py --apply` for the
+`adms_device` and `adms_command` tables.
+
+**Not tested against physical hardware here** — the protocol is implemented
+from ZKTeco's published "Attendance PUSH Communication Protocol" and tested
+against a simulated terminal (`tests/test_adms_push.py`). Pilot one real
+terminal before relying on it.
+
+
+## Hikvision terminals (ISAPI)
+
+Provider `hik_isapi` ("Hikvision terminal (ISAPI)"), offered under *Standalone
+device* → Protocol. BioBridge reaches the terminal directly over HTTP(S) with
+Digest auth, using its admin (or an access-control operator) account — like a
+standalone ZKTeco terminal, the device must be reachable from the server.
+
+- **Test / terminal:** `GET /ISAPI/System/deviceInfo` (model, serial, name).
+- **Punches:** `POST /ISAPI/AccessControl/AcsEvent?format=json`, major 5 over
+  the sync window, 30 per page with one searchID. Kept: events naming an
+  employee (door, alarm and stranger events carry none). A terminal that
+  rejects minor 0 is asked per success code (face 75, fingerprint 38/113,
+  card 1, 104). `attendanceStatus` (checkIn/checkOut/break/overtime) gives
+  direction when the terminal's attendance mode is on. De-duplicated on
+  device serial + the event's serialNo. Times carry the device's offset.
+- **Employees:** `UserInfo/Search` to read, `UserInfo/Record` to create
+  (identity only), so provisioning Odoo employees onto the device works.
+- Errors are specific: unreachable, wrong password (five tries lock the device
+  account for 30 minutes), no access-control rights, not an access terminal.
+
+Code `app/integrations/providers/hikvision.py`; tests `tests/test_hikvision.py`
+use a simulated terminal with real Digest auth. **Not yet run against a
+physical terminal** — pilot one before relying on it. HikCentral / Hik-Connect
+(cloud) are separate integrations, not built.
+
+
+## Suprema BioStar 2
+
+Provider `biostar2` ("Suprema BioStar 2"), offered under *Platform server* →
+Platform, beside BioTime. One connection is the customer's BioStar 2 server;
+its terminals come in through **Import terminals**.
+
+- **Login:** `POST /api/login` with a BioStar 2 operator; the `bs-session-id`
+  header is reused (and cached between runs); a 401 logs in again once.
+- **Punches:** `POST /api/events/search`, datetime *between* the sync window
+  (UTC), ordered by time, re-issued from the last row's time and de-duplicated
+  on the event id (no offset support assumed). Kept: successful
+  authentications — codes 0x1000–0x10FF (1:1), 0x1300–0x13FF (1:N),
+  0x1500–0x15FF (dual). `tna_key` gives direction (1 in, 2 out, 3/5 break or
+  meal start = out, 4/6 end = in).
+- **Terminals:** `GET /api/devices` (device id as serial, name, type, IP, group).
+- **Employees:** `GET/POST /api/users` — provisioning works for numeric user
+  ids (BioStar 2's default); new users go into group 1 (All Users).
+- **HTTPS:** BioStar 2 ships with a self-signed certificate; the form's
+  "HTTPS certificate" option defaults to accepting it.
+
+Code `app/integrations/providers/biostar2.py`; tests `tests/test_biostar2.py`
+use a simulated server. **Not yet run against a live BioStar 2** — pilot one.
+
+
+## Matrix COSEC terminals
+
+Provider `cosec` ("Matrix COSEC terminal"), under *Standalone device* →
+Protocol. BioBridge calls the device's own API (`/device.cgi/…`, HTTP Basic,
+factory login admin / 1234), so the device must be reachable from the server.
+
+- **Test:** `device-basic-config?action=get` (device name). The API reports
+  no serial number, so the terminal is identified by its address.
+- **Punches:** `events?action=getevent&roll-over-count=&seq-number=&no-of-events=100`.
+  The log is addressed by (roll-over, sequence), not time, so the provider
+  keeps a cursor in the connection's config (`cosec_cursor`), saved by the
+  sync engine only after the punches are stored (a generic `config_updates`
+  hook any provider can use). The first sync reads from the start of the log,
+  up to 400 requests per run, continuing next run. When a roll-over's
+  sequence runs out, the next roll-over is read. Kept: event-id 101–110
+  (user allowed) with a user in detail-1; detail-3 0 = entry, 1 = exit.
+  Changing the device address resets the cursor.
+- **Employees:** `users?action=get|set` one at a time — provisioning checks
+  each id and creates numeric ids (up to 8 digits). There's no list call, so
+  "already on the device" can't be counted up front.
+
+Code `app/integrations/providers/cosec.py`; tests `tests/test_cosec.py` with a
+simulated device (Basic auth, ring buffer that rolls over). **Not yet run
+against a physical COSEC device** — pilot one. For a site that runs COSEC
+CENTRA, connect the server instead (next section). The COSEC Devices PUSH API
+is not built.
+
+
+## Matrix COSEC CENTRA
+
+Provider `cosec_centra` ("Matrix COSEC CENTRA"), under *Platform server* →
+Platform. One connection = one COSEC CENTRA (or older COSEC server)
+installation, which already collects punches from all its panels and
+terminals: server URL (`http://<server>/cosec`), the `sa` login (the API
+accepts only the System Administrator account), password, server timezone.
+
+- The API is a WCF service at `<server>/cosec/api.svc/<module>` with
+  **semicolon**-separated parameters, so URLs are built by hand, not by the
+  HTTP client: `event-ta-date?action=get;daterange=DDMMYYYYHHMMSS-DDMMYYYYHHMMSS;format=xml`.
+  HTTP Basic auth.
+- Read one day per request (a 30-day first backfill is 30 small requests),
+  at most 45 days per run.
+- The reply's columns come from the customer's **API template** (COSEC:
+  Admin → Utility → API Configuration → T&A events), so fields are recognised
+  by name rather than fixed tags: user id (`UserID`, `EmpCode`, `ReferenceCode`…),
+  date-time (one `EventDateTime`, or `EDate` + `ETime`), and optionally
+  index, entry/exit (0/IN/Entry, 1/OUT/Exit) and device. The connection test
+  fails with instructions if the template lacks a user id or date/time. A
+  flat `<Response-Code>` reply other than 0 is shown as an error.
+- De-duplicated on server + index number when the template includes it,
+  otherwise server + user + time + device. Panels are learnt from the punches
+  (the device column is the terminal), so there is no Import terminals.
+  Read punches only — no employee provisioning.
+
+Code `app/integrations/providers/cosec_centra.py`; tests
+`tests/test_cosec_centra.py` against a simulated server with two different
+templates. Built from Matrix's technical mailers MTSM-11 and MTSM-18. **Not yet
+run against a live CENTRA** — pilot one, and check its template's tag names
+against the recognised ones.
+
+
+## HikCentral Professional
+
+Provider `hikcentral` ("HikCentral Professional"), under *Platform server* →
+Platform. One connection = one HCP server with the **OpenAPI** add-on installed
+(matched to the HCP version): server URL (`https://<server>`, default 443),
+partner key (AK) and secret (SK), server timezone, and whether to accept HCP's
+self-signed certificate. BioBridge must reach the server (VPN / forwarded port),
+like BioTime.
+
+- Every call is a JSON `POST` to `/artemis/api/…`, signed per request (no
+  session): `X-Ca-Signature = base64(HMAC-SHA256(SK, "POST\n*/*\napplication/json\n"
+  "x-ca-key:…\nx-ca-nonce:…\nx-ca-timestamp:…\n<path>"))`, with `X-Ca-Key`,
+  `X-Ca-Nonce`, `X-Ca-Timestamp`, `X-Ca-Signature-Headers`. Replies `{"code": "0", "data": …}`.
+  A wrong server clock makes signatures fail — the error says so.
+- `acs/v1/door/events` with `startTime`/`endTime` (ISO with offset), 100 per
+  page, at most 31 days per run. Events without a person (door/alarm) are
+  skipped. `inAndOutType` 1 = in, 0 = out. If the server refuses a search
+  without `eventType`, the access-granted types 198914 (card) and 196893 (face)
+  are asked for one at a time and merged.
+- Events name HCP's internal `personId`; `resource/v1/person/personList` is read
+  once per run (only when there are events) to get each person's `personCode` —
+  HCP's **Employee ID**, which is what matches Odoo. People without one are
+  skipped and logged.
+- De-duplicated on server + `eventId`. Each door becomes a terminal
+  (`<host>:door<index>`, named after the door) — no Import terminals. Read
+  punches only.
+
+Code `app/integrations/providers/hikcentral.py`; tests `tests/test_hikcentral.py`
+against a simulated OpenAPI server that verifies every signature. **Not yet run
+against a live HCP** — pilot one; confirm the event types and the `personList`
+fields on the customer's HCP version.
+
+
+## Dahua terminals
+
+Provider `dahua` ("Dahua terminal"), under *Standalone device* → Protocol. BioBridge
+calls the terminal's own HTTP API (`/cgi-bin/…`, admin login), so the device must
+be reachable from the server (VPN / forwarded port), like standalone Hikvision.
+
+- Auth: HTTP Digest; if a device answers only a Basic challenge (older firmware)
+  the provider switches to Basic. Replies are plain `key=value` lines.
+- **Test / terminal:** `magicBox.cgi?action=getSystemInfo` → `serialNumber`,
+  `deviceType` (falls back to `getSerialNo`). The terminal's serial is the device's.
+- **Punches:** `recordFinder.cgi?action=find&name=AccessControlCardRec&StartTime=&EndTime=&count=500`,
+  a day at a time, ≤45 days per run. `CreateTime` is UTC epoch seconds. Kept:
+  `Status=1` records with a `UserID` (the device's person id — matches the Odoo
+  employee). Direction from `AttendanceState` (CheckIn/CheckOut/Break…/Overtime…),
+  else `Type` (Entry/Exit), else left to pairing. `Method` 15 face / 6 fingerprint /
+  1 card / 0 password is recorded as the verify type.
+- **Paging:** when `totalCount` exceeds `found`, the next query starts at the last
+  record's `CreateTime` and the overlap is dropped by `RecNo`.
+- **Times:** StartTime/EndTime go out as epoch seconds; a firmware that answers
+  `Error` to that is asked again with the device's local `YYYY-MM-DD HH:MM:SS`
+  (remembered for the run). Set the device timezone correctly either way.
+- Read punches only. Employee provisioning isn't built — Dahua's user-write
+  calls aren't public enough to build blind.
+
+Code `app/integrations/providers/dahua.py`; tests `tests/test_dahua.py` against a
+simulated terminal doing real Digest and Basic auth, paging and both time styles.
+**Not yet run against a physical Dahua terminal** — pilot one. Points to check: the
+CreateTime zone on that firmware, `AttendanceState` presence, the Digest/Basic choice.
+
+
+## Cams Biometrics (cloud gateway)
+
+Provider `cams` ("Cams Biometrics (cloud gateway)"), under *Standalone device* →
+Protocol. Cams makes its own terminals and, through its Biometric Gateway, fronts
+100+ other brands; the device talks to the Cams cloud and applications use one
+JSON Web API (3.0). Each registered device has its own **Service Tag ID**
+(`stgid`) and **AuthToken** in the customer's *API Monitor* account, so one
+connection = one device: endpoint URL, Service Tag ID, AuthToken, device timezone.
+
+- BioBridge uses the RESTful side (BioBridge → Cams), not the real-time callback:
+  `POST <endpoint>?stgid=…` with `AuthToken`, `OperationID`, `Time`
+  (`YYYY-MM-DD HH:mm:ss GMT +0530`) in the body.
+- Punches: `Load.PunchLog.Filter {StartTime, EndTime}` a week at a time (Cams
+  recommends ≤30 days), at most 31 days per run. `Type` CheckIn / BreakIn /
+  OverTimeIn / MealIn are entries; the *Out* kinds are exits. `LogTime` carries
+  its own offset and is converted to the device timezone.
+- Terminal: `Load.DeviceInformation "All"` names the model; the terminal's serial
+  is the Service Tag ID. De-duplicated on stgid + user + UTC time.
+- Customer must add BioBridge's server address as an allowed origin in API
+  Monitor (status 3, "invalid origin", otherwise). Each status code is explained
+  in the test result. A REST call takes ~15 s at Cams, so space syncs 5+ minutes.
+- Read punches only; the real-time callback (device → BioBridge) is not built.
+- Duplicate check is by Service Tag ID.
+
+Code `app/integrations/providers/cams.py`; tests `tests/test_cams.py` against a
+simulated gateway. **Not yet run against a live Cams account** (a free sandbox
+API key is available from Cams) — pilot one.
+
+
+## Hik-Connect for Teams
+
+Provider `hikconnect` ("Hik-Connect for Teams"), under *Platform server* →
+Platform. One connection = one Hik-Connect **for Teams** account (formerly
+HikCentral Connect): region (Europe `ieu.` / North America `ius.hikcentralconnect.com`),
+app key and secret key from Team Management → API Integration. Hikvision
+terminals in the team reach the cloud over P2P, so nothing on the customer's
+network is involved. The free consumer Hik-Connect app has no API.
+
+- All calls are JSON `POST`s under `<region>/api/hccgw/`; replies are
+  `{"errorCode": "0", "data": …}`.
+- `platform/v1/token/get` with `appKey` / `secretKey` → `accessToken`, sent as a
+  `Token:` header. Cached between runs; renewed once if refused. If the reply
+  names an `areaDomain` it is used — only if it is a `*.hikcentralconnect.com`
+  host, so the token is never sent elsewhere.
+- `attendance/v1/records/get` with `startTime`/`endTime` (ISO with offset),
+  `pageNo`/`pageSize` 100, at most 31 days per run.
+- Record fields are recognised by name (person code, time, device serial/name,
+  in/out status — also inside a nested `personInfo`/`deviceInfo`), because
+  Hikvision's partner guide isn't public. The connection test fails and lists
+  the fields it saw if a record has no person code or time.
+- De-duplicated on the record id when present, otherwise device + person + UTC
+  time. Terminals learnt from punches; no Import terminals; read punches only.
+  Duplicate check is by app key (every team in a region shares the host).
+
+Code `app/integrations/providers/hikconnect.py`; tests `tests/test_hikconnect.py`
+against a simulated cloud with two record shapes. **Not yet run against a live
+team** — the token call is confirmed by public examples; the attendance
+endpoint and record fields need checking against a real account or the partner
+guide (tpp.hikvision.com).
+
+
+## Anviz CrossChex Cloud
+
+Provider `crosschex` ("Anviz CrossChex Cloud"), under *Platform server* →
+Platform. One connection = one CrossChex Cloud account: region (US / EU /
+Asia-Pacific API root), API key and API secret. Nothing on the customer's
+network is involved — Anviz terminals report to CrossChex Cloud themselves.
+
+- Every call is one `POST` to the region root with `header` (nameSpace,
+  nameAction, version, requestId, timestamp), `authorize` (token) and `payload`.
+- `authorize.token/token` → token (cached between runs; renewed once if refused).
+- `attendance.record/getrecord` with begin/end time (ISO with offset), ascending,
+  1000 per page, following `pageCount`. `checktype` 0 = in, 1 = out, others
+  (e.g. 128) left to pairing. De-duplicated on device serial + workno + UTC time.
+- Terminals are learnt from the punches (each carries its device), so the card
+  has no Import terminals button. No employee provisioning (read punches only).
+- Duplicate check is by API key, not address — every account in a region shares
+  the same host.
+
+Code `app/integrations/providers/crosschex.py`; tests `tests/test_crosschex.py`
+use a simulated service. **Not yet run against a live CrossChex Cloud account.**

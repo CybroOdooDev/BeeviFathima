@@ -9,6 +9,8 @@ from app.models.attendance import (
     SyncRun,
     SyncStatus,
 )
+from app.models.adms import AdmsCommand, AdmsDevice
+from app.models.billing import PendingSignup, StripeEvent
 from app.models.connection import ConnectionStatus, Device, DeviceSource, OdooConnection
 from app.models.scheduler import LEASE_ID, SchedulerLease
 from app.models.subscription import SubscriptionPlan
@@ -23,6 +25,10 @@ from app.models.tenant import (
 )
 
 __all__ = [
+    "StripeEvent",
+    "AdmsCommand",
+    "AdmsDevice",
+    "PendingSignup",
     "AttendanceRecord",
     "AuditLog",
     "Base",

@@ -286,4 +286,32 @@ section { padding: 96px 0; }
   .plan { padding: 26px; }
 }
 
+/* --- signup and notice pages ------------------------------------------ */
+.signup { padding-bottom: 72px; }
+.signup-ticks { margin-top: 4px; }
+.field-note { font-weight: 400; font-size: 13px; color: var(--faint); }
+.hp { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
+.notice { border: 1px solid var(--rule-strong); background: var(--accent-soft); color: var(--ink); border-radius: var(--radius-sm); padding: 12px 14px; font-size: 14px; }
+.notice.warn { background: #fdf3e2; border-color: #f1d7a8; color: #7a4a0b; }
+.plan-summary { border: 1px solid var(--rule); background: var(--panel); border-radius: var(--radius); padding: 20px 22px; display: flex; flex-direction: column; gap: 6px; }
+.plan-summary .name { font-weight: 700; font-size: 18px; }
+.plan-summary .price { font-size: 28px; font-weight: 800; letter-spacing: -0.02em; }
+.plan-summary .price small { font-size: 15px; font-weight: 500; color: var(--faint); }
+.plan-summary ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 14px; }
+.notice-page { padding-top: 96px; padding-bottom: 120px; display: flex; justify-content: center; }
+.notice-card { max-width: 620px; width: 100%; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 18px;
+  background: var(--panel); border: 1px solid var(--rule); border-radius: 20px; padding: 48px 40px; }
+.notice-card h1 { font-size: clamp(30px, 4vw, 40px); font-weight: 800; }
+.notice-card .lead { font-size: 17px; }
+.notice-icon { width: 56px; height: 56px; border-radius: 16px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); }
+.notice-icon.bad { background: #fdecec; color: #b91c1c; }
+.notice-actions { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin-top: 4px; }
+.inline-form { width: 100%; text-align: left; margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
+.inline-row { display: flex; gap: 10px; }
+.inline-row input { flex: 1; min-width: 0; }
+.plan-ctas { display: flex; flex-direction: column; gap: 10px; align-items: center; }
+.plan-buy { font-size: 14px; font-weight: 600; }
+.plan-buy[hidden] { display: none; }
+@media (max-width: 560px) { .notice-card { padding: 32px 22px; } .inline-row { flex-direction: column; } }
+
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } * { transition: none !important; } }

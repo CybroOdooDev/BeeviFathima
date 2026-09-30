@@ -30,6 +30,7 @@ from app.services.email_check import UngenuineEmailError, assert_genuine_email
 from app.services.email_verification import issue_verification_token, send_verification_email
 from app.db.session import get_db
 from app.models import (
+    Device,
     DeviceSource,
     EmployeeMapping,
     MappingStatus,
@@ -46,7 +47,8 @@ from app.models import (
 from app.schemas import (
     ErrorGroup,
     MessageOut,
-    SubscriptionPlanOut,
+    SubscriptionPlanAdminOut,
+    SubscriptionPlanIn,
     SyncRunOut,
     TenantAdminOut,
     TenantConfigUpdate,
@@ -55,7 +57,9 @@ from app.schemas import (
     TenantDeactivateIn,
     TenantDiagnosticsOut,
     TenantScheduleUpdate,
+    TenantUsageOut,
 )
+from app.services.device_limits import over_limit_device_ids
 from app.services.scheduling import (
     SYNCABLE,
     effective_interval,
@@ -140,6 +144,12 @@ def _to_out(db: Session, tenant: Tenant) -> TenantAdminOut:
         renewal_warning=renewal_warning(tenant),
         pending_plan_id=tenant.pending_plan_id,
         pending_plan_name=tenant.pending_plan_name,
+        limit_max_employees=tenant.limit_max_employees,
+        limit_max_devices=tenant.limit_max_devices,
+        limit_min_sync_interval_minutes=tenant.limit_min_sync_interval_minutes,
+        max_employees=tenant.plan_max_employees,
+        max_devices=tenant.plan_max_devices,
+        min_sync_interval_minutes=tenant.plan_min_sync_interval_minutes,
     )
 
 
@@ -355,19 +365,103 @@ def platform_overview(
     }
 
 
-@router.get("/plans", response_model=list[SubscriptionPlanOut])
+def _plan_out(db: Session, plan: SubscriptionPlan) -> SubscriptionPlanAdminOut:
+    out = SubscriptionPlanAdminOut.model_validate(plan)
+    out.stripe_price_id = plan.stripe_price_id
+    out.tenants = db.scalar(select(func.count(Tenant.id)).where(Tenant.plan_id == plan.id)) or 0
+    return out
+
+
+@router.get("/plans", response_model=list[SubscriptionPlanAdminOut])
 def list_plans(
     _: User = Depends(get_platform_admin), db: Session = Depends(get_db)
-) -> list[SubscriptionPlan]:
+) -> list[SubscriptionPlanAdminOut]:
     """Every plan, active or retired.
 
     Retired ones stay in this list on purpose: it is what feeds the plan
     picker on an account's own config form, and hiding a retired plan there
     would leave that tenant's current selection unable to render — a select
-    whose chosen option is not among its options. Plans are not created or
-    edited through this API at all; see tools/seed_plans.py.
+    whose chosen option is not among its options.
     """
-    return db.scalars(select(SubscriptionPlan).order_by(SubscriptionPlan.name)).all()
+    plans = db.scalars(select(SubscriptionPlan).order_by(
+        SubscriptionPlan.monthly_price_cents.is_(None), SubscriptionPlan.monthly_price_cents,
+        SubscriptionPlan.name)).all()
+    return [_plan_out(db, p) for p in plans]
+
+
+def _apply_plan(db: Session, plan: SubscriptionPlan, data: dict) -> None:
+    """Write ``data`` onto ``plan``, keeping the one-default rule."""
+    if "name" in data:
+        clash = db.scalar(select(SubscriptionPlan.id).where(
+            func.lower(SubscriptionPlan.name) == data["name"].strip().lower(),
+            SubscriptionPlan.id != plan.id))
+        if clash:
+            raise HTTPException(status.HTTP_409_CONFLICT, "A plan with that name already exists")
+        data["name"] = data["name"].strip()
+    if data.get("stripe_price_id") == "":
+        data["stripe_price_id"] = None
+    for key, value in data.items():
+        setattr(plan, key, value)
+    if plan.is_active is False:
+        # A retired plan cannot be what new accounts are given.
+        plan.is_default = False
+    if data.get("is_default"):
+        for other in db.scalars(select(SubscriptionPlan).where(
+                SubscriptionPlan.is_default.is_(True), SubscriptionPlan.id != plan.id)):
+            other.is_default = False
+
+
+@router.post("/plans", response_model=SubscriptionPlanAdminOut, status_code=status.HTTP_201_CREATED)
+def create_plan(
+    payload: SubscriptionPlanIn,
+    actor: User = Depends(get_platform_admin),
+    db: Session = Depends(get_db),
+) -> SubscriptionPlanAdminOut:
+    """A new tier. Every limit left out is unlimited."""
+    data = payload.model_dump(exclude_unset=True)
+    if not (data.get("name") or "").strip():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "A plan needs a name")
+    plan = SubscriptionPlan(name=data["name"].strip(), is_active=True, is_default=False)
+    db.add(plan)
+    _apply_plan(db, plan, data)
+    db.commit()
+    db.refresh(plan)
+    log.info("Platform user %s created plan %s", actor.email, plan.name)
+    return _plan_out(db, plan)
+
+
+@router.patch("/plans/{plan_id}", response_model=SubscriptionPlanAdminOut)
+def update_plan(
+    plan_id: str,
+    payload: SubscriptionPlanIn,
+    actor: User = Depends(get_platform_admin),
+    db: Session = Depends(get_db),
+) -> SubscriptionPlanAdminOut:
+    """Edit a tier — its limits apply to every account on it from now.
+
+    Plans are retired (``is_active: false``), never deleted: accounts
+    already on one keep it and keep working. Changing ``stripe_price_id``
+    affects new checkouts and plan switches only; subscriptions already on
+    the old Price stay there until moved in Stripe.
+    """
+    plan = db.get(SubscriptionPlan, plan_id)
+    if plan is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such plan")
+    data = payload.model_dump(exclude_unset=True)
+    if not data:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Nothing to change")
+    if "name" in data and not (data["name"] or "").strip():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "A plan needs a name")
+    for flag in ("is_active", "is_default"):
+        if flag in data and data[flag] is None:
+            del data[flag]
+    before = {k: getattr(plan, k) for k in data}
+    _apply_plan(db, plan, data)
+    db.commit()
+    db.refresh(plan)
+    log.info("Platform user %s changed plan %s — %s", actor.email, plan.name,
+             ", ".join(f"{k}: {before[k]} -> {getattr(plan, k)}" for k in data))
+    return _plan_out(db, plan)
 
 
 @router.get("/tenants", response_model=list[TenantAdminOut])
@@ -396,6 +490,32 @@ def get_tenant(
     if tenant is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No such tenant")
     return _to_out(db, tenant)
+
+
+@router.get("/tenants/{tenant_id}/usage", response_model=TenantUsageOut)
+def tenant_usage(
+    tenant_id: str,
+    _: User = Depends(get_platform_admin),
+    db: Session = Depends(get_db),
+) -> TenantUsageOut:
+    """What this account uses against the limits in force — counts only."""
+    tenant = db.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such tenant")
+    return TenantUsageOut(
+        employees_mapped=db.scalar(select(func.count(EmployeeMapping.id)).where(
+            EmployeeMapping.tenant_id == tenant.id,
+            EmployeeMapping.status == MappingStatus.mapped.value)) or 0,
+        max_employees=tenant.plan_max_employees,
+        devices=db.scalar(select(func.count(Device.id)).where(Device.tenant_id == tenant.id)) or 0,
+        max_devices=tenant.plan_max_devices,
+        devices_over_limit=len(over_limit_device_ids(db, tenant)),
+        punches_held=db.scalar(select(func.count(PunchRecord.id)).where(
+            PunchRecord.tenant_id == tenant.id,
+            PunchRecord.process_state == PunchState.held.value)) or 0,
+        sync_interval_minutes=tenant.sync_interval_minutes,
+        min_sync_interval_minutes=tenant.plan_min_sync_interval_minutes,
+    )
 
 
 @router.patch("/tenants/{tenant_id}/schedule", response_model=TenantAdminOut)
@@ -491,7 +611,26 @@ def update_config(
     for key, value in data.items():
         setattr(tenant, key, value)
 
-    changes = ", ".join(f"{k}: {before[k]} -> {v}" for k, v in data.items())
+    # Assigning a plan (or a new interval floor) brings the account's sync
+    # interval up to what it now allows, the same as a signup or a customer's
+    # own switch does — otherwise the account would hold a cadence its own
+    # plan forbids, and the customer's next settings save would be refused
+    # for a value they never chose. Staff can still set a faster one
+    # afterwards from the account row, which is a deliberate exception.
+    plan_changed = "plan_id" in data and before["plan_id"] != tenant.plan_id
+    floor_changed = ("limit_min_sync_interval_minutes" in data
+                     and before["limit_min_sync_interval_minutes"] != tenant.limit_min_sync_interval_minutes)
+    if plan_changed or floor_changed:
+        db.flush()
+        db.refresh(tenant, ["plan"])
+        floor = tenant.plan_min_sync_interval_minutes
+        if floor and tenant.sync_interval_minutes < floor:
+            before["sync_interval_minutes"] = tenant.sync_interval_minutes
+            tenant.sync_interval_minutes = floor
+            data["sync_interval_minutes"] = floor
+
+    changes = ", ".join(f"{k}: {before[k]} -> {v}" for k, v in data.items() if before[k] != v) \
+        or "no changes"
     audit_platform(
         db,
         actor,
@@ -662,12 +801,18 @@ def create_tenant(
         ).first()
         plan_id = default_plan.id if default_plan else None
 
+    # Start inside the plan's limits, as a self-signup does.
+    chosen = db.get(SubscriptionPlan, plan_id) if plan_id else None
+    interval = payload.sync_interval_minutes
+    if chosen and chosen.min_sync_interval_minutes:
+        interval = max(interval, chosen.min_sync_interval_minutes)
+
     tenant = Tenant(
         name=payload.company_name,
         slug=_unique_slug(db, _slugify(payload.company_name)),
         status=TenantStatus.trialing.value,
         timezone=payload.timezone,
-        sync_interval_minutes=payload.sync_interval_minutes,
+        sync_interval_minutes=interval,
         plan_id=plan_id,
         # Same trial length as self-signup (settings.trial_days). Staff can
         # move it immediately from the account's own row if this onboarding

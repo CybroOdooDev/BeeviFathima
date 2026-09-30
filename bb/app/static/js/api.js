@@ -230,6 +230,12 @@ export async function loadSession() {
   // /auth/me is the one route that takes either kind of token, which is why it
   // is safe to call before we know which shell to build.
   auth.user = await api.get('/auth/me');
+  // Signed in with an emailed password: the workspace refuses every call
+  // until a new one is set, so don't ask — the router shows that screen.
+  if (auth.user.must_change_password) {
+    auth.tenant = null;
+    return;
+  }
 
   // A console session has no workspace to load. /tenant refuses a staff-scoped
   // token by design, and for someone who is both a customer and staff it would

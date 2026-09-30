@@ -50,6 +50,10 @@ class PunchState(str, enum.Enum):
     #: bring it straight back as a new pending punch. Never pushed, hidden
     #: from the unfiltered list, restorable with Retry, pruned with the rest.
     deleted = "deleted"
+    #: From a terminal beyond the plan's device allowance. Kept, not pushed,
+    #: and retried every run, so it goes to Odoo on its own once the plan
+    #: allows the terminal (app.services.device_limits).
+    held = "held"
 
 
 class SyncStatus(str, enum.Enum):

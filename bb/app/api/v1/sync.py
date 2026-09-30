@@ -64,6 +64,28 @@ def get_tenant(principal: Principal = Depends(get_principal)) -> Tenant:
     return principal.tenant
 
 
+def _sync_stripe_price(db: Session, tenant: Tenant, plan_id: str | None) -> None:
+    from app.core.config import settings
+    from app.services import billing
+
+    if not (settings.billing_enabled and tenant.stripe_subscription_id and plan_id):
+        return
+    plan = db.get(SubscriptionPlan, plan_id)
+    if plan is None or not plan.stripe_price_id:
+        db.rollback()
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"{plan.name if plan else 'That plan'} can't be billed online yet. Contact support to switch.",
+        )
+    try:
+        billing.set_subscription_price(
+            billing.retrieve_subscription(tenant.stripe_subscription_id), plan.stripe_price_id
+        )
+    except billing.BillingError as exc:
+        db.rollback()
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Plan not changed — {exc}") from exc
+
+
 @router.patch("/tenant", response_model=TenantOut)
 def update_tenant(
     payload: TenantUpdate,
@@ -137,7 +159,8 @@ def update_tenant(
     # out — the deferred plan's floor is applied later, when it lands (see
     # app.services.scheduling.sweep_subscriptions).
     landing_now = new_plan if not deferred else None
-    floor = landing_now.min_sync_interval_minutes if landing_now else tenant.plan_min_sync_interval_minutes
+    floor = (tenant.limit_for("min_sync_interval_minutes", landing_now) if landing_now
+             else tenant.plan_min_sync_interval_minutes)
     plan_label = landing_now.name if landing_now else tenant.plan_name
 
     if "sync_interval_minutes" in data:
@@ -153,6 +176,13 @@ def update_tenant(
         # account holding a setting its own new plan would reject — the same
         # fix already applied to a fresh signup (see app.api.v1.auth.signup).
         data["sync_interval_minutes"] = floor
+
+    # Paying through Stripe: the subscription follows the plan choice. Its
+    # price changes now with no proration, so the next invoice is at the new
+    # plan's price and the current period is neither charged nor refunded —
+    # the same moment BioBridge itself switches (at renewal, when queued).
+    if pending_touched or new_plan is not None:
+        _sync_stripe_price(db, tenant, tenant.pending_plan_id or (new_plan.id if new_plan else tenant.plan_id))
 
     for key, value in data.items():
         setattr(tenant, key, value)
@@ -519,6 +549,7 @@ def dashboard(
         punches_today=count(today=True),
         punches_pending=count(state=PunchState.pending.value),
         punches_error=count(state=PunchState.error.value),
+        punches_held=count(state=PunchState.held.value),
         unmapped_employees=db.scalar(
             select(func.count(EmployeeMapping.id)).where(
                 EmployeeMapping.tenant_id == tenant.id,

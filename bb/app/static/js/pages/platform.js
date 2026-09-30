@@ -49,6 +49,33 @@ function planOptions(plans) {
   ];
 }
 
+/** What the plan itself says about one limit, for the override fields. */
+function planLimitText(plan, key, unit) {
+  if (!plan) return 'No plan: unlimited';
+  const v = plan[key];
+  return v == null ? `${plan.name}: unlimited` : `${plan.name}: ${v}${unit}`;
+}
+
+/** One usage tile: "18 / 25 employees", tinted near or over the limit. */
+function usageTile(used, limit, label) {
+  const ratio = limit ? used / limit : 0;
+  const cls = limit && used > limit ? ' over' : limit && ratio >= 0.8 ? ' near' : '';
+  return `<div class="u${cls}"><b>${esc(used)}${limit != null ? ` / ${esc(limit)}` : ''}</b>
+    <span>${esc(label)}${limit == null ? ' · no limit' : ''}</span></div>`;
+}
+
+function usageHtml(u) {
+  if (!u) return '<div class="usage-strip"><div class="u"><span>Loading usage…</span></div></div>';
+  return `<div class="usage-strip">
+    ${usageTile(u.employees_mapped, u.max_employees, 'employees matched')}
+    ${usageTile(u.devices, u.max_devices, 'devices')}
+    <div class="u${u.punches_held ? ' over' : ''}"><b>${esc(u.punches_held)}</b>
+      <span>punches held${u.devices_over_limit ? ` · ${esc(u.devices_over_limit)} device(s) over` : ''}</span></div>
+    <div class="u"><b>${esc(u.sync_interval_minutes)} min</b>
+      <span>sync${u.min_sync_interval_minutes ? ` · fastest ${esc(u.min_sync_interval_minutes)} min` : ' · any speed'}</span></div>
+  </div>`;
+}
+
 /** ISO datetime -> the plain YYYY-MM-DD a <input type=date> needs. */
 function toDateInput(value) {
   return value ? String(value).slice(0, 10) : '';
@@ -91,7 +118,6 @@ export async function render(mount, route) {
     api.get(`/admin/tenants${query ? `?q=${encodeURIComponent(query)}` : ''}`),
     api.get('/admin/plans').catch(() => []),
   ]);
-  const defaultPlanId = (plans.find((p) => p.is_default) || {}).id || '';
 
   // If the scheduler is down then *every* customer has stopped, whatever their
   // interval says, and editing one number will not start anything.
@@ -121,36 +147,11 @@ export async function render(mount, route) {
         </table>` : '<div class="hint">Could not read the scheduler state.</div>'}
     </div>
 
-    <div class="card" style="margin-bottom:14px">
-      <h2>New account <span class="hint">onboard a customer yourself</span></h2>
-      <form id="newTenant">
-        <div class="grid cols-2">
-          ${field({ name: 'company_name', label: 'Company', required: true,
-                    placeholder: 'Muscat Traders' })}
-          ${field({ name: 'owner_email', label: 'Owner email', type: 'email',
-                    required: true, placeholder: 'boss@muscat.com' })}
-          ${field({ name: 'timezone', label: 'Timezone', required: true,
-                    value: 'Asia/Dubai', datalist: timezoneNames(),
-                    help: 'Used to render their attendance. Not the device zone.' })}
-          ${field({ name: 'sync_interval_minutes', label: 'Sync every (minutes)',
-                    type: 'number', required: true, value: 15 })}
-          ${field({ name: 'plan_id', label: 'Plan', value: defaultPlanId,
-                    options: planOptions(plans),
-                    help: 'Sets the initial employee cap and sync-interval floor. '
-                        + 'The renewal date starts as a standard trial from today — '
-                        + 'change it from the account row afterward.' })}
-        </div>
-        <div class="row" style="margin-top:4px">
-          <button class="primary" id="createTenant">Create account</button>
-          <span class="hint">A password is generated and shown once — nothing
-            stores it in the clear.</span>
-        </div>
-      </form>
-      <div id="createdBox"></div>
-    </div>
-
     <div class="card">
-      <h2>Accounts <span class="hint">${esc(tenants.length)} total</span></h2>
+      <div class="card-head" style="position:static">
+        <h2>Accounts <span class="hint">${esc(tenants.length)} total</span></h2>
+        <div class="actions"><button class="primary sm" id="addAccount">Add account</button></div>
+      </div>
       <form id="search" class="row" style="gap:10px;margin-bottom:12px">
         <input type="text" name="q" id="q" value="${esc(query)}"
                placeholder="Filter by name or slug" style="max-width:280px">
@@ -232,25 +233,10 @@ function backoffTag(t) {
 }
 
 function rowFor(t) {
-  const connected = t.odoo_connected && t.source_connected;
   return `
     <tr data-tenant="${esc(t.id)}">
       <td>
         <strong>${esc(t.name)}</strong>
-        <div class="hint mono">${esc(t.slug)} · ${esc(t.timezone)} ·
-          ${esc(t.users)} user${t.users === 1 ? '' : 's'}</div>
-        <div class="hint">${t.plan_name ? esc(t.plan_name) : 'no plan'}${
-          t.subscription_renews_at ? ` · renews ${esc(fmtIn(t.subscription_renews_at))}` : ''
-        }</div>
-        ${t.pending_plan_name ? `<div class="hint">→ ${esc(t.pending_plan_name)} queued</div>` : ''}
-        ${t.renewal_warning ? `<div class="hint strong">${
-          t.renewal_warning.urgent ? 'renewing very soon' : 'renewing soon'}</div>` : ''}
-        ${t.syncable === false ? `<div class="hint strong">stopped${
-          t.suspended_at ? ` ${esc(fmtAgo(t.suspended_at))}` : ''}${
-          t.suspension_reason ? `: ${esc(t.suspension_reason)}` : ''}</div>` : ''}
-        ${connected ? '' : `<div class="hint strong">${
-          !t.odoo_connected && !t.source_connected ? 'nothing connected'
-            : !t.odoo_connected ? 'no Odoo connection' : 'no device platform'}</div>`}
       </td>
       <td>${pill(t.status)}</td>
       <td class="num" style="white-space:nowrap">
@@ -281,6 +267,35 @@ function rowFor(t) {
         </div>
       </td>
     </tr>`;
+}
+
+/* The account's facts, at the top of Configure — what used to be stacked
+ * under each name in the account list. Label / value pairs, with anything
+ * that needs a person (stopped, renewing soon, nothing connected) tinted. */
+function accountInfoHtml(t) {
+  const setup = t.odoo_connected && t.source_connected ? 'Odoo and a biometric connection'
+    : !t.odoo_connected && !t.source_connected ? 'Nothing connected'
+      : !t.odoo_connected ? 'No Odoo connection' : 'No biometric connection';
+  const custom = [t.limit_max_employees, t.limit_max_devices, t.limit_min_sync_interval_minutes]
+    .some((v) => v != null);
+  const items = [
+    ['Slug', `<span class="mono">${esc(t.slug)}</span>`],
+    ['Timezone', esc(t.timezone)],
+    ['Users', esc(t.users)],
+    ['Plan', `${t.plan_name ? esc(t.plan_name) : 'No plan'}${custom ? ' · custom limits' : ''}${
+      t.pending_plan_name ? ` → ${esc(t.pending_plan_name)} queued` : ''}`],
+    ['Renews', t.subscription_renews_at
+      ? `${esc(fmtIn(t.subscription_renews_at))}${t.renewal_warning
+        ? ` <span class="pill warn">${t.renewal_warning.urgent ? 'very soon' : 'soon'}</span>` : ''}`
+      : 'No renewal date', ],
+    ['Setup', setup, !(t.odoo_connected && t.source_connected)],
+  ];
+  if (t.syncable === false) {
+    items.push(['Stopped', `${t.suspended_at ? esc(fmtAgo(t.suspended_at)) : 'yes'}${
+      t.suspension_reason ? ` — ${esc(t.suspension_reason)}` : ''}`, true]);
+  }
+  return `<dl class="account-info">${items.map(([k, v, warn]) =>
+    `<div${warn ? ' class="warn"' : ''}><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>`;
 }
 
 function diagnosticsHtml(d) {
@@ -349,6 +364,14 @@ function openConfigDialog(tenant, { plans, onChange }) {
   // kicks off underneath via onChange.
   let t = tenant;
   let diag = null;
+  let usage = null;
+  const planById = (id) => plans.find((p) => p.id === id) || null;
+
+  async function loadUsage() {
+    usage = await api.get(`/admin/tenants/${t.id}/usage`).catch(() => null);
+    const slot = $('.usage-slot', dialog);
+    if (slot) slot.innerHTML = usageHtml(usage);
+  }
 
   function close() {
     dialog.close();
@@ -362,6 +385,7 @@ function openConfigDialog(tenant, { plans, onChange }) {
         <button type="button" class="link wiz-x" data-cfg="close" aria-label="Close">&times;</button>
       </div>
       <div class="wiz-body">
+        ${accountInfoHtml(t)}
         <form id="cfgForm">
           <div class="grid cols-2">
             <div>
@@ -395,24 +419,34 @@ function openConfigDialog(tenant, { plans, onChange }) {
                         value: t.orphan_out_policy, required: true, options: ORPHAN })}
             </div>
           </div>
-          <div class="grid cols-2" style="margin-top:2px">
-            <div>
-              <h3 style="margin:0 0 10px;font-size:13px">Subscription</h3>
-              ${field({ name: 'plan_id', label: 'Plan', value: t.plan_id || '',
-                        options: planOptions(plans),
-                        help: 'Caps this account’s mapped-employee count and how '
-                            + 'fast they can set their own sync interval. Lowering it '
-                            + 'never unmaps anyone already matched — only new badges '
-                            + 'are held back.' })}
-            </div>
-            <div>
-              <h3 style="margin:0 0 10px;font-size:13px">&nbsp;</h3>
-              ${field({ name: 'subscription_renews_at', label: 'Renews / paid through',
-                        type: 'date', value: toDateInput(t.subscription_renews_at),
-                        help: 'Past this date, an active account moves itself to past '
-                            + 'due and stops syncing — no grace period. Leave empty to '
-                            + 'exempt this account from that automatic check entirely.' })}
-            </div>
+          <h3 style="margin:6px 0 10px;font-size:13px">Subscription</h3>
+          <div class="usage-slot">${usageHtml(usage)}</div>
+          <div class="grid cols-2">
+            ${field({ name: 'plan_id', label: 'Plan', value: t.plan_id || '',
+                      options: planOptions(plans),
+                      help: 'Sets this account’s employee, device and sync-speed limits. Assigning a '
+                          + 'plan raises a faster sync interval to the plan’s floor. Lowering a plan '
+                          + 'never unmaps anyone already matched — only new badges wait.' })}
+            ${field({ name: 'subscription_renews_at', label: 'Renews / paid through',
+                      type: 'date', value: toDateInput(t.subscription_renews_at),
+                      help: 'Past this date, an active account moves itself to past '
+                          + 'due and stops syncing — no grace period. Leave empty to '
+                          + 'exempt this account from that automatic check entirely.' })}
+          </div>
+          <h3 style="margin:6px 0 4px;font-size:13px">Limits for this account
+            <span class="hint">empty = use the plan · 0 = no limit</span></h3>
+          <div class="grid cols-3 limit-fields">
+            ${field({ tip: true, name: 'limit_max_employees', label: 'Employees', type: 'number',
+                      value: t.limit_max_employees ?? '', placeholder: planLimitText(planById(t.plan_id), 'max_employees', ''),
+                      help: 'An exception to the plan for this customer only, e.g. a custom deal. '
+                          + 'Stays in place if the plan changes — clear it to go back to the plan.' })}
+            ${field({ tip: true, name: 'limit_max_devices', label: 'Devices', type: 'number',
+                      value: t.limit_max_devices ?? '', placeholder: planLimitText(planById(t.plan_id), 'max_devices', ''),
+                      help: 'Raising it releases held punches from the newly covered terminals on the next sync.' })}
+            ${field({ tip: true, name: 'limit_min_sync_interval_minutes', label: 'Fastest sync (min)', type: 'number',
+                      value: t.limit_min_sync_interval_minutes ?? '',
+                      placeholder: planLimitText(planById(t.plan_id), 'min_sync_interval_minutes', ' min'),
+                      help: 'The fastest interval the customer can pick themselves.' })}
           </div>
         </form>
         <div class="diag">${diag ? diagnosticsHtml(diag) : ''}</div>
@@ -432,6 +466,16 @@ function openConfigDialog(tenant, { plans, onChange }) {
   function wireInner() {
     dialog.querySelectorAll('[data-cfg=close]').forEach((b) => b.addEventListener('click', close));
 
+    // The override boxes show what the plan gives, so picking a plan
+    // previews its limits before anything is saved.
+    const planSelect = $('#plan_id', dialog);
+    planSelect?.addEventListener('change', () => {
+      const plan = planById(planSelect.value);
+      $('#limit_max_employees', dialog).placeholder = planLimitText(plan, 'max_employees', '');
+      $('#limit_max_devices', dialog).placeholder = planLimitText(plan, 'max_devices', '');
+      $('#limit_min_sync_interval_minutes', dialog).placeholder = planLimitText(plan, 'min_sync_interval_minutes', ' min');
+    });
+
     $('#cfgForm', dialog).addEventListener('submit', (event) => {
       event.preventDefault();
       const values = readForm(event.target);
@@ -443,9 +487,11 @@ function openConfigDialog(tenant, { plans, onChange }) {
       busy($('.save-config', dialog), async () => {
         const result = await guard(() => api.patch(`/admin/tenants/${t.id}/config`, values));
         if (!result) return;
+        const raised = result.sync_interval_minutes !== t.sync_interval_minutes;
         t = result;
         paint();
-        toast(`${result.name} updated`, 'ok');
+        loadUsage();
+        toast(`${result.name} updated${raised ? ` — now syncs every ${result.sync_interval_minutes} min to fit its plan` : ''}`, 'ok');
         onChange();
       });
     });
@@ -497,7 +543,104 @@ function openConfigDialog(tenant, { plans, onChange }) {
 
   paint();
   dialog.showModal();
+  loadUsage();
   return dialog;
+}
+
+/* "Add account": staff onboarding a customer, in the same modal chrome as
+ * Configure. On success the dialog turns into the one-time password — it is
+ * shown, not toasted, because it cannot be retrieved afterwards — and the
+ * account list behind refreshes when it is closed. */
+function openNewAccountDialog(plans, onCreated) {
+  document.querySelector('dialog.new-account-dialog')?.remove();
+  const dialog = document.createElement('dialog');
+  dialog.className = 'wizard new-account-dialog';
+  dialog.setAttribute('aria-labelledby', 'newAccountTitle');
+  document.body.append(dialog);
+  const defaultPlanId = (plans.find((p) => p.is_default) || {}).id || '';
+  let created = false;
+
+  const close = () => {
+    dialog.close();
+    dialog.remove();
+    if (created) onCreated();
+  };
+
+  dialog.innerHTML = `
+    <div class="wiz-head">
+      <strong id="newAccountTitle">Add account</strong>
+      <button type="button" class="link wiz-x" data-close aria-label="Close">&times;</button>
+    </div>
+    <div class="wiz-body">
+      <form id="newTenant">
+        <div class="grid cols-2">
+          ${field({ name: 'company_name', label: 'Company', required: true,
+                    placeholder: 'Muscat Traders' })}
+          ${field({ name: 'owner_email', label: 'Owner email', type: 'email',
+                    required: true, placeholder: 'boss@muscat.com' })}
+          ${field({ name: 'plan_id', label: 'Plan', value: defaultPlanId,
+                    options: planOptions(plans), tip: true,
+                    help: 'Sets the account’s employee, device and sync-speed limits — a faster '
+                        + 'interval than the plan allows is raised to it. The renewal date starts '
+                        + 'as a standard trial from today.' })}
+          ${field({ name: 'sync_interval_minutes', label: 'Sync every (minutes)',
+                    type: 'number', required: true, value: 15 })}
+          ${field({ name: 'timezone', label: 'Timezone', required: true,
+                    value: 'Asia/Dubai', datalist: timezoneNames(), tip: true,
+                    help: 'Used to render their attendance. Not the device zone.' })}
+        </div>
+      </form>
+      <div class="hint">A password is generated and shown once — nothing stores it in the clear.</div>
+    </div>
+    <div class="wiz-foot">
+      <button type="button" class="link" data-close>Cancel</button>
+      <div class="actions">
+        <button type="submit" form="newTenant" class="primary" id="createTenant">Create account</button>
+      </div>
+    </div>`;
+
+  const wireClose = () => $$('[data-close]', dialog).forEach((b) => b.addEventListener('click', close));
+  wireClose();
+  dialog.addEventListener('cancel', (event) => { event.preventDefault(); close(); });
+  dialog.addEventListener('click', (event) => { if (event.target === dialog) close(); });
+
+  // The interval follows the plan's floor as the plan changes.
+  const planSel = $('[name=plan_id]', dialog);
+  const mins = $('[name=sync_interval_minutes]', dialog);
+  const fitInterval = () => {
+    const floor = (plans.find((p) => p.id === planSel.value) || {}).min_sync_interval_minutes;
+    if (floor && Number(mins.value) < floor) mins.value = floor;
+  };
+  planSel.addEventListener('change', fitInterval);
+  fitInterval();
+
+  $('#newTenant', dialog).addEventListener('submit', (event) => {
+    event.preventDefault();
+    const values = readForm(event.target);
+    // readForm yields '' for "No plan" — the API expects null.
+    if (values.plan_id === '') values.plan_id = null;
+    busy($('#createTenant', dialog), async () => {
+      const result = await guard(() => api.post('/admin/tenants', values));
+      if (!result) return;
+      created = true;
+      $('.wiz-body', dialog).innerHTML = `
+        <div class="banner" style="margin:0">
+          <strong>${esc(result.tenant.name)} created</strong>
+          Owner <span class="mono">${esc(result.owner_email)}</span>, password
+          <span class="mono" style="user-select:all">${esc(result.owner_password)}</span>
+          <div class="hint" style="margin-top:6px">${esc(result.note)}</div>
+        </div>
+        <div class="hint" style="margin-top:12px">Copy the password now — it is not shown again.</div>`;
+      $('.wiz-foot', dialog).innerHTML = `
+        <span></span>
+        <div class="actions"><button type="button" class="primary" data-close>Done</button></div>`;
+      wireClose();
+      toast(`${result.tenant.name} created`, 'ok');
+    });
+  });
+
+  dialog.showModal();
+  $('#company_name', dialog).focus();
 }
 
 function wire(mount, route, tenants, plans, linkFor) {
@@ -508,27 +651,8 @@ function wire(mount, route, tenants, plans, linkFor) {
   });
 
   // --- create -------------------------------------------------------------
-  $('#newTenant', mount).addEventListener('submit', (event) => {
-    event.preventDefault();
-    const values = readForm(event.target);
-    // readForm yields '' for "No plan", the select's own empty-string
-    // option — the API expects null for "assign nothing".
-    if (values.plan_id === '') values.plan_id = null;
-    busy($('#createTenant', mount), async () => {
-      const result = await guard(() => api.post('/admin/tenants', values));
-      if (!result) return;
-      // Rendered rather than toasted: a password in a toast is gone in five
-      // seconds, and this one cannot be retrieved afterwards.
-      $('#createdBox', mount).innerHTML = `
-        <div class="banner" style="margin-top:12px">
-          <strong>${esc(result.tenant.name)} created</strong>
-          Owner <span class="mono">${esc(result.owner_email)}</span>, password
-          <span class="mono" style="user-select:all">${esc(result.owner_password)}</span>
-          <div class="hint" style="margin-top:6px">${esc(result.note)}</div>
-        </div>`;
-      toast(`${result.tenant.name} created`, 'ok');
-    });
-  });
+  $('#addAccount', mount).addEventListener('click', () =>
+    openNewAccountDialog(plans, () => render(mount, route)));
 
   // --- per row ------------------------------------------------------------
   $$('tr[data-tenant]', mount).forEach((row) => {

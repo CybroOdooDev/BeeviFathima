@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Email confirmed — BioBridge</title>
+<meta name="description" content="Your BioBridge email is confirmed.">
+<meta name="robots" content="noindex">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="index.html" aria-label="BioBridge home"><span class="brand-mark">B</span><span>Bio<b>Bridge</b></span></a>
+    <nav class="nav" aria-label="Main">
+      <a href="index.html#how">How it works</a>
+      <a href="index.html#features">Features</a>
+      <a href="pricing.html">Pricing</a>
+      <a href="setup.html">Setup guide</a>
+      <a href="contact.html">Contact</a>
+    </nav>
+    <div class="header-cta">
+      <a class="btn btn-ghost btn-sm" data-app="signin" href="#">Sign in</a>
+      <a class="btn btn-primary btn-sm" href="signup.html">Start free trial</a>
+    </div>
+    <button class="menu-btn" type="button" aria-label="Menu" aria-expanded="false">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+  </div>
+</header>
+
+<main id="main" class="wrap notice-page">
+  <div class="notice-card" id="verifyCard">
+    <div class="notice-icon" aria-hidden="true"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.8 2.8L16.5 9.5"/></svg></div>
+    <h1 id="verifyTitle">Confirming your email…</h1>
+    <p class="lead" id="verifyLead">One moment.</p>
+    <div class="notice-actions" id="verifyActions" hidden>
+      <a class="btn btn-primary" data-app="signin" href="#">Go to sign in</a>
+    </div>
+    <form id="verifyResend" class="inline-form" hidden>
+      <label class="field">Didn't get the login email? Enter your address to send it again
+        <span class="inline-row"><input type="email" name="email" required placeholder="you@yourcompany.com">
+        <button type="submit" class="btn btn-ghost">Resend</button></span></label>
+      <p class="form-status" role="status" aria-live="polite"></p>
+    </form>
+  </div>
+</main>
+
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="brand-col">
+      <a class="brand" href="index.html"><span class="brand-mark">B</span><span>Bio<b>Bridge</b></span></a>
+      <p class="about">Biometric attendance, synced into Odoo. Built by [COMPANY NAME].</p>
+      <p class="copy">© <span data-year></span> [COMPANY NAME]</p>
+    </div>
+    <nav aria-label="Product"><b>Product</b><a href="index.html#features">Features</a><a href="pricing.html">Pricing</a><a href="setup.html">Setup guide</a></nav>
+    <nav aria-label="Company"><b>Company</b><a href="contact.html">Contact sales</a><a href="contact.html">Book a demo</a><a data-app="signin" href="#">Sign in</a></nav>
+    <nav aria-label="Legal"><b>Legal</b><a href="[TERMS URL]">Terms</a><a href="[PRIVACY URL]">Privacy</a></nav>
+  </div>
+</footer>
+<script src="assets/site.js" defer></script>
+</body>
+</html>

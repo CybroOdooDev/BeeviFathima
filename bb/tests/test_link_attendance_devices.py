@@ -38,30 +38,25 @@ def _shift(emp, day, terminal="GATE-01", first_id=1):
 # --------------------------------------------------------------------------- #
 # Going forward
 # --------------------------------------------------------------------------- #
-def test_punches_fetched_before_their_terminal_was_imported_still_get_its_device(
+def test_a_terminal_never_imported_is_recorded_and_linked_from_its_punches(
     db, tenant, local_day, monkeypatch
 ):
+    """A punch no longer waits for "Import terminals" to be traced: its
+    terminal is recorded from the first punch, so the attendance carries it
+    even when nobody ever imported the device."""
     _tracking(db, tenant)
     device = db.scalar(select(Device))
-    source_id, serial = device.source_id, device.serial_number
-    db.delete(device)  # the terminal isn't imported yet when the punches arrive
+    db.delete(device)  # the terminal isn't imported when the punches arrive
     db.commit()
 
-    rows = _shift("1001", local_day)
-    # Cycle 1: badge unknown to Odoo, so the punches are stored but not pushed.
-    run(db, tenant, FakeOdoo(employees={}), rows, monkeypatch)
-    assert all(p.device_id is None for p in db.scalars(select(PunchRecord)))
-
-    # "Import terminals", then Odoo learns the badge; cycle 2 pushes.
-    db.add(Device(tenant_id=tenant.id, source_id=source_id, serial_number=serial, is_enabled=True))
-    db.commit()
     odoo = FakeOdoo()
-    run(db, tenant, odoo, rows, monkeypatch)
+    run(db, tenant, odoo, _shift("1001", local_day), monkeypatch)
 
+    recorded = db.scalar(select(Device).where(Device.serial_number == "GATE-01"))
+    assert recorded is not None, "recorded from its first punch"
     (record,) = odoo.attendances.values()
     assert record["device_id"] == odoo.devices["GATE-01"]
-    check_in = db.scalars(select(PunchRecord).order_by(PunchRecord.punch_time_utc)).first()
-    assert check_in.device_id is not None, "the link found by serial number is kept"
+    assert all(p.device_id == recorded.id for p in db.scalars(select(PunchRecord)))
 
 
 # --------------------------------------------------------------------------- #
@@ -101,7 +96,8 @@ def test_a_device_already_set_in_odoo_is_never_overwritten(db, tenant, local_day
 
 def test_a_record_with_no_traceable_terminal_is_counted_not_guessed(db, tenant, local_day, monkeypatch):
     odoo = FakeOdoo()
-    run(db, tenant, odoo, _shift("1001", local_day, terminal="NOT-IMPORTED"), monkeypatch)
+    # No serial on the punch at all — the one case with nothing to trace.
+    run(db, tenant, odoo, _shift("1001", local_day, terminal=""), monkeypatch)
     _tracking(db, tenant)
 
     report = link_attendance_devices(db, tenant, odoo, apply=True)

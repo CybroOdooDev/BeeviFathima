@@ -107,11 +107,10 @@ class DeviceSource(Base, UUIDPk, Timestamped):
     provider: Mapped[str] = mapped_column(String(40), default="biotime", nullable=False)
     config: Mapped[dict | None] = mapped_column(JSON, default=dict)
 
-    #: "platform" or "device" — purely how this connection is framed to the
-    #: tenant (a shared server vs. one standalone terminal). Both values use
-    #: the exact same integration underneath; nothing here branches on it.
-    #: A separate wire protocol for standalone devices is a future addition,
-    #: not this field's job — see app/integrations/base.py.
+    #: "platform" (a server that manages many terminals) or "device" (one
+    #: standalone terminal). Which kinds a provider may be saved under is
+    #: its ``kinds`` — see app/integrations/base.py. A "device" connection
+    #: also carries a location and registers its terminal when tested.
     #:
     #: ``server_default`` as well as ``default``: this is a NOT NULL column
     #: added after the table already existed, so tools/migrate.py needs a

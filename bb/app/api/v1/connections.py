@@ -45,12 +45,15 @@ from app.schemas import (
     SyncRunOut,
     TestResult,
 )
+from app.integrations.providers.zkteco_adms import serial_from_address
+from app.services import adms
 from app.services.connections import (
     UnsafeTargetError,
     address_key,
     build_odoo_client,
     build_source_provider,
 )
+from app.services.device_limits import over_limit_device_ids
 from app.services.provisioning import provision_unmapped
 from app.services.sync_engine import SyncEngine
 
@@ -419,8 +422,21 @@ def _require_provider_fields(provider_cls, payload: SourceIn) -> None:
         )
 
 
+#: Cloud services where one address serves every customer: the account
+#: (API key), not the address, is what makes two connections the same.
+_ACCOUNT_KEYED = {"crosschex", "hikconnect", "cams"}
+
+
+def _endpoint_key(provider: str | None, base_url: str, username: str | None) -> str:
+    key = address_key(base_url)
+    if (provider or "") in _ACCOUNT_KEYED:
+        key = f"{key}#{(username or '').strip()}"
+    return key
+
+
 def _refuse_duplicate_address(
-    db: Session, principal: Principal, base_url: str, except_id: str | None = None
+    db: Session, principal: Principal, base_url: str, except_id: str | None = None,
+    provider: str | None = None, username: str | None = None,
 ) -> None:
     """One connection per address, per account.
 
@@ -432,11 +448,11 @@ def _refuse_duplicate_address(
     slip past. Per account only: two customers can each have a device at
     192.168.1.201 on their own networks.
     """
-    wanted = address_key(base_url)
+    wanted = _endpoint_key(provider, base_url, username)
     for other in db.scalars(
         select(DeviceSource).where(DeviceSource.tenant_id == principal.tenant.id)
     ).all():
-        if other.id != except_id and address_key(other.base_url) == wanted:
+        if other.id != except_id and _endpoint_key(other.provider, other.base_url, other.username) == wanted:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 f"This address is already connected as '{other.name}'. "
@@ -536,7 +552,8 @@ def create_source(
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, f"A connection named '{payload.name}' already exists."
         )
-    _refuse_duplicate_address(db, principal, payload.base_url)
+    _refuse_duplicate_address(db, principal, payload.base_url,
+                              provider=payload.provider, username=payload.username)
 
     source = DeviceSource(
         tenant_id=principal.tenant.id,
@@ -557,6 +574,16 @@ def create_source(
     )
     db.add(source)
     _dupe_name_guard(db, payload.name)
+    if source.provider == adms.PROVIDER_SLUG:
+        db.flush()
+        try:
+            claimed = adms.claim(db, source, serial_from_address(source.base_url))
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+        # Ask the terminal who is enrolled on it, and what it is, on its
+        # next heartbeat — that is what provisioning and the Terminals page read.
+        adms.ask_for_details(db, claimed)
     probe = _probe_source(principal, source)
     if probe.ok:
         _register_standalone_device(db, principal, source)
@@ -613,7 +640,18 @@ def update_source(
                 f"A connection named '{data['name']}' already exists.",
             )
     if data.get("base_url"):
-        _refuse_duplicate_address(db, principal, data["base_url"], except_id=source.id)
+        _refuse_duplicate_address(db, principal, data["base_url"], except_id=source.id,
+                                  provider=source.provider, username=data.get("username", source.username))
+        if data["base_url"] != source.base_url and "cosec_cursor" in (source.config or {}):
+            # A different device's log starts from its own beginning.
+            source.config = {k: v for k, v in (source.config or {}).items() if k != "cosec_cursor"}
+        if source.provider == adms.PROVIDER_SLUG and data["base_url"] != source.base_url:
+            try:
+                adms.release(db, source)
+                adms.ask_for_details(db, adms.claim(db, source, serial_from_address(data["base_url"])))
+            except ValueError as exc:
+                db.rollback()
+                raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     for key, value in data.items():
         setattr(source, key, value)
     if password:
@@ -640,8 +678,9 @@ def test_source_unsaved(
     stored = _get_source(db, principal, payload.source_id) if payload.source_id else None
     # Before any network call: the wizard's test step is where this should
     # surface, not a Connect that fails after a green tick.
-    _refuse_duplicate_address(db, principal, payload.base_url, except_id=payload.source_id)
     provider = payload.provider or (stored.provider if stored else None) or "biotime"
+    _refuse_duplicate_address(db, principal, payload.base_url, except_id=payload.source_id,
+                              provider=provider, username=payload.username)
     try:
         provider_cls = get_provider_class(provider)
     except ProviderError as exc:
@@ -730,6 +769,8 @@ def delete_source(
 ) -> None:
     source = _get_source(db, principal, source_id)
     audit(db, principal, "source.delete", source.id, source.name, request)
+    if source.provider == adms.PROVIDER_SLUG:
+        adms.release(db, source)
     db.delete(source)
     db.commit()
 
@@ -1072,13 +1113,17 @@ def provision_employees(
 def list_devices(
     principal: Principal = Depends(get_principal), db: Session = Depends(get_db)
 ) -> list[Device]:
-    return list(
+    devices = list(
         db.scalars(
             select(Device)
             .where(Device.tenant_id == principal.tenant.id)
             .order_by(Device.serial_number)
         ).all()
     )
+    over = over_limit_device_ids(db, principal.tenant)
+    for device in devices:
+        device.over_plan_limit = device.id in over  # read by DeviceOut
+    return devices
 
 
 @router.patch("/devices/{device_id}", response_model=DeviceOut)

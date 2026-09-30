@@ -113,6 +113,15 @@ def get_principal(
     if payload.get("tid") != tenant.id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Token/tenant mismatch")
 
+    # Signed in with the emailed password: nothing inside the workspace until
+    # they have set their own (POST /auth/change-password is on
+    # get_current_user, so it stays reachable).
+    if user.must_change_password:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Set a new password to continue — the one we emailed you works only once.",
+        )
+
     return Principal(user=user, tenant=tenant)
 
 

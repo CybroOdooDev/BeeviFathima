@@ -19,6 +19,20 @@ class Settings(BaseSettings):
     debug: bool = False
     api_v1_prefix: str = "/api/v1"
     public_base_url: str = "http://localhost:8000"
+    #: The marketing website, e.g. https://biobridge.app — where visitors
+    #: register and buy. Verification links and Stripe's return pages point
+    #: there when set; empty means the app's own pages are used instead.
+    #: Add the same origin to CORS_ORIGINS so the site can call the API.
+    site_url: str = ""
+    #: What customers type into a ZKTeco terminal's "Cloud Server Setting"
+    #: (ADMS push). Empty host = PUBLIC_BASE_URL's host; 0 port = its port
+    #: (80 if none). Terminals speak plain HTTP to /iclock/ on this address.
+    adms_server_host: str = ""
+    adms_server_port: int = 0
+    #: Largest upload a terminal may send in one request (bytes).
+    adms_max_body_bytes: int = 2_000_000
+    #: Website registrations (and resend requests) allowed per IP per hour.
+    registration_rate_per_hour: int = 10
 
     # --- stores --------------------------------------------------------------
     database_url: str = "sqlite:///./biobridge.db"
@@ -133,6 +147,20 @@ class Settings(BaseSettings):
     smtp_use_tls: bool = True
     #: From address on outbound mail. Only read once SMTP_HOST is set.
     mail_from: str = "no-reply@biobridge.app"
+
+    # --- billing (Stripe) --------------------------------------------------------
+    #: Empty means "no online billing": plans are assigned and renewal dates
+    #: set by staff, exactly as before — the same shape SMTP_HOST and
+    #: REDIS_URL use. Test-mode keys (sk_test_…) for development.
+    stripe_secret_key: str = ""
+    #: The signing secret of the webhook endpoint (whsec_…), from the Stripe
+    #: dashboard or `stripe listen`. Without it every webhook is refused.
+    stripe_webhook_secret: str = ""
+    stripe_api_base: str = "https://api.stripe.com"
+
+    @property
+    def billing_enabled(self) -> bool:
+        return bool(self.stripe_secret_key)
 
     @property
     def cors_origin_list(self) -> list[str]:

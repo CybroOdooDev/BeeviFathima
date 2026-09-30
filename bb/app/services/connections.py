@@ -66,16 +66,25 @@ def build_odoo_client(tenant: Tenant, conn: OdooConnection) -> OdooClient:
     )
 
 
-def build_source_provider(tenant: Tenant, source: DeviceSource) -> AttendanceProvider:
+def build_source_provider(tenant: Tenant, source: DeviceSource, db=None) -> AttendanceProvider:
     """Construct the integration a source is configured to use.
 
     This is the single place the vendor is decided. Callers above hold an
     ``AttendanceProvider`` and never learn which one, which is what lets a tenant
     run BioTime at one site and something else at another.
     """
-    assert_safe_url(source.base_url)
-
     options = dict(source.config or {})
+    if (source.provider or "") == "zk_adms":
+        # A push device is never dialled — nothing to guard — but reads its
+        # traffic from the database, so it gets this source's session.
+        from sqlalchemy.orm import object_session
+
+        options["_db"] = db or object_session(source) or object_session(tenant)
+        options["_source_id"] = source.id
+        options["_tenant_id"] = tenant.id
+    else:
+        assert_safe_url(source.base_url)
+
     # Columns win over the JSON bag: they are what the connection form writes,
     # and a stale copy left in config must never quietly override them.
     options["auth_type"] = source.auth_type
@@ -113,6 +122,8 @@ def address_key(base_url: str) -> str:
     names are one machine.
     """
     value = (base_url or "").strip()
+    if value.lower().startswith("adms://"):
+        return "adms:" + value[7:].strip("/").upper()
     if "://" not in value:
         value = f"zk://{value}"
     parsed = urlparse(value)

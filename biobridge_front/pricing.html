@@ -26,7 +26,7 @@
     </nav>
     <div class="header-cta">
       <a class="btn btn-ghost btn-sm" data-app="signin" href="#">Sign in</a>
-      <a class="btn btn-primary btn-sm" data-app="signup" href="#">Start free trial</a>
+      <a class="btn btn-primary btn-sm" href="signup.html">Start free trial</a>
     </div>
     <button class="menu-btn" type="button" aria-label="Menu" aria-expanded="false">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
@@ -38,45 +38,45 @@
 <div class="wrap page-head">
   <span class="eyebrow">Pricing</span>
   <h1>One product, three sizes. Every feature on every plan.</h1>
-  <p class="lead">Start with a 10-day free trial — no card needed. Pick a plan before it ends and syncing carries on without a gap.</p>
+  <p class="lead">Start with a 10-day free trial — no card needed — or buy a plan and start on it straight away. Either way your login details arrive by email once you confirm your address.</p>
 </div>
 
 <section style="padding-top:32px;padding-bottom:64px">
   <div class="wrap grid cols-3 plans" style="gap:24px">
-    <div class="plan">
+    <div data-plan="Starter" class="plan">
       <div><h3>Starter</h3><p class="muted" style="font-size:15px;margin-top:6px">Small teams getting started with one device.</p></div>
       <div class="price">$49<small> / month</small></div>
-      <a class="btn btn-ghost btn-block" data-app="signup" href="#">Start free trial</a>
+      <div class="plan-ctas"><a class="btn btn-ghost btn-block" href="signup.html?plan=Starter&amp;mode=trial">Start free trial</a><a class="plan-buy" data-buy href="signup.html?plan=Starter&amp;mode=buy">or buy now →</a></div>
       <hr>
       <ul class="ticks">
         <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Up to <b>25 employees</b> matched to Odoo</span></li>
         <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Syncs as often as <b>every 60 minutes</b></span></li>
-        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>BioTime servers and standalone terminals</span></li>
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Up to <b>1 device</b></span></li>
         <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>All pairing modes and guard rails</span></li>
       </ul>
     </div>
-    <div class="plan featured">
+    <div data-plan="Growth" class="plan featured">
       <span class="tag">Most popular</span>
       <div><h3>Growth</h3><p class="muted" style="font-size:15px;margin-top:6px">Growing teams on several devices.</p></div>
       <div class="price">$149<small> / month</small></div>
-      <a class="btn btn-primary btn-block" data-app="signup" href="#">Start free trial</a>
+      <div class="plan-ctas"><a class="btn btn-primary btn-block" href="signup.html?plan=Growth&amp;mode=trial">Start free trial</a><a class="plan-buy" data-buy href="signup.html?plan=Growth&amp;mode=buy">or buy now →</a></div>
       <hr>
       <ul class="ticks">
         <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Up to <b>150 employees</b> matched to Odoo</span></li>
         <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Syncs as often as <b>every 15 minutes</b></span></li>
-        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>BioTime servers and standalone terminals</span></li>
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Up to <b>5 devices</b></span></li>
         <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>All pairing modes and guard rails</span></li>
       </ul>
     </div>
-    <div class="plan">
+    <div data-plan="Scale" class="plan">
       <div><h3>Scale</h3><p class="muted" style="font-size:15px;margin-top:6px">Large or multi-site operations.</p></div>
       <div class="price">$399<small> / month</small></div>
-      <a class="btn btn-ghost btn-block" data-app="signup" href="#">Start free trial</a>
+      <div class="plan-ctas"><a class="btn btn-ghost btn-block" href="signup.html?plan=Scale&amp;mode=trial">Start free trial</a><a class="plan-buy" data-buy href="signup.html?plan=Scale&amp;mode=buy">or buy now →</a></div>
       <hr>
       <ul class="ticks">
         <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>No employee cap</b></span></li>
         <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Syncs as often as <b>every 5 minutes</b></span></li>
-        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>BioTime servers and standalone terminals</span></li>
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Unlimited devices</b></span></li>
         <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>All pairing modes and guard rails</span></li>
       </ul>
     </div>
@@ -102,8 +102,16 @@
     </div>
     <div>
       <details open>
+        <summary>Do I need a card for the free trial?</summary>
+        <p>No. The trial asks only for your company details and email. You add a card when you choose to buy a plan — before the trial ends, if you want syncing to carry on without a gap.</p>
+      </details>
+      <details>
         <summary>What counts as an employee?</summary>
         <p>A badge matched to an Odoo employee. Badges that are never matched don't count, and moving to a smaller plan never unmatches anyone already syncing — it only holds back new matches.</p>
+      </details>
+      <details>
+        <summary>What counts as a device?</summary>
+        <p>Every biometric terminal your account has added — a standalone terminal, or one behind a BioTime server. If you go over your plan's limit, the extra terminal is still recorded and its punches are kept safely; they're sent to Odoo as soon as you upgrade.</p>
       </details>
       <details>
         <summary>What happens when the trial ends?</summary>
@@ -119,7 +127,7 @@
       </details>
       <details>
         <summary>Which devices are supported?</summary>
-        <p>ZKTeco BioTime servers, and ZKTeco standalone terminals reached directly by IP address. <a href="contact.html">Ask us</a> about other brands.</p>
+        <p>ZKTeco BioTime and Suprema BioStar 2 servers; ZKTeco and ZKTeco-built terminals (eSSL, Realtime, Biomax) either reached by IP address or sending to BioBridge through their Cloud Server setting; and Hikvision face, fingerprint and card terminals. <a href="contact.html">Ask us</a> about other brands.</p>
       </details>
     </div>
   </div>

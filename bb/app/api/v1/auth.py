@@ -28,6 +28,7 @@ from app.core.security import (
 from app.db.session import get_db
 from app.models import SubscriptionPlan, Tenant, TenantStatus, User, UserRole, UserSession
 from app.schemas import (
+    ChangePasswordIn,
     LoginRequest,
     MessageOut,
     SignupRequest,
@@ -42,6 +43,7 @@ from app.services.email_verification import (
     send_verification_email,
     verify_token,
 )
+from app.services.onboarding import send_credentials
 from app.services.timeutils import ensure_aware, is_past
 
 log = logging.getLogger(__name__)
@@ -257,6 +259,19 @@ def _verify_credentials(db: Session, payload: LoginRequest) -> User:
     return user
 
 
+def _refuse_pending(db: Session, email: str) -> None:
+    """A website registration that has not confirmed its email has no
+    password yet — say what to do instead of "wrong password". Checked
+    before the password, so it reveals only what the registration page
+    already told this visitor."""
+    user = db.scalars(select(User).where(User.email == email.lower())).first()
+    if user is not None and user.credentials_pending:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Confirm your email first — we'll send your login details as soon as you do.",
+        )
+
+
 def _record_login(user: User) -> None:
     user.failed_login_count = 0
     user.locked_until = None
@@ -265,6 +280,7 @@ def _record_login(user: User) -> None:
 
 @router.post("/login", response_model=TokenPair)
 def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)) -> TokenPair:
+    _refuse_pending(db, payload.email)
     """The customer door. Issues a tenant-scoped session, whoever signs in.
 
     Being platform staff is not a reason to refuse someone their own workspace,
@@ -390,8 +406,47 @@ def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db)) -> 
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, "That link is invalid or has expired."
         )
+    if user.credentials_pending:
+        # Registered from the website: confirming the address is what
+        # releases the login details (app.services.onboarding).
+        sent = send_credentials(db, user)
+        return MessageOut(message=(
+            "Email confirmed. We've emailed your login details." if sent else
+            "Email confirmed. We couldn't send your login details just now — "
+            "use \"Resend\" on this page in a minute."
+        ))
     db.commit()
     return MessageOut(message="Email confirmed.")
+
+
+@router.post("/change-password", response_model=MessageOut)
+def change_password(
+    payload: ChangePasswordIn,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> MessageOut:
+    """Set a new password — required after signing in with an emailed one.
+
+    Signs out every *other* session: whoever else may have seen the old
+    password (it was in an email) loses access with it.
+    """
+    if not verify_password(payload.current_password, user.hashed_password):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Your current password is not right.")
+    if payload.new_password == payload.current_password:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Choose a password different from the current one.")
+    user.hashed_password = hash_password(payload.new_password)
+    user.must_change_password = False
+    # The session in use is the newest one — the sign-in that just happened.
+    current = db.scalar(
+        select(UserSession.id).where(UserSession.user_id == user.id, UserSession.revoked_at.is_(None))
+        .order_by(UserSession.created_at.desc()).limit(1))
+    stmt = update(UserSession).where(UserSession.user_id == user.id, UserSession.revoked_at.is_(None))
+    if current:
+        stmt = stmt.where(UserSession.id != current)
+    db.execute(stmt.values(revoked_at=datetime.now(timezone.utc), revoked_reason="password_changed"))
+    db.commit()
+    return MessageOut(message="Password changed.")
 
 
 @router.post("/resend-verification", response_model=MessageOut)

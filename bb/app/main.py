@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import OperationalError
 
+from app.api import adms as adms_receiver
 from app.api.v1 import api_router
 from app.core.config import settings
 from app.integrations.base import ProviderError
@@ -129,6 +130,8 @@ if settings.cors_origin_list:
     )
 
 app.include_router(api_router, prefix=settings.api_v1_prefix)
+# ZKTeco push terminals call fixed paths at the root — see app/api/adms.py.
+app.include_router(adms_receiver.router)
 
 
 # --- error translation, so the client never sees a raw traceback -------------

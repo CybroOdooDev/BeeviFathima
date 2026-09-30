@@ -1,7 +1,8 @@
 """Subscription plans: the tiers a tenant's account is sold under.
 
-A plan is a bundle of enforced limits, not a billing record. Nothing here
-charges a card or talks to a payment provider — the platform's own choice
+A plan is a bundle of enforced limits, not a billing record. Charging is
+Stripe's job when online billing is on (app.services.billing), linked to a
+plan only by ``stripe_price_id``; without it the platform's own choice
 (see ``app.services.scheduling.sweep_subscriptions``) is to drive activation
 off an internal "paid through" date on the tenant, and let staff move that
 date by whatever process they already use to get paid. A plan just says what
@@ -35,7 +36,7 @@ class SubscriptionPlan(Base, UUIDPk, Timestamped):
 
     #: Retired plans are kept, never deleted — a tenant already on one must
     #: keep working, and this row is the only record of what it promised.
-    #: Hidden from *new* assignment instead; see tools/seed_plans.py.
+    #: Hidden from *new* assignment instead (Platform → Plans → Retired).
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     #: Offered to a self-signup or a staff-created account when neither picks
@@ -44,9 +45,8 @@ class SubscriptionPlan(Base, UUIDPk, Timestamped):
     #: every other plan whenever it sets one.
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    #: Informational only. Nothing in this codebase processes a payment —
-    #: shown to staff so the console does not need a separate price list
-    #: sitting next to the plan names.
+    #: Display price. What a customer is actually charged is the Stripe
+    #: Price below (when online billing is on) — keep the two in step.
     monthly_price_cents: Mapped[int | None] = mapped_column(Integer)
 
     #: Enforced in ``app.services.sync_engine._resolve_mappings``: once a
@@ -62,3 +62,17 @@ class SubscriptionPlan(Base, UUIDPk, Timestamped):
     #: tighter one from the console — this limits self-service, not the
     #: platform's own ability to make an exception.
     min_sync_interval_minutes: Mapped[int | None] = mapped_column(Integer)
+
+    #: The most biometric terminals this account can use. Counted over every
+    #: terminal it has ever added (app.services.device_limits); the oldest ones
+    #: fill the allowance. A terminal beyond it is still recorded and its
+    #: punches kept, but they are *held* — not sent to Odoo — until the plan
+    #: allows it, so nothing is lost and an upgrade releases them.
+    max_devices: Mapped[int | None] = mapped_column(Integer)
+
+    #: The Stripe Price (``price_…``) a customer is charged for this plan,
+    #: monthly. Null means the plan cannot be bought online — Checkout
+    #: refuses it and staff assign it by hand, as before billing existed.
+    #: Set in the console (Platform → Plans), or by tools/seed_plans.py from
+    #: STRIPE_PRICE_<PLAN NAME> env vars.
+    stripe_price_id: Mapped[str | None] = mapped_column(String(80), index=True)

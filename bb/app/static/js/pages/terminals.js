@@ -11,6 +11,9 @@ import { empty, esc, fmtAgo, loading, pill } from '../ui.js';
 import { syncSource } from './settings.js';
 
 function deviceState(d) {
+  if (d.over_plan_limit) {
+    return `<span data-tip="Beyond your plan's device limit: its punches are kept but not sent to Odoo until you upgrade.">${pill('pending', 'over plan limit')}</span>`;
+  }
   if (d.missing_since) return pill('missing', 'missing');
   return d.is_enabled ? pill('active', 'enabled') : pill('skipped', 'disabled');
 }

@@ -132,6 +132,27 @@ class Tenant(Base, UUIDPk, Timestamped):
     #: date for.
     subscription_renews_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    #: Stripe billing (app.services.billing). ``stripe_customer_id`` is set the
+    #: first time this account opens Checkout and kept for good — the portal
+    #: and every later subscription hang off it. ``stripe_subscription_id`` is
+    #: the live subscription, and its presence is what makes Stripe, not the
+    #: renewal-date sweep, the authority on this account's status: webhooks
+    #: move it to past_due / active / cancelled, and the sweep leaves it alone.
+    stripe_customer_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    stripe_subscription_id: Mapped[str | None] = mapped_column(String(64), index=True)
+
+    #: Per-account exceptions to the plan's limits, set by staff for a custom
+    #: deal ("Growth, but with 8 devices") without inventing a plan for it.
+    #: Null means "whatever the plan says"; 0 means "no limit" for this
+    #: account, whatever the plan says. They stay put across plan changes —
+    #: an exception agreed with a customer is about the customer, not the
+    #: tier — so staff clear them deliberately, never by switching plans.
+    #: Read through ``limit_for`` / the ``plan_*`` properties below, never
+    #: directly, so every enforcement point sees the same effective value.
+    limit_max_employees: Mapped[int | None] = mapped_column(Integer)
+    limit_max_devices: Mapped[int | None] = mapped_column(Integer)
+    limit_min_sync_interval_minutes: Mapped[int | None] = mapped_column(Integer)
+
     users: Mapped[list["User"]] = relationship(
         back_populates="tenant", cascade="all, delete-orphan"
     )
@@ -165,17 +186,43 @@ class Tenant(Base, UUIDPk, Timestamped):
     def plan_name(self) -> str | None:
         return self.plan.name if self.plan_id else None
 
+    def limit_for(self, name: str, plan: "SubscriptionPlan | None | object" = ...) -> int | None:
+        """The limit ``name`` actually in force for this account; None = unlimited.
+
+        ``name`` is a SubscriptionPlan limit column (``max_employees``,
+        ``max_devices``, ``min_sync_interval_minutes``). A staff override wins
+        over the plan; without one, the plan decides. Pass ``plan`` to ask
+        "what would apply on *that* plan" — a switch about to land — instead
+        of the one assigned now.
+        """
+        override = getattr(self, f"limit_{name}")
+        if override is not None:
+            return override or None
+        if plan is ...:
+            plan = self.plan if self.plan_id else None
+        return getattr(plan, name) if plan is not None else None
+
+    # The limits in force. Named plan_* because that is what everything
+    # already enforcing them reads; they include this account's overrides.
     @property
     def plan_max_employees(self) -> int | None:
-        return self.plan.max_employees if self.plan_id else None
+        return self.limit_for("max_employees")
 
     @property
     def plan_min_sync_interval_minutes(self) -> int | None:
-        return self.plan.min_sync_interval_minutes if self.plan_id else None
+        return self.limit_for("min_sync_interval_minutes")
+
+    @property
+    def plan_max_devices(self) -> int | None:
+        return self.limit_for("max_devices")
 
     @property
     def pending_plan_name(self) -> str | None:
         return self.pending_plan.name if self.pending_plan_id else None
+
+    @property
+    def billed_by_stripe(self) -> bool:
+        return bool(self.stripe_subscription_id)
 
 
 class User(Base, UUIDPk, Timestamped):
@@ -238,6 +285,16 @@ class User(Base, UUIDPk, Timestamped):
 
     failed_login_count: Mapped[int] = mapped_column(Integer, default=0)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    #: Registered from the website (app.services.onboarding): no password yet.
+    #: One is generated and emailed once the address is confirmed, and until
+    #: then the account cannot sign in at all — the random placeholder in
+    #: ``hashed_password`` is never shown to anyone.
+    credentials_pending: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    #: Signed in with a password someone else saw (the emailed one): the app
+    #: sends them to "set your own password" before anything else, and the
+    #: API refuses everything but that until they do (see deps).
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
 
     tenant: Mapped[Tenant] = relationship(back_populates="users")
 

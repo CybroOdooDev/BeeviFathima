@@ -13,9 +13,13 @@ import { renderActivity, renderAttendance, renderEmployees } from './pages/data.
 import { renderTerminals } from './pages/terminals.js';
 import { render as renderSettings } from './pages/settings.js';
 import { render as renderPlatform } from './pages/platform.js';
+import { render as renderPlanAdmin } from './pages/plans.js';
+import { renderPasswordSettings, renderSetPassword, renderVerifyEmail } from './pages/account.js';
 import { renderConsoleOverview } from './pages/console.js';
 
 const PUBLIC = new Set(['/login', '/signup', '/staff/login', '/plans']);
+// Doors that render the same whether or not someone is signed in.
+const ANYONE = new Set(['/verify-email']);
 
 /** Where an unauthenticated visitor lands, by path.
  *
@@ -32,6 +36,9 @@ const DOORS = {
   // who followed a bookmarked or shared link. Public: no session is needed to
   // compare plans, only to act on one.
   '/plans': renderPlans,
+  // Where the confirmation email's link lands when there is no marketing
+  // site to send it to (SITE_URL unset). Works signed in or out.
+  '/verify-email': renderVerifyEmail,
 };
 
 /* Small line icons for the sidebar, inline so nothing is fetched. */
@@ -43,6 +50,8 @@ const ICON = {
   connections: '<path d="M9 7H6a4 4 0 0 0 0 8h3M15 7h3a4 4 0 0 1 0 8h-3M8 11h8"/>',
   terminals: '<rect x="6" y="2.5" width="12" height="19" rx="2"/><rect x="8.5" y="5.5" width="7" height="5" rx="1"/><circle cx="12" cy="15.5" r="2.2"/>',
   platform: '<rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/><path d="M7 7h.01M7 17h.01"/>',
+  // A price tag.
+  plans: '<path d="M3.5 12.2V4.5a1 1 0 0 1 1-1h7.7l8.3 8.3a1.4 1.4 0 0 1 0 2l-6.7 6.7a1.4 1.4 0 0 1-2 0z"/><circle cx="8" cy="8" r="1.5"/>',
   // A cog: toothed wheel with a hub.
   settings: '<path d="M10.3 3.2h3.4l.5 2.4 1.9.8 2-1.4 2.4 2.4-1.4 2 .8 1.9 2.4.5v3.4l-2.4.5-.8 1.9 1.4 2-2.4 2.4-2-1.4-1.9.8-.5 2.4h-3.4l-.5-2.4-1.9-.8-2 1.4-2.4-2.4 1.4-2-.8-1.9-2.4-.5v-3.4l2.4-.5.8-1.9-1.4-2 2.4-2.4 2 1.4 1.9-.8z"/><circle cx="12" cy="12" r="3.2"/>',
 };
@@ -80,6 +89,7 @@ const NAV = [
           { path: '/settings/pairing', title: 'Pairing' },
           { path: '/settings/hours', title: 'Working hours' },
           { path: '/settings/plan', title: 'Plan' },
+          { path: '/settings/password', title: 'Password' },
           { path: '/settings/odoo', title: 'Odoo connection' },
           { path: '/settings/biometric', title: 'Biometric connections' },
         ],
@@ -94,7 +104,8 @@ const NAV = [
     staffOnly: true,
     items: [
       { path: '/console', title: 'Overview', icon: 'overview' },
-      { path: '/platform', title: 'All accounts', icon: 'platform' },
+      { path: '/platform', title: 'All accounts', icon: 'platform', activeFor: ['/platform'] },
+      { path: '/platform/plans', title: 'Plans', icon: 'plans' },
     ],
   },
 ];
@@ -123,11 +134,13 @@ const ROUTES = {
   '/settings/pairing': { title: 'Pairing', sub: 'How raw punches become shifts', render: renderSettings },
   '/settings/hours': { title: 'Working hours', sub: 'Working hours for late arrivals', render: renderSettings },
   '/settings/plan': { title: 'Plan', sub: 'Your subscription plan', render: renderSettings },
+  '/settings/password': { title: 'Password', sub: 'The password you sign in with', render: renderPasswordSettings },
   '/settings/plan/choose': { title: 'Choose a plan', sub: 'Compare plans and switch', render: renderSettings },
   '/settings/odoo': { title: 'Odoo connection', sub: 'Odoo connection, and badges waiting for a match', render: renderSettings },
   '/settings/biometric': { title: 'Biometric connections', sub: 'Biometric connections — where punches come from', render: renderSettings },
   '/console': { title: 'Platform overview', sub: 'Every account at a glance — health, growth and what needs a person', render: renderConsoleOverview },
   '/platform': { title: 'All accounts', sub: 'Every customer account on this platform', render: renderPlatform },
+  '/platform/plans': { title: 'Plans', sub: 'The tiers accounts are sold under, and the limits each one enforces', render: renderPlanAdmin },
 };
 
 const badges = { unmapped: 0 };
@@ -391,7 +404,7 @@ async function resolve() {
   running = true;
   try {
     const route = parseHash();
-
+    if (ANYONE.has(route.path)) return DOORS[route.path](route);
 
     // Rehydrate from a refresh token surviving a page reload.
     if (!auth.isAuthenticated && auth.restore()) {
@@ -434,11 +447,14 @@ async function resolve() {
       }
     }
 
+    // Signed in with the emailed password: nothing else until they set their own.
+    if (auth.user?.must_change_password) return renderSetPassword();
+
     // A platform user with no customer account has no Overview to land on —
     // every tenant-scoped screen would 403. Send them to the console instead of
     // showing an error page on the way in.
     // The console's landing page is its overview.
-    if (!auth.tenant && auth.isPlatformAdmin && !['/platform', '/console'].includes(route.path)) {
+    if (!auth.tenant && auth.isPlatformAdmin && !['/platform', '/platform/plans', '/console'].includes(route.path)) {
       window.location.hash = '#/console';
       return;
     }

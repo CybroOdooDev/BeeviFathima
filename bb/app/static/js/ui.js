@@ -303,6 +303,9 @@ export function planCards({
     const employees = p.max_employees != null
       ? `Up to ${p.max_employees} employee${p.max_employees === 1 ? '' : 's'}`
       : 'Unlimited employees';
+    const devices = p.max_devices != null
+      ? `Up to ${p.max_devices} device${p.max_devices === 1 ? '' : 's'}`
+      : 'Unlimited devices';
     const speed = p.min_sync_interval_minutes != null
       ? `Syncs as often as every ${p.min_sync_interval_minutes} min`
       : 'No sync-speed limit';
@@ -321,6 +324,7 @@ export function planCards({
           ${p.description ? `<div class="plan-card-desc">${esc(p.description)}</div>` : ''}
           <ul class="plan-card-features">
             <li>${esc(employees)}</li>
+            <li>${esc(devices)}</li>
             <li>${esc(speed)}</li>
           </ul>
         </div>
@@ -352,6 +356,9 @@ export function pricingCards({ plans, tags = {}, showRecommended = true, ctaLabe
     const employees = p.max_employees != null
       ? `Up to ${p.max_employees} employee${p.max_employees === 1 ? '' : 's'}`
       : 'Unlimited employees';
+    const devices = p.max_devices != null
+      ? `Up to ${p.max_devices} device${p.max_devices === 1 ? '' : 's'}`
+      : 'Unlimited devices';
     const speed = p.min_sync_interval_minutes != null
       ? `Syncs as often as every ${p.min_sync_interval_minutes} min`
       : 'No sync-speed limit';
@@ -378,6 +385,7 @@ export function pricingCards({ plans, tags = {}, showRecommended = true, ctaLabe
         <div class="pricing-includes">Includes</div>
         <ul class="pricing-features">
           <li>${esc(employees)}</li>
+          <li>${esc(devices)}</li>
           <li>${esc(speed)}</li>
         </ul>
       </div>`;
@@ -456,6 +464,12 @@ export function wireTips() {
   box.setAttribute('role', 'tooltip');
   document.body.append(box);
   const show = (el) => {
+    // An open modal <dialog> sits in the browser's top layer, above every
+    // z-index on the page — so inside one, the label has to live in that
+    // dialog too or it draws behind it. Still position:fixed, so the
+    // dialog's own overflow never clips it.
+    const host = el.closest('dialog[open]') || document.body;
+    if (box.parentNode !== host) host.append(box);
     box.textContent = el.dataset.tip;
     box.classList.add('on');
     const r = el.getBoundingClientRect();

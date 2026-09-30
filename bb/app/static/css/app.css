@@ -394,10 +394,12 @@ a { color: var(--accent); }
 
 .grid { display: grid; gap: 14px; }
 .grid.cols-2 { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.grid.cols-3 { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
 
 /* Section labels inside the account-configuration dialog (platform.js
    openConfigDialog) — "Account", "Pairing", "Subscription". */
 .config-dialog h3 { color: var(--muted); letter-spacing: .04em; text-transform: uppercase; }
+.config-dialog h3 .hint { text-transform: none; letter-spacing: 0; font-weight: 400; margin-left: 6px; }
 .grid.cols-4 { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
 
 .stat { background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius); padding: 15px 17px; }
@@ -1193,3 +1195,35 @@ a.btn.warn-link { border-color: var(--warn); color: var(--warn); font-weight: 60
   .with-rail > .notice-rail, .with-rail > .rail-main { grid-column: 1; grid-row: auto; }
   .notice-rail { position: static; }
 }
+
+/* Staff console: plans and per-account limits */
+.plans-table td { vertical-align: top; }
+.plans-table td:first-child { min-width: 220px; }
+.plans-table td.num, .plans-table th.num { white-space: nowrap; }
+.usage-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 0 0 14px; }
+.usage-strip .u { border: 1px solid var(--rule); border-radius: 10px; padding: 9px 12px; }
+.usage-strip .u b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; }
+.usage-strip .u span { font-size: 12px; color: var(--muted); }
+.usage-strip .u.over { border-color: var(--bad); }
+.usage-strip .u.over b { color: var(--bad); }
+.usage-strip .u.near { border-color: var(--warn); }
+/* Add account dialog: two columns fit inside the standard wizard width. */
+dialog.new-account-dialog { width: min(775px, calc(100vw - 24px)); }
+dialog.new-account-dialog .grid.cols-2 { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0 16px; }
+
+/* Configure: the account's facts, above its settings. */
+.account-info {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px 18px;
+  margin: 0 0 18px; padding: 12px 14px; border: 1px solid var(--rule); border-radius: 10px;
+  background: var(--bg, transparent);
+}
+.account-info div { min-width: 0; }
+.account-info dt { font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.account-info dd { margin: 2px 0 0; font-size: 13.5px; overflow-wrap: anywhere; }
+.account-info .warn dd { color: var(--warn); font-weight: 550; }
+
+/* Push device: what to type into the terminal. */
+.push-setup { border: 1px dashed var(--rule); border-radius: 10px; padding: 12px 14px; margin: 4px 0 8px; font-size: 13px; }
+.push-setup ol { margin: 6px 0 0; padding-left: 20px; }
+.push-setup li { margin: 3px 0; }
+.push-setup code { font-family: var(--mono, ui-monospace, monospace); background: var(--accent-soft, rgba(79,70,229,.08)); padding: 1px 5px; border-radius: 5px; }

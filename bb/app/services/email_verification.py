@@ -36,14 +36,27 @@ def issue_verification_token(user: User) -> str:
     return raw
 
 
+def verification_link(raw_token: str) -> str:
+    """Where the emailed link lands: the website's "confirmed" page when
+    SITE_URL is set, otherwise the app's own verify screen. Both post the
+    token to POST /auth/verify-email."""
+    if settings.site_url:
+        return f"{settings.site_url.rstrip('/')}/verified.html?token={raw_token}"
+    return f"{settings.public_base_url.rstrip('/')}/app/#/verify-email?token={raw_token}"
+
+
 def send_verification_email(user: User, raw_token: str) -> None:
-    link = f"{settings.public_base_url}/verify-email?token={raw_token}"
+    link = verification_link(raw_token)
+    follow_up = (
+        "Once it's confirmed we'll email your login details.\n\n"
+        if user.credentials_pending else ""
+    )
     send_email(
         to=user.email,
         subject="Confirm your email for BioBridge",
         body=(
             "Confirm this address to finish setting up your BioBridge "
-            f"account:\n\n{link}\n\n"
+            f"account:\n\n{link}\n\n{follow_up}"
             f"This link expires in {settings.email_verification_ttl_hours} hours. "
             "If you didn't request this, you can ignore it."
         ),

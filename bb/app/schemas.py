@@ -7,6 +7,7 @@ forget to call, and no placeholder that could be mistaken for a real value.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -55,6 +56,50 @@ class SubscriptionPlanOut(ORMModel):
     is_default: bool
     monthly_price_cents: int | None = None
     max_employees: int | None = None
+    min_sync_interval_minutes: int | None = None
+    max_devices: int | None = None
+
+
+class SubscriptionPlanAdminOut(SubscriptionPlanOut):
+    """A plan as staff manage it: the Stripe link and who is on it too.
+
+    Separate from SubscriptionPlanOut because that one is also what the
+    public plan picker returns, and a Price id is no business of a customer.
+    """
+
+    stripe_price_id: str | None = None
+    #: Accounts assigned this plan now (queued switches not counted).
+    tenants: int = 0
+
+
+class SubscriptionPlanIn(BaseModel):
+    """Creating a plan, or — with every field optional — editing one.
+
+    Limits: null = unlimited. ``min_sync_interval_minutes`` is the fastest
+    cadence a customer on the plan may choose for themselves.
+    """
+
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    description: str | None = Field(default=None, max_length=200)
+    is_active: bool | None = None
+    is_default: bool | None = None
+    monthly_price_cents: int | None = Field(default=None, ge=0)
+    max_employees: int | None = Field(default=None, ge=1)
+    max_devices: int | None = Field(default=None, ge=1)
+    min_sync_interval_minutes: int | None = Field(default=None, ge=1, le=1440)
+    stripe_price_id: str | None = Field(default=None, max_length=80, pattern=r"^(price_\w+)?$")
+
+
+class TenantUsageOut(BaseModel):
+    """What an account uses against the limits in force, for the console."""
+
+    employees_mapped: int
+    max_employees: int | None = None
+    devices: int
+    max_devices: int | None = None
+    devices_over_limit: int = 0
+    punches_held: int = 0
+    sync_interval_minutes: int
     min_sync_interval_minutes: int | None = None
 
 
@@ -136,6 +181,53 @@ class UserOut(ORMModel):
     #: "confirm your email" banner and the resend action; nothing server-side
     #: currently blocks on it.
     email_verified_at: datetime | None = None
+    #: Signed in with an emailed password: the app shows "choose your own
+    #: password" before anything else, and workspace routes refuse until then.
+    must_change_password: bool = False
+
+
+class ChangePasswordIn(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=10, max_length=128)
+
+
+class RegisterIn(BaseModel):
+    """The website's registration form (POST /public/register)."""
+
+    company_name: str = Field(min_length=2, max_length=120)
+    email: EmailStr
+    full_name: str | None = Field(default=None, max_length=120)
+    timezone: str = "UTC"
+    #: A plan id, or its name — the site links to plans by name.
+    plan: str | None = Field(default=None, max_length=80)
+    #: "trial" starts a free trial now; "buy" goes to Stripe Checkout first.
+    mode: Literal["trial", "buy"] = "trial"
+    #: Honeypot: a field people never see. Anything in it means a bot.
+    website: str | None = None
+
+    @field_validator("timezone")
+    @classmethod
+    def _check_timezone(cls, value: str) -> str:
+        return _validate_timezone(value)
+
+
+class RegisterOut(BaseModel):
+    #: "check_email" — show the check-your-inbox page;
+    #: "checkout" — send the browser to ``checkout_url``.
+    next: Literal["check_email", "checkout"]
+    checkout_url: str | None = None
+    message: str
+
+
+class ResendIn(BaseModel):
+    email: EmailStr
+
+
+class PublicPlanOut(SubscriptionPlanOut):
+    """A plan as the website shows it."""
+
+    #: Whether "Buy now" can take payment online for this plan right now.
+    can_buy_online: bool = False
 
 
 # --- platform staff ---------------------------------------------------------
@@ -176,6 +268,9 @@ class TenantScheduleOut(BaseModel):
     #: null the rest of the time. See Tenant.pending_plan_id.
     pending_plan_id: str | None = None
     pending_plan_name: str | None = None
+    #: Paying through Stripe — Settings offers "Manage billing" and plan
+    #: switches go to the subscription (see app.services.billing).
+    billed_by_stripe: bool = False
 
 
 class TenantScheduleUpdate(BaseModel):
@@ -206,6 +301,14 @@ class TenantAdminOut(TenantScheduleOut):
     #: Staff-only. Deliberately absent from TenantOut: the customer is shown a
     #: fixed line, not whatever note support left for the next engineer.
     suspension_reason: str | None = None
+    #: Staff overrides of the plan's limits (null = plan decides, 0 = no
+    #: limit), and the limits actually in force once they are applied.
+    limit_max_employees: int | None = None
+    limit_max_devices: int | None = None
+    limit_min_sync_interval_minutes: int | None = None
+    max_employees: int | None = None
+    max_devices: int | None = None
+    min_sync_interval_minutes: int | None = None
 
 
 class TenantDeactivateIn(BaseModel):
@@ -247,6 +350,12 @@ class TenantConfigUpdate(BaseModel):
     #: app.services.scheduling rather than lapsing it, since a missing date
     #: has no "past due" moment to reach.
     subscription_renews_at: datetime | None = None
+
+    #: Per-account exceptions to the plan's limits. ``null`` = back to the
+    #: plan's value, ``0`` = no limit for this account.
+    limit_max_employees: int | None = Field(default=None, ge=0)
+    limit_max_devices: int | None = Field(default=None, ge=0)
+    limit_min_sync_interval_minutes: int | None = Field(default=None, ge=0, le=1440)
 
     @field_validator("timezone")
     @classmethod
@@ -349,6 +458,7 @@ class TenantOut(ORMModel):
     plan_name: str | None = None
     plan_max_employees: int | None = None
     plan_min_sync_interval_minutes: int | None = None
+    plan_max_devices: int | None = None
     subscription_renews_at: datetime | None = None
     #: Which plan, by id — alongside plan_name so a self-service plan picker
     #: can preselect the current choice without a second lookup.
@@ -408,8 +518,13 @@ def _validate_source_address(value: str) -> str:
     rejects the genuinely malformed case (no scheme, or an unknown one)
     rather than requiring http(s).
     """
+    if value.lower().startswith("adms://"):
+        serial = value[7:].strip().strip("/").upper()
+        if not re.match(r"^[A-Z0-9_-]{4,64}$", serial):
+            raise ValueError("That doesn't look like a device serial number.")
+        return f"adms://{serial}"
     if not value.startswith(("http://", "https://", "zk://")):
-        raise ValueError("Address must start with http://, https://, or zk://")
+        raise ValueError("Address must start with http://, https://, zk://, or adms://")
     return value.rstrip("/")
 
 
@@ -621,6 +736,8 @@ class DeviceOut(ORMModel):
     last_seen_at: datetime | None
     punch_count: int
     missing_since: datetime | None
+    #: Beyond the plan's device allowance: its punches are held, not pushed.
+    over_plan_limit: bool = False
 
 
 class DeviceUpdate(BaseModel):
@@ -735,6 +852,8 @@ class DashboardOut(BaseModel):
     punches_today: int
     punches_pending: int
     punches_error: int
+    #: Kept but not sent to Odoo: from a terminal over the plan's device limit.
+    punches_held: int = 0
     unmapped_employees: int
     last_run: SyncRunOut | None
     connection_health: dict[str, str]

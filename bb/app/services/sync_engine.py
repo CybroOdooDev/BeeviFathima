@@ -54,6 +54,7 @@ from app.services.connections import (
     build_odoo_client,
     build_source_provider,
 )
+from app.services.device_limits import over_limit_device_ids
 from app.services.pairing import (
     Direction as PairDirection,
     OpenShift,
@@ -320,6 +321,12 @@ class SyncEngine:
         enabled = {sn for sn, d in devices.items() if d.is_enabled}
 
         provider = build_source_provider(self.tenant, source)
+        if getattr(provider, "pushes", False):
+            try:
+                self._claim_pushed(source, provider)
+            finally:
+                provider.close()
+            return
         newest = source.cursor_punch_time
         fetched = created = 0
 
@@ -355,6 +362,12 @@ class SyncEngine:
             cached = getattr(provider, "cached_token", None)
             if cached:
                 source.token_enc = encrypt(cached, self.tenant.crypto_key)
+            # A provider that reads by position rather than by time (COSEC's
+            # sequence cursor) hands back where it got to. Saved only here,
+            # after every punch it yielded is in the ledger.
+            updates = getattr(provider, "config_updates", None)
+            if updates:
+                source.config = {**(source.config or {}), **updates}
 
             source.status = ConnectionStatus.connected.value
             source.status_message = None
@@ -372,6 +385,38 @@ class SyncEngine:
         self.run.punches_fetched += fetched
         self.run.punches_new += created
         self._log(f"'{source.name}': {fetched} punch(es) seen, {created} new")
+
+    def _claim_pushed(self, source: DeviceSource, provider) -> None:
+        """A push device's punches are already in the ledger — they were
+        stored as they arrived (app/api/adms.py). Stamp the ones no run has
+        claimed yet with this run, so "N new" and Activity read the same as
+        for a pulled source, and report the device's health from when it
+        last called in. Never raises: an offline terminal keeps its punches
+        and sends them later, and what already arrived must still reach Odoo."""
+        from sqlalchemy import update
+
+        result = self.db.execute(
+            update(PunchRecord)
+            .where(PunchRecord.tenant_id == self.tenant.id,
+                   PunchRecord.source_id == source.id,
+                   PunchRecord.first_seen_run_id.is_(None))
+            .values(first_seen_run_id=self.run.id)
+        )
+        created = result.rowcount or 0
+        health = provider.test_connection()
+        source.status = (ConnectionStatus.connected if health.ok else ConnectionStatus.failed).value
+        source.status_message = None if health.ok else health.message[:500]
+        source.last_checked_at = datetime.now(timezone.utc)
+        newest = self.db.scalar(select(func.max(PunchRecord.punch_time_utc)).where(
+            PunchRecord.tenant_id == self.tenant.id, PunchRecord.source_id == source.id))
+        if newest:
+            source.cursor_punch_time = newest
+        self.db.flush()
+        self.run.punches_fetched += created
+        self.run.punches_new += created
+        self._log(f"'{source.name}': {created} pushed punch(es) since the last run"
+                  + ("" if health.ok else f" — {health.message}"),
+                  "info" if health.ok else "warning")
 
     def _known_external_ids(
         self, source: DeviceSource, external_ids: Collection[str]
@@ -429,40 +474,7 @@ class SyncEngine:
         return created
 
     def _ingest(self, event, source: DeviceSource, devices: dict, punch_utc: datetime) -> None:
-        direction = Direction.unknown.value
-        if event.direction is True:
-            direction = Direction.inward.value
-        elif event.direction is False:
-            direction = Direction.outward.value
-
-        device = devices.get(event.terminal_sn or "")
-        self.db.add(
-            PunchRecord(
-                tenant_id=self.tenant.id,
-                source_id=source.id,
-                device_id=device.id if device else None,
-                # Stamp the run, so "what did this sync bring in" is answerable
-                # later from the ledger rather than only from a counter.
-                first_seen_run_id=self.run.id,
-                external_id=event.external_id,
-                emp_code=event.emp_code,
-                punch_time_utc=punch_utc,
-                punch_time_local=event.punch_time_local,
-                direction=direction,
-                raw_state=str(event.raw.get("punch_state", "") or "")[:8] or None,
-                verify_type=event.verify_type,
-                terminal_sn=event.terminal_sn,
-                process_state=PunchState.pending.value,
-                raw=event.raw,
-            )
-        )
-        if device is not None:
-            device.punch_count = (device.punch_count or 0) + 1
-            device.last_seen_at = datetime.now(timezone.utc)
-            # A punch is live proof the terminal is there, regardless of
-            # whether "Import terminals" has been re-run since it was last
-            # flagged missing.
-            device.missing_since = None
+        store_punch(self.db, self.tenant, source, devices, event, punch_utc, run_id=self.run.id)
 
     # -- stage 4 -----------------------------------------------------------
     def _register_badges(self) -> None:
@@ -747,6 +759,7 @@ class SyncEngine:
                         PunchState.pending.value,
                         PunchState.unmapped.value,
                         PunchState.error.value,
+                        PunchState.held.value,
                     ]
                 ),
                 PunchRecord.attempts < 5,
@@ -758,8 +771,21 @@ class SyncEngine:
             self._log("Nothing to push — Odoo is up to date")
             return
 
+        over_limit = over_limit_device_ids(self.db, self.tenant)
+        cap = self.tenant.plan_max_devices
+        held = 0
         by_employee: dict[str, list[PunchRecord]] = {}
         for punch in punches:
+            if over_limit:
+                device = device_for_punch(self.db, punch)
+                if device is not None and device.id in over_limit:
+                    punch.process_state = PunchState.held.value
+                    punch.error_message = (
+                        f"Held: terminal {device.alias or device.serial_number} is beyond your "
+                        f"plan's {cap}-device limit. Upgrade, or remove a terminal, to send it."
+                    )
+                    held += 1
+                    continue
             mapping = mappings.get(punch.emp_code)
             if mapping is None or mapping.status == MappingStatus.unmapped.value:
                 punch.process_state = PunchState.unmapped.value
@@ -769,6 +795,12 @@ class SyncEngine:
                 punch.error_message = f"Mapping is {mapping.status}"
                 continue
             by_employee.setdefault(punch.emp_code, []).append(punch)
+
+        if held:
+            self._log(
+                f"{held} punch(es) held: from terminal(s) beyond the plan's "
+                f"{cap}-device limit", "warning",
+            )
 
         for emp_code, emp_punches in by_employee.items():
             mapping = mappings[emp_code]
@@ -1149,6 +1181,66 @@ class SyncEngine:
             "marked degraded and polling moved to the slow lane",
             "error",
         )
+
+
+def store_punch(
+    db: Session, tenant: Tenant, source: DeviceSource, devices: dict,
+    event, punch_utc: datetime, *, run_id: str | None = None,
+) -> PunchRecord:
+    """Write one new punch to the ledger, pending.
+
+    Shared by the sync engine (pulled punches) and the ADMS receiver (pushed
+    ones), so a punch is stored the same way whichever direction it came from.
+    ``devices`` is serial -> Device for this source; a terminal not in it is
+    recorded on the spot. The caller has already checked ``external_id`` is new.
+    """
+    direction = Direction.unknown.value
+    if event.direction is True:
+        direction = Direction.inward.value
+    elif event.direction is False:
+        direction = Direction.outward.value
+
+    device = devices.get(event.terminal_sn or "")
+    if device is None and event.terminal_sn:
+        # First punch from a terminal nobody imported: record it, so it
+        # shows on the Terminals page, reaches Odoo's device list, and
+        # counts toward the plan's device allowance like any other.
+        device = Device(
+            tenant_id=tenant.id, source_id=source.id,
+            serial_number=event.terminal_sn,
+            alias=getattr(event, "terminal_alias", None) or None,
+        )
+        db.add(device)
+        db.flush()
+        devices[event.terminal_sn] = device
+    record = PunchRecord(
+        tenant_id=tenant.id,
+        source_id=source.id,
+        device_id=device.id if device else None,
+        # Stamp the run, so "what did this sync bring in" is answerable
+        # later from the ledger rather than only from a counter. Pushed
+        # punches arrive between runs and are stamped by the next one.
+        first_seen_run_id=run_id,
+        external_id=event.external_id,
+        emp_code=event.emp_code,
+        punch_time_utc=punch_utc,
+        punch_time_local=event.punch_time_local,
+        direction=direction,
+        raw_state=str(event.raw.get("punch_state", "") or "")[:8] or None,
+        verify_type=(event.verify_type or None) and str(event.verify_type)[:8],
+        terminal_sn=event.terminal_sn,
+        process_state=PunchState.pending.value,
+        raw=event.raw,
+    )
+    db.add(record)
+    if device is not None:
+        device.punch_count = (device.punch_count or 0) + 1
+        device.last_seen_at = datetime.now(timezone.utc)
+        # A punch is live proof the terminal is there, regardless of
+        # whether "Import terminals" has been re-run since it was last
+        # flagged missing.
+        device.missing_since = None
+    return record
 
 
 def close_stale_attendances(db: Session, tenant: Tenant) -> int:

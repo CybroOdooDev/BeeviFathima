@@ -327,7 +327,13 @@ def sweep_subscriptions(db: Session, *, now: datetime | None = None) -> dict[str
         renews_at = ensure_aware(tenant.subscription_renews_at)
         if renews_at is None:
             continue
-        if tenant.status in (TenantStatus.trialing.value, TenantStatus.active.value):
+        if tenant.stripe_subscription_id:
+            # Billed through Stripe: its webhooks decide active / past_due
+            # (app.services.billing). Lapsing here on the date alone would
+            # stop syncing in the minutes between a period ending and
+            # Stripe's renewal charge being confirmed.
+            pass
+        elif tenant.status in (TenantStatus.trialing.value, TenantStatus.active.value):
             if renews_at <= now:
                 tenant.status = TenantStatus.past_due.value
                 lapsed += 1
@@ -343,10 +349,9 @@ def sweep_subscriptions(db: Session, *, now: datetime | None = None) -> dict[str
             # floor (app.api.v1.auth.signup): the queued plan may need a
             # slower interval than whatever was set while still on the old
             # one, and nothing else will catch that the moment it lands.
-            if new_plan and new_plan.min_sync_interval_minutes:
-                tenant.sync_interval_minutes = max(
-                    tenant.sync_interval_minutes, new_plan.min_sync_interval_minutes
-                )
+            floor = tenant.limit_for("min_sync_interval_minutes", new_plan)
+            if floor:
+                tenant.sync_interval_minutes = max(tenant.sync_interval_minutes, floor)
             switched += 1
 
     if lapsed or renewed or switched:

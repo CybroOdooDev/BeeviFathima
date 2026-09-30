@@ -59,10 +59,11 @@ async function tenantContext() {
   // field can say what is actually happening rather than "if a worker is
   // running". Plans come from the same public list the signup picker uses —
   // best-effort, since a failed fetch should still leave the rest usable.
-  const [tenant, dash, plans] = await Promise.all([
+  const [tenant, dash, plans, billing] = await Promise.all([
     api.get('/tenant'),
     api.get('/dashboard').catch(() => null),
     api.get('/auth/plans').catch(() => []),
+    api.get('/billing').catch(() => ({ enabled: false })),
   ]);
   const schedule = dash?.schedule;
   const readonly = !auth.canWrite;
@@ -88,6 +89,9 @@ async function tenantContext() {
     // A plan already paid for (status active) defers a switch instead of
     // applying it — see app.api.v1.sync.update_tenant.
     willDefer: tenant.status === 'active' && Boolean(tenant.plan_id),
+    billing,
+    // Choosing a plan means paying for it first, on Stripe's own page.
+    paysAtCheckout: Boolean(billing?.enabled) && !tenant.billed_by_stripe,
   };
 }
 
@@ -244,10 +248,15 @@ async function renderHours(mount) {
   saveTenantForm(mount, 'form', 'save', renderHours);
 }
 
-async function renderPlan(mount) {
+async function renderPlan(mount, route) {
   mount.innerHTML = loading();
   const ctx = await tenantContext();
-  const { tenant, activePlans, renewalWarning, readonly } = ctx;
+  const { tenant, activePlans, renewalWarning, readonly, billing } = ctx;
+  // Back from Stripe Checkout. The payment is confirmed to BioBridge by a
+  // webhook, usually within seconds of this redirect — so wait for it here
+  // rather than show the old plan as if nothing happened.
+  const justPaid = route?.query?.checkout === 'success';
+  if (justPaid) history.replaceState(null, '', '#/settings/plan');
 
   // A plan retired since this account chose it is no longer offered, but it is
   // still what they are on — say so rather than showing no card as current.
@@ -257,12 +266,20 @@ async function renderPlan(mount) {
     ${topBanners(ctx)}
     <div class="card">
       ${cardHead('Plan', 'what this account is billed and limited by',
-        activePlans.length && !readonly
-          ? `<a class="btn primary-link" href="#/settings/plan/choose">${tenant.plan_id ? 'Change plan' : 'Choose a plan'}</a>`
-          : '')}
+        `${billing?.enabled && billing.has_customer && !readonly
+          ? '<button type="button" class="sm" id="manageBilling">Manage billing</button>' : ''}
+        ${activePlans.length && !readonly
+          ? `<a class="btn primary-link" href="#/settings/plan/choose">${tenant.plan_id && !ctx.paysAtCheckout ? 'Change plan' : 'Choose a plan'}</a>`
+          : ''}`)}
+      ${justPaid && !tenant.billed_by_stripe ? banner(
+        'Payment received — activating your plan',
+        'Stripe is confirming the payment with BioBridge. This page updates on its own in a few seconds.',
+        '') : ''}
+      ${tenant.billed_by_stripe ? '<div class="hint" style="margin-bottom:12px">Billed monthly through Stripe. Card, invoices and cancellation are under Manage billing.</div>' : ''}
       <div class="hint" style="margin-bottom:12px">
         ${tenant.plan_name ? `Currently <strong>${esc(tenant.plan_name)}</strong>` : 'No plan assigned — nothing is limited.'}
         ${tenant.plan_max_employees != null ? ` · up to ${esc(tenant.plan_max_employees)} employees` : ''}
+        ${tenant.plan_max_devices != null ? ` · up to ${esc(tenant.plan_max_devices)} device${tenant.plan_max_devices === 1 ? '' : 's'}` : ''}
         ${tenant.plan_min_sync_interval_minutes ? ` · syncs no faster than every ${esc(tenant.plan_min_sync_interval_minutes)} min` : ''}
         ${tenant.subscription_renews_at ? ` · renews ${esc(fmtIn(tenant.subscription_renews_at))}` : ''}
       </div>
@@ -289,6 +306,28 @@ async function renderPlan(mount) {
       ${!activePlans.length ? empty('No plans available', '') : ''}
       ${readonly ? '<div class="hint">Your role cannot change the plan.</div>' : ''}
     </div>`;
+
+  $('#manageBilling', mount)?.addEventListener('click', (event) =>
+    busy(event.target, () => guard(async () => {
+      const { url } = await api.post('/billing/portal');
+      window.location.href = url;
+    })));
+
+  if (justPaid && !tenant.billed_by_stripe) {
+    for (let attempt = 0; attempt < 15; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      if (!mount.isConnected) return;
+      const fresh = await api.get('/tenant').catch(() => null);
+      if (fresh?.billed_by_stripe) {
+        toast(`You're on ${fresh.plan_name || 'your new plan'} — thank you!`, 'ok');
+        await renderPlan(mount);
+        return;
+      }
+    }
+    toast('Payment is still being confirmed — refresh in a minute.', '');
+  } else if (justPaid) {
+    toast(`You're on ${tenant.plan_name || 'your new plan'} — thank you!`, 'ok');
+  }
 }
 
 /** "Choose a plan" / "Change plan" from the card above — the full pricing
@@ -296,10 +335,14 @@ async function renderPlan(mount) {
  * this account (renderPlan hides the link otherwise, and this still checks
  * for a hand-typed URL). Picking one PATCHes /tenant directly: unlike the
  * public #/plans page, there is an account here for a click to act on. */
-async function renderChoosePlan(mount) {
+async function renderChoosePlan(mount, route) {
   mount.innerHTML = loading();
   const ctx = await tenantContext();
-  const { tenant, activePlans, willDefer, readonly } = ctx;
+  const { tenant, activePlans, willDefer, readonly, paysAtCheckout } = ctx;
+  if (route?.query?.checkout === 'cancelled') {
+    history.replaceState(null, '', '#/settings/plan/choose');
+    toast('Checkout cancelled — nothing was charged.', '');
+  }
 
   if (readonly) {
     mount.innerHTML = `
@@ -312,7 +355,7 @@ async function renderChoosePlan(mount) {
   }
 
   const tags = {};
-  if (tenant.plan_id) {
+  if (tenant.plan_id && !paysAtCheckout) {
     // Normally locked — nothing to do with the plan you're already on. The
     // one exception: a switch is already queued, in which case picking the
     // current plan again is how it gets cancelled, so that card stays live.
@@ -326,7 +369,11 @@ async function renderChoosePlan(mount) {
     ${topBanners(ctx)}
     <div class="card">
       ${cardHead('Choose a plan', '', '<a class="btn" href="#/settings/plan">&larr; Plan</a>')}
-      <p class="hint" style="margin:-4px 0 16px">${willDefer
+      <p class="hint" style="margin:-4px 0 16px">${paysAtCheckout
+        ? 'Pick a plan to pay for it securely on Stripe. It starts as soon as the payment goes through, and renews monthly — cancel any time from Manage billing.'
+        : tenant.billed_by_stripe && willDefer
+        ? 'Your switch is queued for your next renewal — the next invoice is at the new plan’s price, and nothing is charged or refunded for this month.'
+        : willDefer
         ? 'You’re on a paid plan already: switching here queues the change for '
           + 'your next renewal rather than applying it right away.'
         : 'Takes effect immediately.'} A downgrade never unmatches an employee
@@ -335,7 +382,7 @@ async function renderChoosePlan(mount) {
         + 'if the new plan needs a slower one.'}</p>
       ${activePlans.length ? pricingCards({
         plans: activePlans, tags, showRecommended: false,
-        ctaLabel: willDefer ? 'Switch at renewal' : 'Switch to this plan',
+        ctaLabel: paysAtCheckout ? 'Continue to payment' : willDefer ? 'Switch at renewal' : 'Switch to this plan',
       }) : empty('No plans available', '')}
     </div>`;
 
@@ -343,6 +390,13 @@ async function renderChoosePlan(mount) {
 
   const nameOf = (id) => activePlans.find((p) => p.id === id)?.name || 'this plan';
   wirePricingCards(mount, (planId, button) => {
+    if (paysAtCheckout) {
+      busy(button, () => guard(async () => {
+        const { url } = await api.post('/billing/checkout', { plan_id: planId });
+        window.location.href = url;
+      }));
+      return;
+    }
     // Cancelling a scheduled switch means picking the current plan again —
     // that card is never locked even though it's tagged, so this still
     // needs its own message rather than the plain "Plan changed" default.
@@ -795,17 +849,47 @@ const KIND_CHOICES = [
   {
     kind: 'platform',
     title: 'Platform server',
-    example: 'e.g. ZKTeco BioTime',
+    example: 'e.g. ZKTeco BioTime, Suprema BioStar 2, HikCentral, Hik-Connect, Matrix COSEC CENTRA, Anviz CrossChex Cloud',
     body: 'One connection to a server that already collects punches from many terminals.',
   },
   {
     kind: 'device',
     title: 'Standalone device',
-    example: 'e.g. a ZKTeco terminal on your network',
-    body: 'Connect straight to one terminal by its IP address — no server in between.',
+    example: 'e.g. a ZKTeco, Hikvision, Dahua, Matrix COSEC or Cams terminal',
+    body: 'Connect to one terminal — by its IP address, or through its cloud service ID.',
+  },
+  {
+    // Still a "device" connection, but the terminal calls BioBridge — see
+    // app/integrations/providers/zkteco_adms.py.
+    kind: 'device',
+    key: 'push',
+    provider: 'zk_adms',
+    title: 'Cloud push device',
+    example: 'e.g. ZKTeco, eSSL or Realtime terminal',
+    body: 'The terminal sends its punches to BioBridge over the internet. Nothing to open on your network.',
   },
 ];
-const PROVIDER_LABEL = { zk_device: 'ZKTeco protocol' };
+const PROVIDER_LABEL = { zk_device: 'ZKTeco protocol', zk_adms: 'Cloud push', hik_isapi: 'Hikvision', biostar2: 'Suprema BioStar 2', cosec: 'Matrix COSEC', cosec_centra: 'COSEC CENTRA', crosschex: 'Anviz CrossChex', hikconnect: 'Hik-Connect', hikcentral: 'HikCentral', cams: 'Cams Biometrics', dahua: 'Dahua' };
+/** Which direct-device protocol is offered first. */
+const DIRECT_ORDER = { zk_device: 0, hik_isapi: 1, dahua: 2, cosec: 3, cams: 4, biotime: 0, biostar2: 1, hikcentral: 2, hikconnect: 3, cosec_centra: 4, crosschex: 5 };
+/** Where push devices send to — from /providers (setup), for the forms. */
+let pushSetup = null;
+
+/** The box that tells a customer what to type into the terminal. */
+function pushSetupHtml(serial) {
+  const host = pushSetup?.server_address || window.location.hostname;
+  const port = pushSetup?.server_port || 80;
+  return `
+    <div class="push-setup">
+      <strong>On the device</strong>
+      <ol>
+        <li>Open <b>Menu → Comm. → Cloud Server Setting</b> (on some models <b>ADMS</b>).</li>
+        <li>Server address <code>${esc(host)}</code>, server port <code>${esc(port)}</code>.</li>
+        <li>Turn <b>HTTPS</b> and <b>Enable Domain Name</b> off unless the address is a domain name; turn <b>Proxy</b> off.</li>
+        <li>Save. The device calls in within a minute — then test here${serial ? ` (serial <code>${esc(serial)}</code>)` : ''}.</li>
+      </ol>
+    </div>`;
+}
 
 async function renderBiometric(mount, route) {
   mount.innerHTML = loading();
@@ -814,14 +898,18 @@ async function renderBiometric(mount, route) {
     api.get('/devices').catch(() => []),
     api.get('/providers').catch(() => []),
   ]);
+  pushSetup = allProviders.find((p) => p.slug === 'zk_adms')?.setup || pushSetup;
   const readonly = !auth.canWrite;
   // Only offer what fits the kind picked — a standalone-device protocol has no
   // business in the platform form, and vice versa. See AttendanceProvider.kinds.
-  // Providers built only for this kind come first, so a standalone device
-  // defaults to the device protocol rather than to BioTime's device mode.
-  const providersFor = (kind) => allProviders
-    .filter((p) => (p.kinds || ['platform', 'device']).includes(kind))
-    .sort((a, b) => (a.kinds?.length || 2) - (b.kinds?.length || 2));
+  // Providers built only for this kind come first (ordered by DIRECT_ORDER).
+  // A push device is its own choice in the wizard, so the standalone
+  // (direct) choice lists only protocols BioBridge dials itself.
+  const providersFor = (kind, only) => allProviders
+    .filter((p) => (only ? p.slug === only
+      : (p.kinds || ['platform', 'device']).includes(kind) && !p.pushes))
+    .sort((a, b) => (a.kinds?.length || 2) - (b.kinds?.length || 2)
+      || (DIRECT_ORDER[a.slug] ?? 9) - (DIRECT_ORDER[b.slug] ?? 9));
 
   // Providers that can create a user on the device — "Import terminals"
   // also creates missing Odoo employees there for these (see
@@ -830,6 +918,10 @@ async function renderBiometric(mount, route) {
     .filter((p) => (p.capabilities || []).includes('read_employees')
       && (p.capabilities || []).includes('write_employees'))
     .map((p) => p.slug));
+
+  // Platforms that can't list their terminals (they arrive with punches).
+  const noInventory = new Set(allProviders
+    .filter((p) => !(p.capabilities || []).includes('list_terminals')).map((p) => p.slug));
 
   const devicesBySource = {};
   devices.forEach((d) => { (devicesBySource[d.source_id] ||= []).push(d); });
@@ -844,7 +936,7 @@ async function renderBiometric(mount, route) {
       ${cardHead('Biometric', 'where punches come from', actions)}
 
 
-      ${sources.map((s) => sourceCard(s, devicesBySource[s.id] || [], readonly, canProvision.has(s.provider))).join('')}
+      ${sources.map((s) => sourceCard(s, devicesBySource[s.id] || [], readonly, canProvision.has(s.provider), !noInventory.has(s.provider))).join('')}
       ${!sources.length ? empty(
         'No biometric connections yet',
         readonly ? '' : 'Use “+ Add connection” above to connect a platform server or a device.'
@@ -885,13 +977,15 @@ function openAddWizard({ providersFor, onDone, canProvision = new Set() }) {
   const state = {
     step: 1,
     kind: null,
+    choice: null,      // which KIND_CHOICES card (kind, or 'push')
     provider: null,
     values: {},        // what step 2 holds, kept across Back/Next
     tested: null,      // { fingerprint, result }
   };
   const STEPS = ['Type', 'Details', 'Test & connect'];
 
-  const providers = () => providersFor(state.kind);
+  const choiceOf = () => KIND_CHOICES.find((c) => (c.key || c.kind) === state.choice);
+  const providers = () => providersFor(state.kind, choiceOf()?.provider);
   const isDevice = () => state.kind === 'device';
   const commitLabel = () => (isDevice() ? 'Connect device' : 'Connect platform');
 
@@ -902,6 +996,12 @@ function openAddWizard({ providersFor, onDone, canProvision = new Set() }) {
     values.provider = state.provider;
     if (state.provider === 'zk_device' && values.base_url && !/^zk:\/\//i.test(values.base_url)) {
       values.base_url = `zk://${values.base_url}`;
+    }
+    if (state.provider === 'zk_adms' && values.base_url && !/^adms:\/\//i.test(values.base_url)) {
+      values.base_url = `adms://${values.base_url.trim().toUpperCase()}`;
+    }
+    if (['hik_isapi', 'dahua', 'cosec', 'cosec_centra'].includes(state.provider) && values.base_url && !/^https?:\/\//i.test(values.base_url)) {
+      values.base_url = `http://${values.base_url.trim()}`;
     }
     return values;
   };
@@ -929,8 +1029,8 @@ function openAddWizard({ providersFor, onDone, canProvision = new Set() }) {
         <p class="hint" style="margin:0 0 12px">What are you connecting?</p>
         <div class="choice-grid">
           ${KIND_CHOICES.map((c) => `
-            <button type="button" class="choice${state.kind === c.kind ? ' picked' : ''}" data-choose-kind="${esc(c.kind)}">
-              <span class="choice-icon" aria-hidden="true">${KIND_ICON[c.kind]}</span>
+            <button type="button" class="choice${state.choice === (c.key || c.kind) ? ' picked' : ''}" data-choose-kind="${esc(c.key || c.kind)}">
+              <span class="choice-icon" aria-hidden="true">${KIND_ICON[c.key || c.kind]}</span>
               <span class="choice-title">${esc(c.title)}</span>
               <span class="choice-example">${esc(c.example)}</span>
               <span class="choice-body">${esc(c.body)}</span>
@@ -945,13 +1045,15 @@ function openAddWizard({ providersFor, onDone, canProvision = new Set() }) {
     }
     const v = payload();
     const current = state.tested && state.tested.fingerprint === fingerprint();
+    const push = state.provider === 'zk_adms';
     const rows = [
-      ['Type', isDevice() ? 'Standalone device' : 'Platform server'],
+      ['Type', push ? 'Cloud push device' : isDevice() ? 'Standalone device' : 'Platform server'],
       ['Protocol', providers().find((p) => p.slug === state.provider)?.label || state.provider],
       ['Name', v.name],
       ...(isDevice() ? [['Location', v.location]] : []),
-      [isDevice() ? 'Device address' : 'Server URL', v.base_url],
-      ...(v.username ? [['Username', v.username]] : []),
+      [push ? 'Device serial' : ['crosschex', 'hikconnect'].includes(state.provider) ? 'Region' : state.provider === 'cams' ? 'Endpoint URL' : isDevice() ? 'Device address' : 'Server URL',
+        push ? String(v.base_url || '').replace(/^adms:\/\//i, '') : v.base_url],
+      ...(v.username ? [[state.provider === 'crosschex' ? 'API key' : state.provider === 'hikconnect' ? 'App key' : state.provider === 'hikcentral' ? 'Partner key' : state.provider === 'cams' ? 'Service Tag ID' : 'Username', v.username]] : []),
       ['Timezone', v.server_timezone],
     ];
     return `
@@ -963,6 +1065,7 @@ function openAddWizard({ providersFor, onDone, canProvision = new Set() }) {
              <span class="hint">Go back and enter a different address, or close this and edit the existing connection.</span></div>`
         : current
         ? testResultHtml(state.tested.result, false)
+          + (push && !state.tested.result.ok ? pushSetupHtml(String(v.base_url || '').replace(/^adms:\/\//i, '')) : '')
         : '<div class="test-result pending"><strong>Testing the connection…</strong><span>Nothing is saved yet.</span></div>'}</div>`;
   }
 
@@ -1003,7 +1106,9 @@ function openAddWizard({ providersFor, onDone, canProvision = new Set() }) {
     const form = $('#wizForm', dialog);
     Object.entries(state.values).forEach(([k, v]) => {
       const el = form.querySelector(`[name="${k}"]`);
-      if (el && k !== 'provider') el.value = v ?? '';
+      // An empty value from another provider's form must not blank a field
+      // that has its own default (CrossChex's region, COSEC's "sa" login).
+      if (el && k !== 'provider' && !(!v && el.value)) el.value = v ?? '';
     });
     (form.querySelector('input:not([type=hidden])') || form).focus();
   }
@@ -1037,8 +1142,9 @@ function openAddWizard({ providersFor, onDone, canProvision = new Set() }) {
       render();
     });
     dialog.querySelectorAll('[data-choose-kind]').forEach((b) => b.addEventListener('click', () => {
-      if (state.kind !== b.dataset.chooseKind) {
-        state.kind = b.dataset.chooseKind;
+      if (state.choice !== b.dataset.chooseKind) {
+        state.choice = b.dataset.chooseKind;
+        state.kind = choiceOf()?.kind || b.dataset.chooseKind;
         state.provider = providers()[0]?.slug || 'biotime';
         state.values = {};
         state.tested = null;
@@ -1108,6 +1214,8 @@ const KIND_ICON = {
   // A server stack, and a single terminal — drawn inline, no assets.
   platform: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="4" y="3.5" width="16" height="7" rx="1.5"/><rect x="4" y="13.5" width="16" height="7" rx="1.5"/><path d="M8 7h.01M8 17h.01M12 7h4M12 17h4"/></svg>`,
   device: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="6" y="2.5" width="12" height="19" rx="2"/><rect x="8.5" y="5.5" width="7" height="5" rx="1"/><circle cx="12" cy="15.5" r="2.2"/></svg>`,
+  // A terminal with signal arcs: it calls out.
+  push: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3.5" y="7" width="10" height="14.5" rx="2"/><circle cx="8.5" cy="16.5" r="1.8"/><path d="M6 10.5h5M16.5 8.5a4 4 0 0 1 0 5.5M19 6a7.5 7.5 0 0 1 0 10.5"/></svg>`,
 };
 
 /** One line for the toast after Import terminals created employees. */
@@ -1145,8 +1253,9 @@ function provisionSummary(r) {
   return parts.join(' ');
 }
 
-function sourceCard(source, devices, readonly, canProvision = false) {
-  const kindLabel = source.connection_kind === 'device' ? 'Standalone device' : 'Platform server';
+function sourceCard(source, devices, readonly, canProvision = false, canImport = true) {
+  const kindLabel = source.provider === 'zk_adms' ? 'Cloud push device'
+    : source.connection_kind === 'device' ? 'Standalone device' : 'Platform server';
   const providerLabel = PROVIDER_LABEL[source.provider];
   const isEditing = editingSourceId === source.id;
   const isConfirming = confirmDeleteId === source.id;
@@ -1161,7 +1270,8 @@ function sourceCard(source, devices, readonly, canProvision = false) {
             <span class="pill mute">${esc(kindLabel)}</span>
             ${providerLabel ? `<span class="pill mute">${esc(providerLabel)}</span>` : ''}
           </div>
-          <div class="hint mono" style="margin-top:2px">${esc(source.base_url)}</div>
+          <div class="hint mono" style="margin-top:2px">${esc(source.provider === 'zk_adms'
+            ? `serial ${source.base_url.replace(/^adms:\/\//i, '')}` : source.base_url)}</div>
           <div class="hint">
             checked ${esc(fmtAgo(source.last_checked_at))}
             · ${devices.length} terminal${devices.length === 1 ? '' : 's'}
@@ -1173,7 +1283,7 @@ function sourceCard(source, devices, readonly, canProvision = false) {
             <button type="button" class="sm" data-edit="${esc(source.id)}">${isEditing ? 'Close' : 'Edit'}</button>
             <button type="button" class="sm" data-test="${esc(source.id)}"
                     ${source.connection_kind === 'device' && canProvision ? 'data-provision="1"' : ''}>Test connection</button>
-            ${source.connection_kind === 'device' ? ''
+            ${source.connection_kind === 'device' || !canImport ? ''
               // One terminal, registered by the connection test itself (see
               // _register_standalone_device), so nothing to import — and the
               // other half of Import terminals, putting Odoo employees onto
@@ -1259,9 +1369,284 @@ function sourceFormHtml(source, kind, providers, currentProvider, provision = fa
 function sourceFieldsHtml(source, kind, providers, provider) {
   const isDevice = kind === 'device';
   const isZk = provider === 'zk_device';
+  const isPush = provider === 'zk_adms';
+  const isBioStar = provider === 'biostar2';
   const addressValue = source
-    ? (isZk ? source.base_url.replace(/^zk:\/\//i, '') : source.base_url)
+    ? (isZk ? source.base_url.replace(/^zk:\/\//i, '')
+      : isPush ? source.base_url.replace(/^adms:\/\//i, '') : source.base_url)
     : '';
+  if (provider === 'cosec_centra') {
+    return `
+      ${!source && providers.length > 1 ? field({
+        name: 'provider', label: 'Platform', required: true, value: provider,
+        options: providers.map((p) => ({ value: p.slug, label: p.label })),
+      }) : ''}
+      ${field({
+        name: 'name', label: 'Name', required: true, value: source?.name || '',
+        placeholder: 'COSEC — Head office',
+        help: 'Shown in this list — worth naming for the site it serves.',
+      })}
+      ${field({
+        name: 'base_url', label: 'Server URL', required: true, value: source?.base_url || '',
+        placeholder: 'http://cosec-server/cosec',
+        help: 'The address you open COSEC at, up to /cosec — reachable from wherever BioBridge runs.',
+      })}
+      ${field({ name: 'username', label: 'Username', required: true, value: source?.username || 'sa',
+                help: 'The COSEC API accepts only the System Administrator account (sa).' })}
+      ${field({
+        name: 'password', label: 'Password', type: 'password', required: !source,
+        placeholder: source ? 'unchanged' : '',
+        help: source ? 'Leave blank to keep the current one.' : 'The sa account’s COSEC password.',
+      })}
+      ${field({
+        name: 'server_timezone', label: 'Server timezone', required: true,
+        value: source?.server_timezone || auth.tenant?.timezone || 'UTC',
+        help: 'The zone the COSEC server’s clock runs in. Event times arrive with no offset.',
+        strongHelp: true, datalist: timezoneNames(),
+      })}
+      <div class="push-setup">
+        <strong>In COSEC first</strong>
+        <ol>
+          <li>Open <b>Admin → Utility → API Configuration</b>.</li>
+          <li>In the <b>T&amp;A events</b> template include <b>User ID</b> and <b>Event Date/Time</b> — and ideally <b>Entry/Exit</b>, <b>Device</b> and <b>Index No</b>.</li>
+          <li>Save, then test here. The test tells you if a field is missing.</li>
+        </ol>
+      </div>
+      <p class="hint" style="margin:4px 0 0">Panels appear here on their own as their punches arrive — there is nothing to import.</p>`;
+  }
+  if (provider === 'hikcentral') {
+    return `
+      ${!source && providers.length > 1 ? field({
+        name: 'provider', label: 'Platform', required: true, value: provider,
+        options: providers.map((p) => ({ value: p.slug, label: p.label })),
+      }) : ''}
+      ${field({
+        name: 'name', label: 'Name', required: true, value: source?.name || '',
+        placeholder: 'HikCentral — Head office',
+        help: 'Shown in this list — worth naming for the site it serves.',
+      })}
+      ${field({
+        name: 'base_url', label: 'Server URL', required: true, value: source?.base_url || '',
+        placeholder: 'https://hcp.example.com',
+        help: 'The HikCentral server, reachable from wherever BioBridge runs (VPN or forwarded port). Add :port if it isn’t 443.',
+      })}
+      ${field({ name: 'username', label: 'Partner key (AK)', required: true, value: source?.username || '',
+                help: 'The API key of the OpenAPI partner created for BioBridge.' })}
+      ${field({
+        name: 'password', label: 'Partner secret (SK)', type: 'password', required: !source,
+        placeholder: source ? 'unchanged' : '',
+        help: source ? 'Leave blank to keep the current one.' : 'Shown with the partner key when it is created.',
+      })}
+      ${field({
+        name: 'server_timezone', label: 'Server timezone', required: true,
+        value: source?.server_timezone || auth.tenant?.timezone || 'UTC',
+        help: 'The zone the HikCentral server runs in.',
+        datalist: timezoneNames(),
+      })}
+      ${field({
+        name: 'verify_ssl', label: 'HTTPS certificate', boolean: true,
+        value: String(source ? source.verify_ssl : false),
+        options: [{ value: 'false', label: 'Accept the server’s own certificate' },
+                  { value: 'true', label: 'Require a trusted certificate' }],
+        help: 'HikCentral installs with a self-signed certificate unless you replaced it.',
+      })}
+      <div class="push-setup">
+        <strong>In HikCentral first</strong>
+        <ol>
+          <li>Install the <b>HikCentral Professional OpenAPI</b> add-on that matches your HCP version.</li>
+          <li>In the OpenAPI settings, add a <b>partner</b> for BioBridge and copy its <b>AK</b> and <b>SK</b>.</li>
+          <li>Give every person an <b>Employee ID</b> in HCP — it is what matches them to Odoo.</li>
+        </ol>
+      </div>
+      <p class="hint" style="margin:4px 0 0">Doors appear here on their own as their punches arrive — there is nothing to import.</p>`;
+  }
+  if (provider === 'hikconnect') {
+    const regions = [
+      { value: 'https://ieu.hikcentralconnect.com', label: 'Europe (ieu.hikcentralconnect.com)' },
+      { value: 'https://ius.hikcentralconnect.com', label: 'North America (ius.hikcentralconnect.com)' },
+    ];
+    const saved = source?.base_url;
+    if (saved && !regions.some((r) => r.value === saved)) regions.push({ value: saved, label: saved });
+    return `
+      ${!source && providers.length > 1 ? field({
+        name: 'provider', label: 'Platform', required: true, value: provider,
+        options: providers.map((p) => ({ value: p.slug, label: p.label })),
+      }) : ''}
+      ${field({
+        name: 'name', label: 'Name', required: true, value: source?.name || '',
+        placeholder: 'Hik-Connect — Head office',
+        help: 'Shown in this list — worth naming for the team or site it serves.',
+      })}
+      ${field({
+        name: 'base_url', label: 'Region', required: true,
+        value: saved || regions[0].value, options: regions,
+        help: 'Where your Hik-Connect for Teams account lives — the region you picked when signing up.',
+      })}
+      ${field({ name: 'username', label: 'App key', required: true, value: source?.username || '',
+                help: 'Hik-Connect for Teams → Team Management → API Integration.' })}
+      ${field({
+        name: 'password', label: 'Secret key', type: 'password', required: !source,
+        placeholder: source ? 'unchanged' : '',
+        help: source ? 'Leave blank to keep the current one.' : 'Created with the app key under API Integration.',
+      })}
+      ${field({
+        name: 'server_timezone', label: 'Site timezone', required: true,
+        value: source?.server_timezone || auth.tenant?.timezone || 'UTC',
+        help: 'Records arrive with their offset; this is the zone they are shown in.',
+        datalist: timezoneNames(),
+      })}
+      <p class="hint" style="margin:4px 0 0">Needs a Hik-Connect <b>for Teams</b> account — the free Hik-Connect app has no API. Terminals appear here on their own as their punches arrive.</p>`;
+  }
+  if (provider === 'crosschex') {
+    const regions = [
+      { value: 'https://api.us.crosschexcloud.com', label: 'United States (us.crosschexcloud.com)' },
+      { value: 'https://api.eu.crosschexcloud.com', label: 'Europe (eu.crosschexcloud.com)' },
+      { value: 'https://api.ap.crosschexcloud.com', label: 'Asia-Pacific (ap.crosschexcloud.com)' },
+    ];
+    return `
+      ${!source && providers.length > 1 ? field({
+        name: 'provider', label: 'Platform', required: true, value: provider,
+        options: providers.map((p) => ({ value: p.slug, label: p.label })),
+      }) : ''}
+      ${field({
+        name: 'name', label: 'Name', required: true, value: source?.name || '',
+        placeholder: 'Anviz — Head office',
+        help: 'Shown in this list — worth naming for the account or site it serves.',
+      })}
+      ${field({
+        name: 'base_url', label: 'Region', required: true,
+        value: source?.base_url || regions[0].value, options: regions,
+        help: 'The one in your CrossChex Cloud address (us., eu. or ap.crosschexcloud.com).',
+      })}
+      ${field({ name: 'username', label: 'API key', required: true, value: source?.username || '',
+                help: 'CrossChex Cloud → Settings → API → API key.' })}
+      ${field({
+        name: 'password', label: 'API secret', type: 'password', required: !source,
+        placeholder: source ? 'unchanged' : '',
+        help: source ? 'Leave blank to keep the current one.' : 'Shown next to the API key in CrossChex Cloud.',
+      })}
+      ${field({
+        name: 'server_timezone', label: 'Site timezone', required: true,
+        value: source?.server_timezone || auth.tenant?.timezone || 'UTC',
+        help: 'CrossChex Cloud sends times with their offset; this is the zone they are shown in.',
+        datalist: timezoneNames(),
+      })}
+      <p class="hint" style="margin:4px 0 0">Terminals appear here on their own as their punches arrive — there is nothing to import.</p>`;
+  }
+  if (provider === 'cams') {
+    return `
+      ${!source && providers.length > 1 ? field({
+        name: 'provider', label: 'Protocol', required: true, value: provider,
+        options: providers.map((p) => ({ value: p.slug, label: p.label })),
+      }) : ''}
+      ${field({
+        name: 'name', label: 'Name', required: true, value: source?.name || '',
+        placeholder: 'Front door',
+        help: 'What this device is called here, on the Terminals page, and on its device record in Odoo.',
+      })}
+      ${field({
+        name: 'location', label: 'Location', value: source?.location || '',
+        placeholder: 'Main entrance, ground floor',
+        help: 'Where the device is. Saved on its device record in Odoo.',
+      })}
+      ${field({
+        name: 'base_url', label: 'Endpoint URL', required: true, value: source?.base_url || '',
+        placeholder: 'https://…',
+        help: 'The RESTful endpoint URL in your Cams API Monitor account (without the ?stgid part).',
+      })}
+      ${field({ name: 'username', label: 'Service Tag ID', required: true, value: source?.username || '',
+                help: 'This device’s stgid in API Monitor.' })}
+      ${field({
+        name: 'password', label: 'AuthToken', type: 'password', required: !source,
+        placeholder: source ? 'unchanged' : '',
+        help: source ? 'Leave blank to keep the current one.' : 'The 32-character token set for this device in API Monitor.',
+      })}
+      ${field({
+        name: 'server_timezone', label: 'Device timezone', required: true,
+        value: source?.server_timezone || auth.tenant?.timezone || 'UTC',
+        help: 'The zone the device’s clock is set to.',
+        datalist: timezoneNames(),
+      })}
+      <div class="push-setup">
+        <strong>In Cams API Monitor first</strong>
+        <ol>
+          <li>Register the device and note its <b>Service Tag ID</b>, <b>AuthToken</b> and <b>endpoint URL</b>.</li>
+          <li>Add this BioBridge server’s address as an <b>allowed origin</b> (otherwise Cams answers “invalid origin”).</li>
+          <li>Make sure REST log loading is allowed for the device.</li>
+        </ol>
+      </div>`;
+  }
+  if (provider === 'hik_isapi' || provider === 'cosec' || provider === 'dahua') {
+    const cosec = provider === 'cosec';
+    return `
+      ${!source && providers.length > 1 ? field({
+        name: 'provider', label: 'Protocol', required: true, value: provider,
+        options: providers.map((p) => ({ value: p.slug, label: p.label })),
+      }) : ''}
+      ${field({
+        name: 'name', label: 'Name', required: true, value: source?.name || '',
+        placeholder: 'Front door',
+        help: 'What this device is called here, on the Terminals page, and on its device record in Odoo.',
+      })}
+      ${field({
+        name: 'location', label: 'Location', value: source?.location || '',
+        placeholder: 'Main entrance, ground floor',
+        help: 'Where the device is. Saved on its device record in Odoo once the connection test recognises it.',
+      })}
+      ${field({
+        name: 'base_url', label: 'Device address', required: true, value: source?.base_url || '',
+        placeholder: cosec ? 'http://192.168.1.80' : provider === 'dahua' ? 'http://192.168.1.108' : 'http://192.168.1.64',
+        help: 'The device’s IP, reachable from wherever BioBridge runs. Add :port if it isn’t 80; use https:// only if HTTPS is on.',
+      })}
+      ${field({ name: 'username', label: 'Username', required: true, value: source?.username || 'admin',
+                help: cosec ? 'The device’s web login (factory default admin / 1234 — change it).'
+                  : provider === 'dahua' ? 'The device’s admin account (set when it was first activated).'
+                  : 'The device’s admin account, or an operator with access-control rights.' })}
+      ${field({
+        name: 'password', label: 'Password', type: 'password', required: !source,
+        placeholder: source ? 'unchanged' : '',
+        help: source ? 'Leave blank to keep the current one.'
+          : cosec ? 'The device’s web password.' : 'Five wrong tries lock the account on the device for 30 minutes.',
+      })}
+      ${field({
+        name: 'server_timezone', label: 'Device timezone', required: true,
+        value: source?.server_timezone || auth.tenant?.timezone || 'UTC',
+        help: 'The zone the device’s clock is set to.',
+        datalist: timezoneNames(),
+      })}
+      ${cosec ? '' : field({
+        name: 'verify_ssl', label: 'HTTPS certificate', boolean: true,
+        value: String(source ? source.verify_ssl : false),
+        options: [{ value: 'false', label: 'Accept the device’s own certificate' },
+                  { value: 'true', label: 'Require a trusted certificate' }],
+        help: 'Only matters for https:// addresses. Most terminals use a self-signed certificate.',
+      })}`;
+  }
+  if (isPush) {
+    return `
+      ${field({
+        name: 'name', label: 'Name', required: true, value: source?.name || '',
+        placeholder: 'Front door',
+        help: 'What this device is called here, on the Terminals page, and on its device record in Odoo.',
+      })}
+      ${field({
+        name: 'location', label: 'Location', value: source?.location || '',
+        placeholder: 'Main entrance, ground floor',
+        help: 'Where the device is. Saved on its device record in Odoo.',
+      })}
+      ${field({
+        name: 'base_url', label: 'Device serial number', required: true, value: addressValue,
+        placeholder: 'CKJG201760123',
+        help: 'On the device: Menu → System Info → Device Info → Serial Number, or the label on its back.',
+      })}
+      ${field({
+        name: 'server_timezone', label: 'Device timezone', required: true,
+        value: source?.server_timezone || auth.tenant?.timezone || 'UTC',
+        help: 'The zone the device’s clock is set to. Punch times arrive with no offset, so a wrong value shifts every attendance record by hours without any error.',
+        strongHelp: true, datalist: timezoneNames(),
+      })}
+      ${pushSetupHtml(addressValue)}`;
+  }
   return `
       ${!source && providers.length > 1 ? field({
         name: 'provider', label: isDevice ? 'Protocol' : 'Platform', required: true, value: provider,
@@ -1282,7 +1667,8 @@ function sourceFieldsHtml(source, kind, providers, provider) {
       ${field({
         name: 'base_url', label: isZk ? 'Device address' : isDevice ? 'Device address' : 'Server URL',
         required: true, value: addressValue,
-        placeholder: isZk ? '192.168.1.50' : isDevice ? 'https://192.168.1.50:8081' : 'https://biotime.example.com:8081',
+        placeholder: isZk ? '192.168.1.50' : isBioStar ? 'https://biostar.example.com'
+          : isDevice ? 'https://192.168.1.50:8081' : 'https://biotime.example.com:8081',
         help: isZk
           ? 'The device’s own IP, reachable from wherever BioBridge runs. A port is optional — defaults to 4370.'
           : isDevice
@@ -1299,12 +1685,21 @@ function sourceFieldsHtml(source, kind, providers, provider) {
           : source ? 'Leave blank to keep the current one.' : '',
       })}
       ${field({
-        name: 'server_timezone', label: isDevice ? 'Device timezone' : 'Server timezone',
-        required: true, value: source?.server_timezone || 'UTC',
-        help: 'The zone the device itself runs in — not yours and not Odoo’s. Punch times arrive with no offset, so a wrong value shifts every attendance record by hours without any error.',
+        name: 'server_timezone', label: isBioStar ? 'Site timezone' : isDevice ? 'Device timezone' : 'Server timezone',
+        required: true, value: source?.server_timezone || auth.tenant?.timezone || 'UTC',
+        help: isBioStar
+          ? 'BioStar 2 reports punch times in UTC; this is the zone they are shown in on this connection.'
+          : 'The zone the device itself runs in — not yours and not Odoo’s. Punch times arrive with no offset, so a wrong value shifts every attendance record by hours without any error.',
         strongHelp: true, datalist: timezoneNames(),
       })}
-      ${!isZk ? field({
+      ${isBioStar ? field({
+        name: 'verify_ssl', label: 'HTTPS certificate', boolean: true,
+        value: String(source ? source.verify_ssl : false),
+        options: [{ value: 'false', label: 'Accept the server’s own certificate' },
+                  { value: 'true', label: 'Require a trusted certificate' }],
+        help: 'BioStar 2 installs with a self-signed certificate unless you replaced it.',
+      }) : ''}
+      ${!isZk && !isBioStar ? field({
         name: 'auth_type', label: 'Auth style', value: source?.auth_type || 'token',
         options: ['token', 'jwt'],
         help: 'BioTime 8.5+ usually needs jwt; older builds use token.',
@@ -1447,6 +1842,12 @@ function wireBiometric(mount, providersFor, canProvision = new Set()) {
       // the backend expects it tagged so it knows not to treat it as HTTP.
       if (form.dataset.provider === 'zk_device' && values.base_url && !/^zk:\/\//i.test(values.base_url)) {
         values.base_url = `zk://${values.base_url}`;
+      }
+      if (form.dataset.provider === 'zk_adms' && values.base_url && !/^adms:\/\//i.test(values.base_url)) {
+        values.base_url = `adms://${values.base_url.trim().toUpperCase()}`;
+      }
+      if (['hik_isapi', 'dahua', 'cosec', 'cosec_centra'].includes(form.dataset.provider) && values.base_url && !/^https?:\/\//i.test(values.base_url)) {
+        values.base_url = `http://${values.base_url.trim()}`;
       }
       return values;
     };

@@ -149,6 +149,11 @@ class BioTimeProvider(AttendanceProvider):
     description = (
         "BioTime 8.x / 9.x web server. Pulls punches, employees and terminals."
     )
+    #: A server that collects many terminals' punches — never one device.
+    #: (It once defaulted to both kinds, from before BioBridge had real
+    #: standalone-device protocols; tools/fix_connection_kinds.py re-files
+    #: any connection saved that way.)
+    kinds = frozenset({"platform"})
     capabilities = frozenset(
         {
             Capability.READ_PUNCHES,

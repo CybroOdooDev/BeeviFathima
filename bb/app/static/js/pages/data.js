@@ -329,7 +329,7 @@ function wirePicker(box, mount, rerender) {
 
 const STATE_LABEL = {
   pending: 'Pending', synced: 'Synced', unmapped: 'Unmatched badge', error: 'Error',
-  skipped: 'Skipped', deleted: 'Deleted',
+  skipped: 'Skipped', deleted: 'Deleted', held: 'Held (device limit)',
 };
 
 function wireRunLogs(mount) {
@@ -368,7 +368,7 @@ export async function renderActivity(mount, route) {
     api.get('/devices').catch(() => []),
   ]);
 
-  const states = ['', 'pending', 'synced', 'unmapped', 'error', 'skipped', 'deleted'];
+  const states = ['', 'pending', 'synced', 'unmapped', 'error', 'held', 'skipped', 'deleted'];
 
   /** Keep the state tab while changing a filter, and vice versa. */
   const linkFor = (overrides) => {

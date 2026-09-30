@@ -218,6 +218,15 @@ export async function render(mount) {
       { href: '#/settings/odoo?show=unmapped', label: 'Match badges' },
     ));
   }
+  if (data.punches_held > 0) {
+    banners.push(banner(
+      `${data.punches_held} punch${data.punches_held === 1 ? ' is' : 'es are'} waiting on your plan`,
+      `They come from a terminal beyond your plan's ${data.tenant?.plan_max_devices ?? ''}-device limit. `
+        + 'They are kept safely and go to Odoo as soon as your plan covers the terminal.',
+      'warn',
+      { href: '#/settings/plan/choose', label: 'Upgrade plan' },
+    ));
+  }
   if (data.punches_error > 0) {
     banners.push(banner(
       `${data.punches_error} punch${data.punches_error === 1 ? '' : 'es'} failed to reach Odoo`,

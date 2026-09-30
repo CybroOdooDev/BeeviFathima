@@ -140,11 +140,11 @@ class AttendanceProvider(ABC):
     capabilities: frozenset[Capability] = frozenset({Capability.READ_PUNCHES})
 
     #: Which connection_kind(s) this integration makes sense under (see
-    #: app.models.connection.DeviceSource.connection_kind). A shared server
-    #: like BioTime works framed either way, so it defaults to both; a
-    #: standalone-terminal protocol (one connection == one physical device)
-    #: only ever makes sense under "device", and declares that explicitly so
-    #: the connection picker does not offer it while in "platform" mode.
+    #: app.models.connection.DeviceSource.connection_kind): "platform" for a
+    #: server that manages many terminals (BioTime, BioStar 2, CENTRA…),
+    #: "device" for a protocol where one connection is one terminal (ZKTeco,
+    #: Hikvision, COSEC…). Every shipped provider declares its own; the
+    #: default of both only serves test doubles and one-off integrations.
     kinds: frozenset[str] = frozenset({"platform", "device"})
 
     #: Fields the setup form renders, so the UI hardcodes no vendor.
@@ -241,6 +241,9 @@ def available_providers() -> list[dict[str, Any]]:
             "capabilities": sorted(c.value for c in cls.capabilities),
             "kinds": sorted(cls.kinds),
             "config_fields": list(cls.config_fields),
+            # Push providers: where the device should send to.
+            **({"setup": cls.setup_info()} if hasattr(cls, "setup_info") else {}),
+            "pushes": bool(getattr(cls, "pushes", False)),
         }
         for cls in sorted(_REGISTRY.values(), key=lambda c: c.label)
     ]
