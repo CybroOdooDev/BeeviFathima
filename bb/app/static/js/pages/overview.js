@@ -84,31 +84,31 @@ function setupChecklist({ health, devices, run, unmapped }) {
       done: connected(health.odoo),
       title: 'Connect Odoo',
       body: 'Where attendance is written. You need the server URL, database, login and an API key.',
-      action: { href: '#/settings/odoo', label: 'Connect Odoo' },
+      action: { href: '#/get-started?step=1', label: 'Connect Odoo' },
     },
     {
       done: connected(health.source),
       title: 'Add a biometric connection',
       body: 'A BioTime server, or a device by its IP address.',
-      action: { href: '#/settings/biometric?add=1', label: 'Add connection' },
+      action: { href: '#/get-started?step=2', label: 'Add connection' },
     },
     {
       done: devices > 0,
       title: 'Import your terminals',
       body: 'So each punch knows which device it came from. “Import terminals” on the connection.',
-      action: { href: '#/settings/biometric', label: 'Open connections' },
+      action: { href: '#/get-started?step=3', label: 'Import terminals' },
     },
     {
       done: Boolean(run),
       title: 'Run the first sync',
       body: 'Pulls punches and writes attendance. After this it runs on its own schedule.',
-      action: { sync: true, label: 'Sync now' },
+      action: { href: '#/get-started?step=4', label: 'Run first sync' },
     },
     {
       done: Boolean(run) && unmapped === 0,
       title: 'Match any unknown badges',
       body: 'Badges no Odoo employee carries yet are held until they are matched.',
-      action: { href: '#/settings/odoo?show=unmapped', label: 'Match badges' },
+      action: { href: '#/get-started?step=5', label: 'Match badges' },
     },
   ];
   if (steps.slice(0, 4).every((s) => s.done)) return '';
@@ -118,7 +118,10 @@ function setupChecklist({ health, devices, run, unmapped }) {
     <div class="card checklist" style="margin-bottom:14px">
       <div class="card-head">
         <h2>Get set up <span class="hint">${doneCount} of ${steps.length} done</span></h2>
-        <div class="progress" aria-hidden="true"><span style="width:${(doneCount / steps.length) * 100}%"></span></div>
+        <div class="row" style="gap:12px;flex-wrap:nowrap">
+          <div class="progress" aria-hidden="true"><span style="width:${(doneCount / steps.length) * 100}%"></span></div>
+          ${auth.canWrite ? `<a class="btn primary-link sm" href="#/get-started">${doneCount ? 'Continue guided setup' : 'Start guided setup'}</a>` : ''}
+        </div>
       </div>
       <ol class="steps-list">
         ${steps.map((s, i) => `
@@ -258,7 +261,7 @@ export async function render(mount) {
         note: 'awaiting the next run', href: '#/activity?state=pending',
       })}
       ${stat({
-        label: 'Unmatched badges', value: data.unmapped_employees,
+        label: 'Unmatched employee badges', value: data.unmapped_employees,
         tone: data.unmapped_employees > 0 ? 'warn' : '', href: '#/settings/odoo?show=unmapped',
       })}
       ${stat({
@@ -272,8 +275,8 @@ export async function render(mount) {
         <h2>Connections</h2>
         <table>
           <tbody>
-            <tr><td>Odoo</td><td style="text-align:right">${pill(health.odoo)}</td></tr>
-            <tr><td>Biometric</td><td style="text-align:right">${pill(health.source)}</td></tr>
+            <tr class="conn-row"><td><a class="conn-link" href="#/settings/odoo">Odoo</a></td><td style="text-align:right"><a class="conn-link" href="#/settings/odoo">${pill(health.odoo)}</a></td></tr>
+            <tr class="conn-row"><td><a class="conn-link" href="#/settings/biometric">Biometric</a></td><td style="text-align:right"><a class="conn-link" href="#/settings/biometric">${pill(health.source)}</a></td></tr>
           </tbody>
         </table>
         <div class="row" style="margin-top:14px">

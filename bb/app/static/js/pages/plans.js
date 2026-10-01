@@ -57,6 +57,27 @@ export async function render(mount) {
   $$('tr[data-plan]', mount).forEach((tr) => {
     $('.edit', tr).addEventListener('click', () =>
       openPlanDialog(plans.find((p) => p.id === tr.dataset.plan), refresh));
+    // Two clicks, no confirm(): the first turns the button into the
+    // confirmation, which resets itself after a few seconds.
+    const del = $('.del', tr);
+    del?.addEventListener('click', () => {
+      if (!del.classList.contains('armed')) {
+        del.classList.add('armed');
+        del.textContent = 'Click again to delete';
+        del.classList.replace('danger-outline', 'danger');
+        setTimeout(() => {
+          if (!del.isConnected) return;
+          del.classList.remove('armed');
+          del.classList.replace('danger', 'danger-outline');
+          del.textContent = 'Delete';
+        }, 4000);
+        return;
+      }
+      busy(del, async () => {
+        const result = await guard(() => api.del(`/admin/plans/${tr.dataset.plan}`));
+        if (result) { toast(result.message, 'ok'); refresh(); }
+      });
+    });
   });
 }
 
@@ -72,7 +93,10 @@ function rowFor(p) {
       <td>${p.stripe_price_id ? `<span class="mono hint">${esc(p.stripe_price_id)}</span>` : '<span class="hint">not sold online</span>'}</td>
       <td class="num">${esc(p.tenants)}</td>
       <td>${pill(p.is_active ? 'active' : 'skipped', p.is_active ? 'active' : 'retired')}</td>
-      <td class="actions-cell"><button class="sm edit">Edit</button></td>
+      <td class="actions-cell"><div class="row-actions">
+        <button class="sm edit">Edit</button>
+        ${p.tenants ? '' : '<button type="button" class="sm danger-outline del" title="Delete this plan — only possible while no account is on it">Delete</button>'}
+      </div></td>
     </tr>`;
 }
 
@@ -93,7 +117,7 @@ function openPlanDialog(plan, onSaved) {
       <form id="planForm">
         <div class="grid cols-2">
           ${field({ name: 'name', label: 'Name', value: p.name || '', required: true, placeholder: 'Growth' })}
-          ${field({ name: 'price', label: 'Price per month (USD)', type: 'number',
+          ${field({ name: 'price', label: 'Price Per Month (USD)', type: 'number',
                     value: p.monthly_price_cents != null ? p.monthly_price_cents / 100 : '',
                     help: 'What pricing pages show. Leave empty for "Custom". What a customer is '
                         + 'actually charged is the Stripe Price below — keep the two in step.' })}
@@ -107,7 +131,7 @@ function openPlanDialog(plan, onSaved) {
           ${field({ name: 'max_devices', label: 'Devices', type: 'number', value: p.max_devices ?? '',
                     help: 'Terminals the account has added; the oldest fill the allowance. Punches from '
                         + 'terminals beyond it are held, and released when the limit covers them.' })}
-          ${field({ name: 'min_sync_interval_minutes', label: 'Fastest sync (min)', type: 'number',
+          ${field({ name: 'min_sync_interval_minutes', label: 'Fastest Sync (Min)', type: 'number',
                     value: p.min_sync_interval_minutes ?? '',
                     help: 'The fastest interval a customer on this plan can choose. Assigning the plan '
                         + 'raises a faster interval to this.' })}
@@ -121,7 +145,7 @@ function openPlanDialog(plan, onSaved) {
           ${field({ name: 'is_active', label: 'Status', value: String(p.is_active), boolean: true, required: true,
                     options: [{ value: 'true', label: 'Active — can be chosen' },
                               { value: 'false', label: 'Retired — kept for accounts on it' }] })}
-          ${field({ name: 'is_default', label: 'Default for new accounts', value: String(p.is_default),
+          ${field({ name: 'is_default', label: 'Default For New Accounts', value: String(p.is_default),
                     boolean: true, required: true,
                     options: [{ value: 'false', label: 'No' }, { value: 'true', label: 'Yes' }],
                     help: 'Given to a signup or a staff-created account that picks nothing. Only one plan can be default.' })}

@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from app.core.config import settings
 from app.core.security import hash_token, new_token
@@ -52,6 +52,7 @@ def send_verification_email(user: User, raw_token: str) -> None:
         if user.credentials_pending else ""
     )
     send_email(
+        db=object_session(user),
         to=user.email,
         subject="Confirm your email for BioBridge",
         body=(

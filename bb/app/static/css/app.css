@@ -1227,3 +1227,50 @@ dialog.new-account-dialog .grid.cols-2 { grid-template-columns: repeat(auto-fit,
 .push-setup ol { margin: 6px 0 0; padding-left: 20px; }
 .push-setup li { margin: 3px 0; }
 .push-setup code { font-family: var(--mono, ui-monospace, monospace); background: var(--accent-soft, rgba(79,70,229,.08)); padding: 1px 5px; border-radius: 5px; }
+
+/* Overview > Connections: the whole row is a link to that connection's settings. */
+.conn-row td { padding: 0; }
+.conn-row .conn-link { display: block; padding: 12px 14px; color: inherit; text-decoration: none; }
+.conn-row td:last-child .conn-link { display: flex; justify-content: flex-end; }
+.conn-row:hover { cursor: pointer; }
+.conn-row .conn-link, .conn-row .conn-link:hover, .conn-row .conn-link:focus-visible,
+.conn-row .conn-link *, .conn-row .conn-link:hover * { text-decoration: none !important; }
+
+/* Pricing cards line up row by row however long a plan's name or
+   description is: every card spans the same six rows of the parent grid
+   (name, price, description, button, "Includes", features), so the buttons
+   sit on one line. The tag no longer changes a card's top padding. Older
+   browsers without subgrid still get the button pushed under the tallest
+   description by the flex fallback. */
+.pricing-card, .pricing-card.tagged { padding-top: 36px; }
+.pricing-card-desc { flex: 1 0 auto; }
+@supports (grid-template-rows: subgrid) {
+  .pricing-card {
+    display: grid;
+    grid-row: span 6;
+    grid-template-rows: subgrid;
+    row-gap: 0;
+    align-content: start;
+  }
+  .pricing-card-desc { align-self: start; }
+  .pricing-cta { align-self: start; }
+}
+
+/* --- guided first setup (#/get-started, pages/getstarted.js) ------------- */
+.setup-wizard { display: flex; flex-direction: column; gap: 16px; }
+.setup-head { padding-bottom: 6px; }
+.setup-head-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+.setup-head-top h2 { margin: 2px 0 0; font-size: 19px; }
+.setup-steps { margin: 0 -20px; border-top: 1px solid var(--rule-soft); }
+.setup-steps li button { display: inline-flex; align-items: center; gap: 7px; padding: 0; color: inherit; font: inherit; text-decoration: none; }
+.setup-steps li button:disabled { cursor: default; opacity: 1; }
+.setup-intro { margin: 14px 0 6px; font-size: 14px; line-height: 1.55; }
+.setup-help { margin: 0 0 8px; line-height: 1.5; }
+.setup-body > .card + .card { margin-top: 16px; }
+.setup-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.setup-foot-status { color: var(--muted); font-size: 13px; }
+#setupFoot { position: sticky; bottom: 12px; z-index: 5; box-shadow: 0 6px 24px rgba(0,0,0,.08); }
+.setup-done { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 40px 24px; }
+.setup-done .notice-icon { width: 56px; height: 56px; border-radius: 16px; display: grid; place-items: center;
+  background: var(--accent-soft); color: var(--accent); font-size: 26px; font-weight: 700; }
+@media (max-width: 720px) { .setup-steps li button { font-size: 0; } .setup-steps li button b { font-size: 11.5px; } }

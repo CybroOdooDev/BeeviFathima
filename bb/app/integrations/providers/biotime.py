@@ -167,14 +167,14 @@ class BioTimeProvider(AttendanceProvider):
          "help": "Where BioTime is reachable, e.g. https://biotime.example.com:8081"},
         {"name": "username", "label": "Username", "type": "text", "required": True},
         {"name": "password", "label": "Password", "type": "password", "required": True},
-        {"name": "auth_type", "label": "Auth style", "type": "select", "required": False,
+        {"name": "auth_type", "label": "Auth Style", "type": "select", "required": False,
          "default": "token", "choices": ["token", "jwt"],
          "help": "BioTime 8.5+ usually needs jwt; older builds use token."},
-        {"name": "server_timezone", "label": "Server timezone", "type": "timezone",
+        {"name": "server_timezone", "label": "Server Timezone", "type": "timezone",
          "required": True, "default": "UTC",
          "help": "BioTime stores punch times as local wall-clock with no offset, "
                  "so this must match the server or every punch shifts."},
-        {"name": "verify_ssl", "label": "Verify TLS certificate", "type": "bool",
+        {"name": "verify_ssl", "label": "Verify TLS Certificate", "type": "bool",
          "required": False, "default": True},
     )
 

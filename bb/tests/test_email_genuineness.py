@@ -35,7 +35,7 @@ def captured_mail(monkeypatch):
     """
     sent: list[dict] = []
 
-    def fake_send(to, subject, body):
+    def fake_send(to, subject, body, db=None):
         sent.append({"to": to, "subject": subject, "body": body})
 
     monkeypatch.setattr(verification_mod, "send_email", fake_send)

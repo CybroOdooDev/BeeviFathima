@@ -431,9 +431,11 @@ def change_password(
     Signs out every *other* session: whoever else may have seen the old
     password (it was in an email) loses access with it.
     """
-    if not verify_password(payload.current_password, user.hashed_password):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Your current password is not right.")
-    if payload.new_password == payload.current_password:
+    first_time = bool(user.must_change_password)
+    if not (first_time and not payload.current_password):
+        if not payload.current_password or not verify_password(payload.current_password, user.hashed_password):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Your current password is not right.")
+    if verify_password(payload.new_password, user.hashed_password):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Choose a password different from the current one.")
     user.hashed_password = hash_password(payload.new_password)
     user.must_change_password = False

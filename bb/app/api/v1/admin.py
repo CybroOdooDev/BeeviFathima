@@ -30,6 +30,8 @@ from app.services.email_check import UngenuineEmailError, assert_genuine_email
 from app.services.email_verification import issue_verification_token, send_verification_email
 from app.db.session import get_db
 from app.models import (
+    AccountClosure,
+    PendingSignup,
     Device,
     DeviceSource,
     EmployeeMapping,
@@ -46,6 +48,10 @@ from app.models import (
 )
 from app.schemas import (
     ErrorGroup,
+    MailSettingsIn,
+    StripeSettingsIn,
+    TenantDeleteIn,
+    MailTestIn,
     MessageOut,
     SubscriptionPlanAdminOut,
     SubscriptionPlanIn,
@@ -59,7 +65,10 @@ from app.schemas import (
     TenantScheduleUpdate,
     TenantUsageOut,
 )
+from app.services import billing, mail_settings, stripe_settings
+from app.services.account_deletion import EXIT_REASONS, delete_tenant
 from app.services.device_limits import over_limit_device_ids
+from app.services.mailer import MailError, build_message, deliver
 from app.services.scheduling import (
     SYNCABLE,
     effective_interval,
@@ -1023,3 +1032,223 @@ def reset_schedule(
         message=f"Failure count cleared ({was} -> 0). {tenant.name} is back on its "
                 f"configured {tenant.sync_interval_minutes}-minute interval."
     )
+
+
+# --- Email server ------------------------------------------------------------
+# Platform-wide, so it lives here with the other staff-only routes. The SMTP
+# password is write-only: it is never sent back, only "has_password".
+
+@router.get("/mail", tags=["platform"])
+def get_mail_settings(_: User = Depends(get_platform_admin), db: Session = Depends(get_db)) -> dict:
+    """The saved Email server settings, which source is in use, and presets."""
+    return mail_settings.public_view(db)
+
+
+@router.patch("/mail", tags=["platform"])
+def update_mail_settings(
+    payload: MailSettingsIn,
+    actor: User = Depends(get_platform_admin),
+    db: Session = Depends(get_db),
+) -> dict:
+    data = payload.model_dump(exclude_unset=True)
+    saved = mail_settings.stored_config(db)
+    host = (data.get("host") if data.get("host") is not None else (saved.host if saved else "")) or ""
+    enabled = data.get("enabled") if data.get("enabled") is not None else (saved.enabled if saved else True)
+    if enabled and not host.strip():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "An SMTP host is needed, or switch the setting off.")
+    from_email = data.get("from_email") or (saved.from_email if saved else "")
+    if enabled and not from_email:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "A From address is needed.")
+    if enabled and "gmail" in host.lower():
+        has_password = bool(data.get("password")) or (bool(saved and saved.password) and not data.get("clear_password"))
+        username = data.get("username") if data.get("username") is not None else (saved.username if saved else "")
+        if not has_password or not (username or from_email):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                "Gmail needs the account's full address as Username and an App Password.")
+    mail_settings.save(db, data, actor.email)
+    log.info("Platform user %s changed the email server settings (%s)", actor.email,
+             ", ".join(sorted(k for k in data if k != "password")) + (", password" if data.get("password") else ""))
+    return mail_settings.public_view(db)
+
+
+@router.post("/mail/test", response_model=MessageOut, tags=["platform"])
+def send_test_mail(
+    payload: MailTestIn,
+    actor: User = Depends(get_platform_admin),
+    db: Session = Depends(get_db),
+) -> MessageOut:
+    """Send one message through the settings in use right now."""
+    config = mail_settings.active_config(db)
+    if not config.can_send:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "No email server is configured yet — save the settings first.")
+    message = build_message(
+        config, str(payload.to), "BioBridge test email",
+        "This is a test email from BioBridge.\n\n"
+        f"Sent through {config.host}:{config.port} ({config.security.upper()}) "
+        f"from {config.from_email or config.username}, requested by {actor.email}.\n\n"
+        "If you can read this, signup confirmations and login details will be delivered.\n",
+    )
+    try:
+        deliver(config, message)
+    except MailError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    log.info("Platform user %s sent a test email to %s via %s", actor.email, payload.to, config.host)
+    return MessageOut(message=f"Test email sent to {payload.to} through {config.host}.")
+
+
+# --- Payments (Stripe) -------------------------------------------------------
+# The keys are write-only like the SMTP password: only a hint (sk_test_…4242)
+# is ever returned. Price ids stay on each plan (Plans page).
+
+@router.get("/stripe", tags=["platform"])
+def get_stripe_settings(_: User = Depends(get_platform_admin), db: Session = Depends(get_db)) -> dict:
+    return stripe_settings.public_view(db)
+
+
+@router.patch("/stripe", tags=["platform"])
+def update_stripe_settings(
+    payload: StripeSettingsIn,
+    actor: User = Depends(get_platform_admin),
+    db: Session = Depends(get_db),
+) -> dict:
+    data = payload.model_dump(exclude_unset=True)
+    stripe_settings.save(db, data, actor.email)
+    billing.load_config(db)
+    log.info("Platform user %s changed the Stripe settings (%s)", actor.email,
+             ", ".join(sorted(k for k, v in data.items() if v not in (None, "", False))))
+    return stripe_settings.public_view(db)
+
+
+@router.post("/stripe/test", tags=["platform"])
+def test_stripe(_: User = Depends(get_platform_admin), db: Session = Depends(get_db)) -> dict:
+    """Check the key in use against Stripe, and every active plan's price."""
+    billing.load_config(db)
+    if not billing.enabled():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No Stripe secret key is configured yet.")
+    mode = stripe_settings.mode_of(billing.secret_key())
+    plans = db.scalars(select(SubscriptionPlan).where(SubscriptionPlan.is_active.is_(True))
+                       .order_by(SubscriptionPlan.monthly_price_cents)).all()
+    try:
+        billing._request("GET", "prices", {"limit": 1})
+    except billing.BillingError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    results = []
+    for plan in plans:
+        row = {"plan": plan.name, "stripe_price_id": plan.stripe_price_id, "ok": False, "message": ""}
+        if not plan.stripe_price_id:
+            row["message"] = "No Stripe price — this plan can't be bought online."
+            results.append(row)
+            continue
+        try:
+            price = billing._request("GET", f"prices/{plan.stripe_price_id}")
+        except billing.BillingError as exc:
+            row["message"] = (f"{exc}. A {mode or ''} key can only see {mode or 'its own'}-mode prices."
+                              if "No such price" in str(exc) else str(exc))
+            results.append(row)
+            continue
+        recurring = price.get("recurring") or {}
+        problems = []
+        if not price.get("active", True):
+            problems.append("the price is archived in Stripe")
+        if recurring.get("interval") != "month":
+            problems.append("it isn't a monthly recurring price")
+        amount = price.get("unit_amount")
+        if plan.monthly_price_cents is not None and amount is not None and amount != plan.monthly_price_cents:
+            problems.append(f"Stripe charges {amount / 100:.2f} {str(price.get('currency', '')).upper()} "
+                            f"but the plan says {plan.monthly_price_cents / 100:.2f}")
+        row["ok"] = not problems
+        row["message"] = "; ".join(problems).capitalize() if problems else (
+            f"{(amount or 0) / 100:.2f} {str(price.get('currency', '')).upper()} / month")
+        results.append(row)
+    webhook = bool(billing.webhook_secret())
+    return {
+        "ok": all(r["ok"] for r in results) and webhook,
+        "mode": mode,
+        "webhook_secret_set": webhook,
+        "message": f"Connected to Stripe in {mode or 'unknown'} mode."
+                   + ("" if webhook else " The webhook signing secret is missing, so payments will never activate accounts."),
+        "plans": results,
+    }
+
+
+# --- Deleting plans and accounts ----------------------------------------------
+
+@router.delete("/plans/{plan_id}", response_model=MessageOut)
+def delete_plan(
+    plan_id: str,
+    actor: User = Depends(get_platform_admin),
+    db: Session = Depends(get_db),
+) -> MessageOut:
+    """Remove a plan for good. Only a plan nobody is on — or switching to —
+    can go; anything else is retired instead, so no account loses its limits."""
+    plan = db.get(SubscriptionPlan, plan_id)
+    if plan is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such plan")
+    on_it = db.scalar(select(func.count()).select_from(Tenant).where(
+        (Tenant.plan_id == plan.id) | (Tenant.pending_plan_id == plan.id)))
+    if on_it:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"{on_it} account{'s are' if on_it != 1 else ' is'} on {plan.name} or switching to it. "
+            "Move them to another plan first, or retire it instead — a retired plan is hidden from new customers.")
+    waiting = db.scalar(select(func.count()).select_from(PendingSignup).where(
+        PendingSignup.plan_id == plan.id, PendingSignup.tenant_id.is_(None)))
+    if waiting:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"{waiting} website checkout{'s are' if waiting != 1 else ' is'} still open for {plan.name}. "
+            "Retire it now and delete it later.")
+    name = plan.name
+    db.delete(plan)
+    db.commit()
+    log.warning("Platform user %s deleted plan %s", actor.email, name)
+    return MessageOut(message=f"{name} deleted.")
+
+
+@router.post("/tenants/{tenant_id}/delete", response_model=MessageOut)
+def delete_tenant_account(
+    tenant_id: str,
+    payload: TenantDeleteIn,
+    actor: User = Depends(get_platform_admin),
+    db: Session = Depends(get_db),
+) -> MessageOut:
+    """Permanently delete a customer account that has already been deactivated
+    (suspended or cancelled). The name has to be typed back."""
+    tenant = db.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such tenant")
+    if tenant.status not in (TenantStatus.suspended.value, TenantStatus.cancelled.value):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"{tenant.name} is still {tenant.status}. Deactivate it first — only a deactivated account can be deleted.")
+    if payload.confirm_name.strip().lower() != tenant.name.strip().lower():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "The name typed doesn't match the account name.")
+    if actor.tenant_id == tenant.id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "That is your own workspace — it can't be deleted from the console.")
+    billing.load_config(db)
+    name = tenant.name
+    try:
+        delete_tenant(db, tenant, closed_by="staff", closed_by_email=actor.email,
+                      reason_code="staff", reason_text=payload.reason)
+    except billing.BillingError as exc:
+        db.rollback()
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY,
+                            f"Not deleted — the Stripe subscription couldn't be cancelled: {exc}") from exc
+    return MessageOut(message=f"{name} and all its data were deleted.")
+
+
+@router.get("/closures", tags=["platform"])
+def list_closures(
+    _: User = Depends(get_platform_admin), db: Session = Depends(get_db), limit: int = Query(default=200, le=500),
+) -> list[dict]:
+    """Deleted accounts, newest first, with the reason given."""
+    rows = db.scalars(select(AccountClosure).order_by(AccountClosure.closed_at.desc()).limit(limit)).all()
+    return [{
+        "id": r.id, "tenant_name": r.tenant_name, "tenant_slug": r.tenant_slug, "owner_email": r.owner_email,
+        "plan_name": r.plan_name, "status_before": r.status_before, "closed_by": r.closed_by,
+        "closed_by_email": r.closed_by_email, "reason_code": r.reason_code,
+        "reason_label": EXIT_REASONS.get(r.reason_code or "", "Deleted by staff" if r.closed_by == "staff" else r.reason_code),
+        "reason_text": r.reason_text, "stripe_subscription_cancelled": r.stripe_subscription_cancelled,
+        "closed_at": r.closed_at.isoformat() if r.closed_at else None,
+    } for r in rows]

@@ -257,6 +257,11 @@ def due_tenants(db: Session, *, now: datetime | None = None) -> list[Tenant]:
 # ===========================================================================
 # Subscriptions: the same clock, applied to whether an account may sync at all
 # ===========================================================================
+#: How long after a Stripe-billed period ends, with no renewal recorded, the
+#: sweep stops the account itself (see sweep_subscriptions).
+STRIPE_GRACE = timedelta(days=3)
+
+
 def sweep_subscriptions(db: Session, *, now: datetime | None = None) -> dict[str, int]:
     """Move accounts across the renewal date, the way staff already do by hand.
 
@@ -303,6 +308,7 @@ def sweep_subscriptions(db: Session, *, now: datetime | None = None) -> dict[str
     lapsed = 0
     renewed = 0
     switched = 0
+    stopped: list[tuple[Tenant, str]] = []
 
     candidates = db.scalars(
         select(Tenant).where(
@@ -331,12 +337,21 @@ def sweep_subscriptions(db: Session, *, now: datetime | None = None) -> dict[str
             # Billed through Stripe: its webhooks decide active / past_due
             # (app.services.billing). Lapsing here on the date alone would
             # stop syncing in the minutes between a period ending and
-            # Stripe's renewal charge being confirmed.
-            pass
-        elif tenant.status in (TenantStatus.trialing.value, TenantStatus.active.value):
-            if renews_at <= now:
+            # Stripe's renewal charge being confirmed — so only well after
+            # the date, as a safety net for webhooks that never arrived
+            # (endpoint down, wrong signing secret). A renewal that did go
+            # through moves the date forward, so this never fires for it.
+            if tenant.status in (TenantStatus.trialing.value, TenantStatus.active.value) \
+                    and renews_at + STRIPE_GRACE <= now:
                 tenant.status = TenantStatus.past_due.value
                 lapsed += 1
+                stopped.append((tenant, "payment_failed"))
+        elif tenant.status in (TenantStatus.trialing.value, TenantStatus.active.value):
+            if renews_at <= now:
+                why = "trial_ended" if tenant.status == TenantStatus.trialing.value else "lapsed"
+                tenant.status = TenantStatus.past_due.value
+                lapsed += 1
+                stopped.append((tenant, why))
         elif renews_at > now:
             tenant.status = TenantStatus.active.value
             renewed += 1
@@ -356,6 +371,11 @@ def sweep_subscriptions(db: Session, *, now: datetime | None = None) -> dict[str
 
     if lapsed or renewed or switched:
         db.commit()
+    if stopped:
+        from app.services.notices import notify_sync_stopped
+
+        for tenant, why in stopped:
+            notify_sync_stopped(db, tenant, why)
     return {"lapsed": lapsed, "renewed": renewed, "switched": switched}
 
 

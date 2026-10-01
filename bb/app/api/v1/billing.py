@@ -17,7 +17,7 @@ from app.models import SubscriptionPlan
 from app.services import billing
 
 log = logging.getLogger(__name__)
-router = APIRouter(prefix="/billing", tags=["billing"])
+router = APIRouter(prefix="/billing", tags=["billing"], dependencies=[Depends(billing.use_config)])
 
 
 class BillingStatus(BaseModel):
@@ -35,7 +35,7 @@ class RedirectOut(BaseModel):
 
 
 def _require_enabled() -> None:
-    if not settings.billing_enabled:
+    if not billing.enabled():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Online billing is not set up.")
 
 
@@ -43,7 +43,7 @@ def _require_enabled() -> None:
 def billing_status(principal: Principal = Depends(get_principal)) -> BillingStatus:
     tenant = principal.tenant
     return BillingStatus(
-        enabled=settings.billing_enabled,
+        enabled=billing.enabled(),
         billed_by_stripe=tenant.billed_by_stripe,
         has_customer=bool(tenant.stripe_customer_id),
     )
@@ -99,6 +99,100 @@ def open_portal(
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
 
 
+# --- the tenant's Billing page ------------------------------------------------
+@router.get("/overview")
+def billing_overview(principal: Principal = Depends(get_principal)) -> dict:
+    """Subscription, renewal, card and invoices — live from Stripe."""
+    tenant = principal.tenant
+    base = {"enabled": billing.enabled(), "billed_by_stripe": tenant.billed_by_stripe,
+            "has_customer": bool(tenant.stripe_customer_id), "status": tenant.status,
+            "plan_name": tenant.plan.name if tenant.plan else None,
+            "subscription": None, "payment_method": None, "invoices": [], "open_invoice": None,
+            "error": None}
+    if not billing.enabled() or not tenant.stripe_customer_id:
+        return base
+    try:
+        base.update(billing.billing_overview(tenant))
+    except billing.BillingError as exc:
+        log.warning("Billing overview for %s failed: %s", tenant.id, exc)
+        base["error"] = str(exc)
+    return base
+
+
+def _subscribed(principal: Principal):
+    _require_enabled()
+    tenant = principal.tenant
+    if not tenant.stripe_subscription_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "This account has no active subscription.")
+    return tenant
+
+
+@router.post("/invoices/{invoice_id}/pay", response_model=RedirectOut)
+def pay_invoice(
+    invoice_id: str,
+    request: Request,
+    principal: Principal = Depends(require_writer),
+    db: Session = Depends(get_db),
+) -> RedirectOut:
+    """Stripe's hosted invoice page — pay an overdue renewal with any card."""
+    _require_enabled()
+    if not principal.tenant.stripe_customer_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No billing account yet.")
+    try:
+        url = billing.payable_invoice_url(principal.tenant, invoice_id)
+    except billing.BillingError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    audit(db, principal, "billing.pay_invoice", invoice_id, None, request)
+    db.commit()
+    return RedirectOut(url=url)
+
+
+@router.post("/payment-method", response_model=RedirectOut)
+def update_payment_method(principal: Principal = Depends(require_writer)) -> RedirectOut:
+    """Change the card future renewals are charged to (Stripe-hosted)."""
+    _require_enabled()
+    if not principal.tenant.stripe_customer_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No billing account yet — choose a plan first.")
+    try:
+        return RedirectOut(url=billing.create_payment_method_portal_session(principal.tenant))
+    except billing.BillingError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+
+
+@router.post("/cancel")
+def cancel_subscription(
+    request: Request,
+    principal: Principal = Depends(require_writer),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Stop renewing. The account keeps working until the paid period ends."""
+    tenant = _subscribed(principal)
+    try:
+        sub = billing.set_cancel_at_period_end(tenant.stripe_subscription_id, True)
+    except billing.BillingError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    audit(db, principal, "billing.cancel", tenant.stripe_subscription_id, "at period end", request)
+    db.commit()
+    return {"cancel_at_period_end": bool(sub.get("cancel_at_period_end", True))}
+
+
+@router.post("/resume")
+def resume_subscription(
+    request: Request,
+    principal: Principal = Depends(require_writer),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Undo a cancellation that hasn't taken effect yet."""
+    tenant = _subscribed(principal)
+    try:
+        sub = billing.set_cancel_at_period_end(tenant.stripe_subscription_id, False)
+    except billing.BillingError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    audit(db, principal, "billing.resume", tenant.stripe_subscription_id, None, request)
+    db.commit()
+    return {"cancel_at_period_end": bool(sub.get("cancel_at_period_end", False))}
+
+
 @router.post("/webhook", include_in_schema=False)
 async def stripe_webhook(request: Request, db: Session = Depends(get_db)) -> dict:
     """Stripe → BioBridge. Unauthenticated by design; trusted only through
@@ -119,7 +213,11 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)) -> dic
         db.commit()
     except billing.BillingError as exc:
         db.rollback()
+        db.info.pop("after_commit_mail", None)
         log.error("Stripe webhook %s could not be applied: %s", event.get("id"), exc)
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    from app.services.onboarding import after_commit_mail
+
+    after_commit_mail(db)
     log.info("Stripe webhook %s (%s): %s", event.get("id"), event.get("type"), result)
     return {"received": True, "result": result}

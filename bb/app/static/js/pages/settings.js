@@ -8,6 +8,8 @@
  */
 
 import { api, auth } from '../api.js';
+import { openDeleteAccountWizard, openPasswordWizard } from './account.js';
+import { render as renderBilling } from './billing.js';
 import { needsMatch, unmappedCard, wireUnmapped } from './data.js';
 import {
   $, $$, banner, busy, empty, esc, field as baseField, fmtAgo, fmtIn, guard, loading, pill, pricingCards, readForm,
@@ -29,6 +31,7 @@ const RENDERERS = {
   hours: renderHours,
   plan: renderPlan,
   'plan/choose': renderChoosePlan,
+  billing: renderBilling,
   odoo: renderOdoo,
   biometric: renderBiometric,
 };
@@ -143,22 +146,22 @@ async function renderGeneral(mount) {
 
   mount.innerHTML = `
     ${topBanners(ctx)}
-    <form id="form" ${readonly ? 'inert' : ''}>
-      <div class="card">
+    <div class="card">
+      <form id="form" ${readonly ? 'inert' : ''}>
         ${cardHead('General', '', saveButton(readonly))}
         ${field({ name: 'name', label: 'Company', value: tenant.name, required: true })}
         ${field({
-          name: 'timezone', label: 'Display timezone', value: tenant.timezone, required: true,
+          name: 'timezone', label: 'Display Timezone', value: tenant.timezone, required: true,
           help: 'Used to render attendance for your team. Separate from each biometric connection’s own device timezone.',
           datalist: timezoneNames(),
         })}
         ${field({
-          name: 'sync_interval_minutes', label: 'Sync every (minutes)', type: 'number',
+          name: 'sync_interval_minutes', label: 'Sync Every (Minutes)', type: 'number',
           value: tenant.sync_interval_minutes, required: true,
           help: intervalHelp, strongHelp: schedule ? !schedule.running : false,
         })}
         ${field({
-          name: 'sync_enabled', label: 'Automatic sync', boolean: true, required: true,
+          name: 'sync_enabled', label: 'Automatic Sync', boolean: true, required: true,
           value: String(Boolean(tenant.sync_enabled)),
           options: [
             { value: 'true', label: 'On — pull punches on the interval above' },
@@ -168,10 +171,19 @@ async function renderGeneral(mount) {
               + 'Nothing is lost: the cursor stays where it is and the next run '
               + 'picks up from there.',
         })}
+      </form>
+      <div class="row" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--rule-soft)">
+        <button type="button" id="pwOpen">Change user password</button>
+        ${auth.user?.role === 'owner'
+          ? '<button type="button" class="danger-outline" id="delAccount" style="border-color:var(--bad)" title="Permanently delete this account and everything BioBridge holds for it">Delete account</button>' : ''}
       </div>
-    </form>`;
+    </div>
+    `;
 
   saveTenantForm(mount, 'form', 'save', renderGeneral);
+  $('#pwOpen', mount).addEventListener('click', openPasswordWizard);
+  $('#delAccount', mount)?.addEventListener('click', () =>
+    guard(() => openDeleteAccountWizard({ companyName: tenant.name, billedByStripe: tenant.billed_by_stripe })));
 }
 
 async function renderPairing(mount) {
@@ -194,22 +206,22 @@ async function renderPairing(mount) {
           help: 'Alternating suits devices with no IN/OUT keys, which is most of the field. State based needs those keys configured correctly; it falls back automatically when a device stamps everything "Check In".',
         })}
         ${field({
-          name: 'min_punch_interval_seconds', label: 'Ignore repeat punches within (seconds)',
+          name: 'min_punch_interval_seconds', label: 'Ignore Repeat Punches Within (Seconds)',
           type: 'number', value: tenant.min_punch_interval_seconds, required: true,
           help: 'Drops double-taps. A punch in the opposite direction is always kept — "in then straight out" is a real, if brief, visit.',
         })}
         ${field({
-          name: 'max_shift_hours', label: 'Maximum shift length (hours)', type: 'number',
+          name: 'max_shift_hours', label: 'Maximum Shift Length (Hours)', type: 'number',
           value: tenant.max_shift_hours, required: true,
           help: 'Anything longer is capped and flagged, so one forgotten badge-out cannot write a 300-hour attendance.',
         })}
         ${field({
-          name: 'day_boundary_hour', label: 'Shift day starts at (hour)', type: 'number',
+          name: 'day_boundary_hour', label: 'Shift Day Starts At (Hour)', type: 'number',
           value: tenant.day_boundary_hour, required: true,
           help: 'Only used by first/last mode. A night-shift site sets this after the shift ends — 12 for noon, not the small hours.',
         })}
         ${field({
-          name: 'orphan_out_policy', label: 'Check-out with no check-in',
+          name: 'orphan_out_policy', label: 'Check-Out With No Check-In',
           value: tenant.orphan_out_policy, required: true,
           options: [
             { value: 'flag', label: 'Flag — write a zero-length record for review' },
@@ -234,12 +246,12 @@ async function renderHours(mount) {
       <div class="card">
         ${cardHead('Working hours', 'used to score late arrivals', saveButton(readonly))}
         ${field({
-          name: 'work_start_time', label: 'Day starts', value: tenant.work_start_time,
+          name: 'work_start_time', label: 'Day Starts', value: tenant.work_start_time,
           required: true, placeholder: '09:00',
           help: 'Format HH:MM. Only the first arrival of a shift-day is scored, so returning from lunch never reads as late.',
         })}
         ${field({
-          name: 'late_grace_minutes', label: 'Grace period (minutes)', type: 'number',
+          name: 'late_grace_minutes', label: 'Grace Period (Minutes)', type: 'number',
           value: tenant.late_grace_minutes, required: true,
         })}
       </div>
@@ -266,8 +278,8 @@ async function renderPlan(mount, route) {
     ${topBanners(ctx)}
     <div class="card">
       ${cardHead('Plan', 'what this account is billed and limited by',
-        `${billing?.enabled && billing.has_customer && !readonly
-          ? '<button type="button" class="sm" id="manageBilling">Manage billing</button>' : ''}
+        `${billing?.enabled && billing.has_customer
+          ? '<a class="btn sm" href="#/settings/billing">Billing &amp; invoices</a>' : ''}
         ${activePlans.length && !readonly
           ? `<a class="btn primary-link" href="#/settings/plan/choose">${tenant.plan_id && !ctx.paysAtCheckout ? 'Change plan' : 'Choose a plan'}</a>`
           : ''}`)}
@@ -275,7 +287,7 @@ async function renderPlan(mount, route) {
         'Payment received — activating your plan',
         'Stripe is confirming the payment with BioBridge. This page updates on its own in a few seconds.',
         '') : ''}
-      ${tenant.billed_by_stripe ? '<div class="hint" style="margin-bottom:12px">Billed monthly through Stripe. Card, invoices and cancellation are under Manage billing.</div>' : ''}
+      ${tenant.billed_by_stripe ? '<div class="hint" style="margin-bottom:12px">Renews automatically every month through Stripe. Card, invoices, overdue payments and cancellation are under <a href="#/settings/billing">Billing</a>.</div>' : ''}
       <div class="hint" style="margin-bottom:12px">
         ${tenant.plan_name ? `Currently <strong>${esc(tenant.plan_name)}</strong>` : 'No plan assigned — nothing is limited.'}
         ${tenant.plan_max_employees != null ? ` · up to ${esc(tenant.plan_max_employees)} employees` : ''}
@@ -297,7 +309,9 @@ async function renderPlan(mount, route) {
               : `Renews in ${renewalWarning.days_left} day${renewalWarning.days_left === 1 ? '' : 's'}`),
         tenant.status === 'trialing'
           ? 'Choose a plan to keep syncing once it ends.'
-          : 'Changing plans here does not change that date — contact support to renew.',
+          : (tenant.billed_by_stripe
+            ? 'Charged automatically to your saved card — see Billing to check or change it.'
+            : 'Changing plans here does not change that date — contact support to renew.'),
         renewalWarning.urgent ? 'bad' : 'warn') : ''}
       ${retired ? banner(
         `${tenant.plan_name || 'Your plan'} is no longer offered`,
@@ -307,11 +321,6 @@ async function renderPlan(mount, route) {
       ${readonly ? '<div class="hint">Your role cannot change the plan.</div>' : ''}
     </div>`;
 
-  $('#manageBilling', mount)?.addEventListener('click', (event) =>
-    busy(event.target, () => guard(async () => {
-      const { url } = await api.post('/billing/portal');
-      window.location.href = url;
-    })));
 
   if (justPaid && !tenant.billed_by_stripe) {
     for (let attempt = 0; attempt < 15; attempt += 1) {
@@ -474,7 +483,7 @@ async function renderOdoo(mount, route) {
         })}
         ${field({ name: 'username', label: 'Login', required: true, value: odoo?.username || '' })}
         ${field({
-          name: 'api_key', label: 'API key', type: 'password', tip: true,
+          name: 'api_key', label: 'API Key', type: 'password', tip: true,
           required: !odoo,
           placeholder: odoo ? 'unchanged' : '',
           help: odoo
@@ -825,7 +834,7 @@ function companyFieldHtml(odoo, companies, selected) {
     ...list.map((c) => ({ value: String(c.id), label: `${c.name} (id ${c.id})` })),
   ];
   return field({
-    name: 'company_id', label: 'Odoo company', value: current, options,
+    name: 'company_id', label: 'Odoo Company', value: current, options,
     strongHelp: !single,
     help: single
         ? 'This login sees a single company, so there is nothing to choose.'
@@ -1399,7 +1408,7 @@ function sourceFieldsHtml(source, kind, providers, provider) {
         help: source ? 'Leave blank to keep the current one.' : 'The sa account’s COSEC password.',
       })}
       ${field({
-        name: 'server_timezone', label: 'Server timezone', required: true,
+        name: 'server_timezone', label: 'Server Timezone', required: true,
         value: source?.server_timezone || auth.tenant?.timezone || 'UTC',
         help: 'The zone the COSEC server’s clock runs in. Event times arrive with no offset.',
         strongHelp: true, datalist: timezoneNames(),
@@ -1430,21 +1439,21 @@ function sourceFieldsHtml(source, kind, providers, provider) {
         placeholder: 'https://hcp.example.com',
         help: 'The HikCentral server, reachable from wherever BioBridge runs (VPN or forwarded port). Add :port if it isn’t 443.',
       })}
-      ${field({ name: 'username', label: 'Partner key (AK)', required: true, value: source?.username || '',
+      ${field({ name: 'username', label: 'Partner Key (AK)', required: true, value: source?.username || '',
                 help: 'The API key of the OpenAPI partner created for BioBridge.' })}
       ${field({
-        name: 'password', label: 'Partner secret (SK)', type: 'password', required: !source,
+        name: 'password', label: 'Partner Secret (SK)', type: 'password', required: !source,
         placeholder: source ? 'unchanged' : '',
         help: source ? 'Leave blank to keep the current one.' : 'Shown with the partner key when it is created.',
       })}
       ${field({
-        name: 'server_timezone', label: 'Server timezone', required: true,
+        name: 'server_timezone', label: 'Server Timezone', required: true,
         value: source?.server_timezone || auth.tenant?.timezone || 'UTC',
         help: 'The zone the HikCentral server runs in.',
         datalist: timezoneNames(),
       })}
       ${field({
-        name: 'verify_ssl', label: 'HTTPS certificate', boolean: true,
+        name: 'verify_ssl', label: 'HTTPS Certificate', boolean: true,
         value: String(source ? source.verify_ssl : false),
         options: [{ value: 'false', label: 'Accept the server’s own certificate' },
                   { value: 'true', label: 'Require a trusted certificate' }],
@@ -1482,15 +1491,15 @@ function sourceFieldsHtml(source, kind, providers, provider) {
         value: saved || regions[0].value, options: regions,
         help: 'Where your Hik-Connect for Teams account lives — the region you picked when signing up.',
       })}
-      ${field({ name: 'username', label: 'App key', required: true, value: source?.username || '',
+      ${field({ name: 'username', label: 'App Key', required: true, value: source?.username || '',
                 help: 'Hik-Connect for Teams → Team Management → API Integration.' })}
       ${field({
-        name: 'password', label: 'Secret key', type: 'password', required: !source,
+        name: 'password', label: 'Secret Key', type: 'password', required: !source,
         placeholder: source ? 'unchanged' : '',
         help: source ? 'Leave blank to keep the current one.' : 'Created with the app key under API Integration.',
       })}
       ${field({
-        name: 'server_timezone', label: 'Site timezone', required: true,
+        name: 'server_timezone', label: 'Site Timezone', required: true,
         value: source?.server_timezone || auth.tenant?.timezone || 'UTC',
         help: 'Records arrive with their offset; this is the zone they are shown in.',
         datalist: timezoneNames(),
@@ -1518,15 +1527,15 @@ function sourceFieldsHtml(source, kind, providers, provider) {
         value: source?.base_url || regions[0].value, options: regions,
         help: 'The one in your CrossChex Cloud address (us., eu. or ap.crosschexcloud.com).',
       })}
-      ${field({ name: 'username', label: 'API key', required: true, value: source?.username || '',
+      ${field({ name: 'username', label: 'API Key', required: true, value: source?.username || '',
                 help: 'CrossChex Cloud → Settings → API → API key.' })}
       ${field({
-        name: 'password', label: 'API secret', type: 'password', required: !source,
+        name: 'password', label: 'API Secret', type: 'password', required: !source,
         placeholder: source ? 'unchanged' : '',
         help: source ? 'Leave blank to keep the current one.' : 'Shown next to the API key in CrossChex Cloud.',
       })}
       ${field({
-        name: 'server_timezone', label: 'Site timezone', required: true,
+        name: 'server_timezone', label: 'Site Timezone', required: true,
         value: source?.server_timezone || auth.tenant?.timezone || 'UTC',
         help: 'CrossChex Cloud sends times with their offset; this is the zone they are shown in.',
         datalist: timezoneNames(),
@@ -1562,7 +1571,7 @@ function sourceFieldsHtml(source, kind, providers, provider) {
         help: source ? 'Leave blank to keep the current one.' : 'The 32-character token set for this device in API Monitor.',
       })}
       ${field({
-        name: 'server_timezone', label: 'Device timezone', required: true,
+        name: 'server_timezone', label: 'Device Timezone', required: true,
         value: source?.server_timezone || auth.tenant?.timezone || 'UTC',
         help: 'The zone the device’s clock is set to.',
         datalist: timezoneNames(),
@@ -1594,7 +1603,7 @@ function sourceFieldsHtml(source, kind, providers, provider) {
         help: 'Where the device is. Saved on its device record in Odoo once the connection test recognises it.',
       })}
       ${field({
-        name: 'base_url', label: 'Device address', required: true, value: source?.base_url || '',
+        name: 'base_url', label: 'Device Address', required: true, value: source?.base_url || '',
         placeholder: cosec ? 'http://192.168.1.80' : provider === 'dahua' ? 'http://192.168.1.108' : 'http://192.168.1.64',
         help: 'The device’s IP, reachable from wherever BioBridge runs. Add :port if it isn’t 80; use https:// only if HTTPS is on.',
       })}
@@ -1609,13 +1618,13 @@ function sourceFieldsHtml(source, kind, providers, provider) {
           : cosec ? 'The device’s web password.' : 'Five wrong tries lock the account on the device for 30 minutes.',
       })}
       ${field({
-        name: 'server_timezone', label: 'Device timezone', required: true,
+        name: 'server_timezone', label: 'Device Timezone', required: true,
         value: source?.server_timezone || auth.tenant?.timezone || 'UTC',
         help: 'The zone the device’s clock is set to.',
         datalist: timezoneNames(),
       })}
       ${cosec ? '' : field({
-        name: 'verify_ssl', label: 'HTTPS certificate', boolean: true,
+        name: 'verify_ssl', label: 'HTTPS Certificate', boolean: true,
         value: String(source ? source.verify_ssl : false),
         options: [{ value: 'false', label: 'Accept the device’s own certificate' },
                   { value: 'true', label: 'Require a trusted certificate' }],
@@ -1635,12 +1644,12 @@ function sourceFieldsHtml(source, kind, providers, provider) {
         help: 'Where the device is. Saved on its device record in Odoo.',
       })}
       ${field({
-        name: 'base_url', label: 'Device serial number', required: true, value: addressValue,
+        name: 'base_url', label: 'Device Serial Number', required: true, value: addressValue,
         placeholder: 'CKJG201760123',
         help: 'On the device: Menu → System Info → Device Info → Serial Number, or the label on its back.',
       })}
       ${field({
-        name: 'server_timezone', label: 'Device timezone', required: true,
+        name: 'server_timezone', label: 'Device Timezone', required: true,
         value: source?.server_timezone || auth.tenant?.timezone || 'UTC',
         help: 'The zone the device’s clock is set to. Punch times arrive with no offset, so a wrong value shifts every attendance record by hours without any error.',
         strongHelp: true, datalist: timezoneNames(),
@@ -1693,14 +1702,14 @@ function sourceFieldsHtml(source, kind, providers, provider) {
         strongHelp: true, datalist: timezoneNames(),
       })}
       ${isBioStar ? field({
-        name: 'verify_ssl', label: 'HTTPS certificate', boolean: true,
+        name: 'verify_ssl', label: 'HTTPS Certificate', boolean: true,
         value: String(source ? source.verify_ssl : false),
         options: [{ value: 'false', label: 'Accept the server’s own certificate' },
                   { value: 'true', label: 'Require a trusted certificate' }],
         help: 'BioStar 2 installs with a self-signed certificate unless you replaced it.',
       }) : ''}
       ${!isZk && !isBioStar ? field({
-        name: 'auth_type', label: 'Auth style', value: source?.auth_type || 'token',
+        name: 'auth_type', label: 'Auth Style', value: source?.auth_type || 'token',
         options: ['token', 'jwt'],
         help: 'BioTime 8.5+ usually needs jwt; older builds use token.',
       }) : ''}

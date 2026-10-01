@@ -187,7 +187,10 @@ class UserOut(ORMModel):
 
 
 class ChangePasswordIn(BaseModel):
-    current_password: str
+    #: Required, except when choosing a password right after signing in with
+    #: the emailed one (``must_change_password``) — that session was just
+    #: opened with it, so asking for it again adds nothing.
+    current_password: str | None = None
     new_password: str = Field(min_length=10, max_length=128)
 
 
@@ -866,3 +869,51 @@ class DashboardOut(BaseModel):
 
 class MessageOut(BaseModel):
     message: str
+
+
+# --- Platform email server (console) -----------------------------------------
+
+class MailSettingsIn(BaseModel):
+    """Staff edits to the Email server settings. Every field optional; a
+    blank ``password`` keeps the stored one."""
+    host: str | None = Field(default=None, max_length=253)
+    port: int | None = Field(default=None, ge=1, le=65535)
+    username: str | None = Field(default=None, max_length=254)
+    password: str | None = Field(default=None, max_length=512)
+    clear_password: bool = False
+    security: Literal["starttls", "ssl", "none"] | None = None
+    from_email: EmailStr | None = None
+    from_name: str | None = Field(default=None, max_length=120)
+    reply_to: EmailStr | Literal[""] | None = None
+    enabled: bool | None = None
+
+
+class MailTestIn(BaseModel):
+    to: EmailStr
+
+
+# --- Platform payments / Stripe (console) -------------------------------------
+
+class StripeSettingsIn(BaseModel):
+    """Staff edits to the Stripe keys. Blank secrets keep the stored ones."""
+    secret_key: str | None = Field(default=None, max_length=255, pattern=r"^((sk|rk)_(test|live)_\w+)?$")
+    webhook_secret: str | None = Field(default=None, max_length=255, pattern=r"^(whsec_\w+)?$")
+    clear_secret_key: bool = False
+    clear_webhook_secret: bool = False
+    enabled: bool | None = None
+
+
+# --- Account deletion ------------------------------------------------------------
+
+class TenantDeleteIn(BaseModel):
+    """Staff deleting a deactivated account: the name typed back, and why."""
+    confirm_name: str = Field(min_length=1, max_length=200)
+    reason: str | None = Field(default=None, max_length=1000)
+
+
+class AccountDeleteIn(BaseModel):
+    """An owner closing their own account."""
+    reason_code: str = Field(min_length=1, max_length=40)
+    reason_text: str | None = Field(default=None, max_length=2000)
+    password: str = Field(min_length=1, max_length=256)
+    confirm_name: str = Field(min_length=1, max_length=200)

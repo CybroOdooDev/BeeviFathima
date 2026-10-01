@@ -127,10 +127,10 @@ class HikCentralProvider(AttendanceProvider):
     config_fields = (
         {"name": "base_url", "label": "Server URL", "type": "text", "required": True,
          "help": "Where HCP's OpenAPI answers, e.g. https://hcp.example.com (add :port if not 443)."},
-        {"name": "username", "label": "Partner key (AK)", "type": "text", "required": True,
+        {"name": "username", "label": "Partner Key (AK)", "type": "text", "required": True,
          "help": "The API key of the OpenAPI partner created for BioBridge."},
-        {"name": "password", "label": "Partner secret (SK)", "type": "password", "required": True},
-        {"name": "server_timezone", "label": "Server timezone", "type": "timezone",
+        {"name": "password", "label": "Partner Secret (SK)", "type": "password", "required": True},
+        {"name": "server_timezone", "label": "Server Timezone", "type": "timezone",
          "required": True, "default": "UTC", "help": "The zone the HCP server runs in."},
     )
 

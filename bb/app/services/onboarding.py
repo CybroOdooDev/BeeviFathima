@@ -165,6 +165,7 @@ def send_credentials(db: Session, user: User) -> bool:
     tenant = db.get(Tenant, user.tenant_id) if user.tenant_id else None
     try:
         send_email(
+            db=db,
             to=user.email,
             subject="Your BioBridge account is ready",
             body=(
@@ -227,8 +228,31 @@ def complete_paid_signup(db: Session, pending_id: str, session: dict[str, Any]) 
             full_name=pending.full_name, timezone_name=pending.timezone,
             plan=plan, paid=True,
         )
-        start_verification(user)
+        # Issued now, mailed only once the webhook's transaction has
+        # committed (see after_commit_mail): if anything after this point
+        # fails, Stripe retries the event and the customer must not already
+        # hold a link to a token that was rolled back.
+        raw = issue_verification_token(user)
+        db.info.setdefault("after_commit_mail", []).append(
+            lambda db=db, user_id=user.id, raw=raw: _send_verification_later(db, user_id, raw))
 
     pending.completed_at = datetime.now(timezone.utc)
     pending.tenant_id = tenant.id if tenant else None
     return tenant
+
+
+def _send_verification_later(db: Session, user_id: str, raw: str) -> None:
+    """Runs after the webhook committed, on the same (still open) session."""
+    user = db.get(User, user_id)
+    if user is None:
+        return
+    try:
+        send_verification_email(user, raw)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Could not send verification email to %s: %s", user.email, exc)
+
+
+def after_commit_mail(db: Session) -> None:
+    """Send what was queued on ``db`` for after its commit (paid signups)."""
+    for send in db.info.pop("after_commit_mail", []):
+        send()

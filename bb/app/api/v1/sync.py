@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import (
+    require_owner,
     Principal,
     audit,
     get_principal,
@@ -32,6 +33,7 @@ from app.models import (
     TenantStatus,
 )
 from app.schemas import (
+    AccountDeleteIn,
     AttendanceOut,
     DashboardOut,
     MappingOut,
@@ -68,7 +70,8 @@ def _sync_stripe_price(db: Session, tenant: Tenant, plan_id: str | None) -> None
     from app.core.config import settings
     from app.services import billing
 
-    if not (settings.billing_enabled and tenant.stripe_subscription_id and plan_id):
+    billing.load_config(db)
+    if not (billing.enabled() and tenant.stripe_subscription_id and plan_id):
         return
     plan = db.get(SubscriptionPlan, plan_id)
     if plan is None or not plan.stripe_price_id:
@@ -582,3 +585,49 @@ def _schedule_out(db: Session, tenant: Tenant) -> ScheduleOut:
         effective_interval_minutes=interval,
         interval_widened=interval != max(1, tenant.sync_interval_minutes),
     )
+
+
+# ===========================================================================
+# Closing the account
+# ===========================================================================
+@router.get("/tenant/exit-reasons")
+def exit_reasons(principal: Principal = Depends(get_principal)) -> list[dict]:
+    from app.services.account_deletion import EXIT_REASONS
+
+    return [{"code": k, "label": v} for k, v in EXIT_REASONS.items()]
+
+
+@router.post("/tenant/delete")
+def delete_own_account(
+    payload: AccountDeleteIn,
+    principal: Principal = Depends(require_owner),
+    db: Session = Depends(get_db),
+) -> dict:
+    """The owner closes the account: a reason, the password, and the company
+    name typed back. Any Stripe subscription ends immediately (no refund for
+    the current period) and every piece of the account's data is deleted."""
+    from app.core.security import verify_password
+    from app.services import billing
+    from app.services.account_deletion import EXIT_REASONS, delete_tenant
+
+    tenant, user = principal.tenant, principal.user
+    if payload.reason_code not in EXIT_REASONS:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Choose a reason for leaving.")
+    text = (payload.reason_text or "").strip()
+    if payload.reason_code == "other" and len(text) < 5:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Tell us a little about why you're leaving.")
+    if not verify_password(payload.password, user.hashed_password):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "That password is not right.")
+    if payload.confirm_name.strip().lower() != tenant.name.strip().lower():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "The company name typed doesn't match.")
+    billing.load_config(db)
+    name = tenant.name
+    try:
+        delete_tenant(db, tenant, closed_by="customer", closed_by_email=user.email,
+                      reason_code=payload.reason_code, reason_text=text)
+    except billing.BillingError as exc:
+        db.rollback()
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY,
+                            "Your account was not deleted: we couldn't cancel the subscription with Stripe "
+                            f"({exc}). Try again in a few minutes.") from exc
+    return {"deleted": True, "message": f"{name} has been deleted."}

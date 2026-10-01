@@ -31,12 +31,15 @@ import logging
 import time
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
+from fastapi import Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.db.session import get_db
 from app.models import StripeEvent, SubscriptionPlan, Tenant, TenantStatus
 
 log = logging.getLogger(__name__)
@@ -54,6 +57,43 @@ STATUS_MAP = {
     "canceled": TenantStatus.cancelled.value,
     "incomplete_expired": TenantStatus.cancelled.value,
 }
+
+
+# =============================================================================
+# Which keys are in use: the console's (Payments page) or .env's
+# =============================================================================
+#: (secret key, webhook secret) from the console, loaded per request by
+#: ``use_config``; None means fall back to STRIPE_* from the environment.
+_CONSOLE: tuple[str, str] | None = None
+
+
+def load_config(db: Session) -> None:
+    """Pick up the console's Stripe keys (or their absence) from ``db``."""
+    global _CONSOLE
+    from app.services.stripe_settings import console_keys
+
+    try:
+        _CONSOLE = console_keys(db)
+    except Exception as exc:  # noqa: BLE001 — a missing table must not stop billing
+        log.debug("Could not read console Stripe settings, using .env: %s", exc)
+        _CONSOLE = None
+
+
+def use_config(db: Session = Depends(get_db)) -> None:
+    """FastAPI dependency for every route that touches Stripe."""
+    load_config(db)
+
+
+def secret_key() -> str:
+    return _CONSOLE[0] if _CONSOLE else settings.stripe_secret_key
+
+
+def webhook_secret() -> str:
+    return _CONSOLE[1] if _CONSOLE else settings.stripe_webhook_secret
+
+
+def enabled() -> bool:
+    return bool(secret_key())
 
 
 class BillingError(Exception):
@@ -92,16 +132,23 @@ def _flatten(data: dict[str, Any], prefix: str = "") -> list[tuple[str, str]]:
 
 def _request(method: str, path: str, data: dict[str, Any] | None = None,
              idempotency_key: str | None = None) -> dict[str, Any]:
-    if not settings.billing_enabled:
+    if not enabled():
         raise BillingError("Online billing is not set up on this BioBridge.")
-    headers = {"Authorization": f"Bearer {settings.stripe_secret_key}"}
+    headers = {"Authorization": f"Bearer {secret_key()}"}
     if idempotency_key:
         headers["Idempotency-Key"] = idempotency_key
+    # Stripe wants application/x-www-form-urlencoded with repeated, bracketed
+    # keys. httpx's ``data=`` only takes a dict (a list of pairs is read as raw
+    # body chunks and fails mid-send), so the body is encoded here.
+    body = None
+    if data and method != "GET":
+        body = urlencode(_flatten(data)).encode()
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
     try:
         response = httpx.request(
             method,
             f"{settings.stripe_api_base.rstrip('/')}/v1/{path.lstrip('/')}",
-            data=_flatten(data) if data and method != "GET" else None,
+            content=body,
             params=_flatten(data) if data and method == "GET" else None,
             headers=headers,
             timeout=settings.http_timeout_seconds,
@@ -199,13 +246,126 @@ def set_subscription_price(subscription: dict[str, Any], price_id: str) -> None:
     })
 
 
+def create_payment_method_portal_session(tenant: Tenant) -> str:
+    """The Customer Portal opened straight on "update payment method"."""
+    base = settings.public_base_url.rstrip("/")
+    session = _request("POST", "billing_portal/sessions", {
+        "customer": tenant.stripe_customer_id,
+        "return_url": f"{base}/app/#/settings/billing?card=updated",
+        "flow_data": {
+            "type": "payment_method_update",
+            "after_completion": {"type": "redirect",
+                                 "redirect": {"return_url": f"{base}/app/#/settings/billing?card=updated"}},
+        },
+    })
+    return session["url"]
+
+
+def set_cancel_at_period_end(subscription_id: str, cancel: bool) -> dict[str, Any]:
+    """Cancel at the end of the paid period (access continues until then), or
+    undo that. Never an immediate cancellation from the app."""
+    return _request("POST", f"subscriptions/{subscription_id}", {"cancel_at_period_end": cancel})
+
+
+def cancel_subscription_now(subscription_id: str) -> None:
+    """End a subscription immediately, without proration or refund — used
+    only when the account itself is being deleted."""
+    try:
+        _request("DELETE", f"subscriptions/{subscription_id}")
+    except BillingError as exc:
+        if "No such subscription" in str(exc) or "canceled" in str(exc).lower():
+            return  # already gone in Stripe: nothing left to stop
+        raise
+
+
+def _card(pm: Any) -> dict[str, Any] | None:
+    if not isinstance(pm, dict):
+        return None
+    card = pm.get("card") or {}
+    if card:
+        return {"brand": card.get("brand"), "last4": card.get("last4"),
+                "exp_month": card.get("exp_month"), "exp_year": card.get("exp_year")}
+    return {"brand": pm.get("type"), "last4": None, "exp_month": None, "exp_year": None}
+
+
+def _ts(value: Any) -> str | None:
+    return datetime.fromtimestamp(int(value), tz=timezone.utc).isoformat() if value else None
+
+
+def _invoice_out(inv: dict[str, Any]) -> dict[str, Any]:
+    status = inv.get("status")
+    return {
+        "id": inv.get("id"),
+        "number": inv.get("number"),
+        "created": _ts(inv.get("created")),
+        "period_end": _ts(inv.get("period_end")),
+        "amount_due": inv.get("amount_due"),
+        "amount_paid": inv.get("amount_paid"),
+        "amount_remaining": inv.get("amount_remaining"),
+        "currency": inv.get("currency"),
+        "status": status,
+        "attempt_count": inv.get("attempt_count"),
+        "next_payment_attempt": _ts(inv.get("next_payment_attempt")),
+        "hosted_invoice_url": inv.get("hosted_invoice_url"),
+        "invoice_pdf": inv.get("invoice_pdf"),
+        "payable": status == "open" and bool(inv.get("hosted_invoice_url")),
+    }
+
+
+def billing_overview(tenant: Tenant) -> dict[str, Any]:
+    """Everything the tenant's Billing page shows, read live from Stripe."""
+    out: dict[str, Any] = {"subscription": None, "payment_method": None, "invoices": [],
+                           "open_invoice": None}
+    if not tenant.stripe_customer_id:
+        return out
+    customer = _request("GET", f"customers/{tenant.stripe_customer_id}",
+                        {"expand": ["invoice_settings.default_payment_method"]})
+    pm = (customer.get("invoice_settings") or {}).get("default_payment_method")
+
+    if tenant.stripe_subscription_id:
+        sub = _request("GET", f"subscriptions/{tenant.stripe_subscription_id}",
+                       {"expand": ["default_payment_method"]})
+        item = (_items(sub)[:1] or [{}])[0]
+        price = item.get("price") or {}
+        period_end = _period_end(sub)
+        out["subscription"] = {
+            "status": sub.get("status"),
+            "cancel_at_period_end": bool(sub.get("cancel_at_period_end")),
+            "cancel_at": _ts(sub.get("cancel_at")),
+            "current_period_end": period_end.isoformat() if period_end else None,
+            "unit_amount": price.get("unit_amount"),
+            "quantity": item.get("quantity") or 1,
+            "currency": price.get("currency"),
+            "interval": (price.get("recurring") or {}).get("interval") or "month",
+        }
+        if isinstance(sub.get("default_payment_method"), dict):
+            pm = sub["default_payment_method"]
+    out["payment_method"] = _card(pm)
+
+    invoices = _request("GET", "invoices", {"customer": tenant.stripe_customer_id, "limit": 12})
+    rows = [_invoice_out(inv) for inv in invoices.get("data") or [] if inv.get("status") != "draft"]
+    out["invoices"] = rows
+    out["open_invoice"] = next((r for r in rows if r["payable"]), None)
+    return out
+
+
+def payable_invoice_url(tenant: Tenant, invoice_id: str) -> str:
+    """Stripe's hosted page for one open invoice of *this* tenant."""
+    inv = _request("GET", f"invoices/{invoice_id}")
+    if inv.get("customer") != tenant.stripe_customer_id:
+        raise BillingError("That invoice is not on this account.")
+    if inv.get("status") != "open" or not inv.get("hosted_invoice_url"):
+        raise BillingError("That invoice has nothing left to pay.")
+    return inv["hosted_invoice_url"]
+
+
 # =============================================================================
 # Webhooks
 # =============================================================================
 def verify_signature(payload: bytes, header: str | None, *, now: float | None = None) -> None:
     """Stripe's scheme: ``Stripe-Signature: t=<ts>,v1=<hex>[,v1=…]`` where each
     v1 is HMAC-SHA256 of ``"<ts>.<raw body>"`` under the endpoint secret."""
-    secret = settings.stripe_webhook_secret
+    secret = webhook_secret()
     if not secret:
         raise SignatureError("Webhook signing secret is not configured.")
     if not header:
@@ -313,6 +473,7 @@ def apply_subscription(db: Session, tenant: Tenant, subscription: dict[str, Any]
     """Bring one account in line with its Stripe subscription."""
     status = STATUS_MAP.get(subscription.get("status") or "")
     ended = status == TenantStatus.cancelled.value
+    was_syncing = tenant.syncable
 
     if tenant.status != TenantStatus.suspended.value and status:
         tenant.status = status
@@ -351,3 +512,11 @@ def apply_subscription(db: Session, tenant: Tenant, subscription: dict[str, Any]
         tenant.stripe_subscription_id = None
         tenant.pending_plan_id = None
     db.flush()
+
+    if was_syncing and not tenant.syncable and not first:
+        # Stripe just stopped this account: a failed renewal or a
+        # cancellation reaching its end. Tell them, so a quiet Odoo isn't
+        # how they find out.
+        from app.services.notices import notify_sync_stopped
+
+        notify_sync_stopped(db, tenant, "cancelled" if ended else "payment_failed")

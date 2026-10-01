@@ -137,7 +137,7 @@ class CamsProvider(AttendanceProvider):
          "help": "The device's stgid in API Monitor."},
         {"name": "password", "label": "AuthToken", "type": "password", "required": True,
          "help": "The 32-character token set for this device in API Monitor."},
-        {"name": "server_timezone", "label": "Device timezone", "type": "timezone",
+        {"name": "server_timezone", "label": "Device Timezone", "type": "timezone",
          "required": True, "default": "UTC", "help": "The zone the device's clock is set to."},
     )
 

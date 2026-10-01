@@ -196,7 +196,7 @@ export async function renderSignup(route = {}) {
   // Picking a plan *during* a trial (the summary below) never skips it; only
   // this selector does.
   const modeField = plans.length ? field({
-    name: 'start_mode', label: 'Getting started', value: 'trial',
+    name: 'start_mode', label: 'Getting Started', value: 'trial',
     options: [
       { value: 'trial', label: 'Start a free trial' },
       { value: 'plan', label: 'Choose a plan now — no trial' },
@@ -230,14 +230,14 @@ export async function renderSignup(route = {}) {
     <p class="sub">The first user becomes the owner of the workspace.</p>
     <form id="form">
       ${field({ name: 'company_name', label: 'Company', required: true })}
-      ${field({ name: 'full_name', label: 'Your name' })}
+      ${field({ name: 'full_name', label: 'Your Name' })}
       ${field({ name: 'email', label: 'Email', type: 'email', required: true })}
       ${field({
         name: 'password', label: 'Password', type: 'password', required: true,
         help: 'At least 10 characters.',
       })}
       ${field({
-        name: 'timezone', label: 'Your timezone', value: guess, required: true,
+        name: 'timezone', label: 'Your Timezone', value: guess, required: true,
         help: 'Used to display attendance. The BioTime server has its own setting.',
         datalist: timezoneNames(),
       })}

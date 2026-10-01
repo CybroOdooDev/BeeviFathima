@@ -148,10 +148,10 @@ class HikConnectProvider(AttendanceProvider):
     config_fields = (
         {"name": "base_url", "label": "Region", "type": "text", "required": True,
          "help": "Your team's Hik-Connect region (Europe or North America)."},
-        {"name": "username", "label": "App key", "type": "text", "required": True,
+        {"name": "username", "label": "App Key", "type": "text", "required": True,
          "help": "Hik-Connect for Teams → Team Management → API Integration."},
-        {"name": "password", "label": "Secret key", "type": "password", "required": True},
-        {"name": "server_timezone", "label": "Site timezone", "type": "timezone",
+        {"name": "password", "label": "Secret Key", "type": "password", "required": True},
+        {"name": "server_timezone", "label": "Site Timezone", "type": "timezone",
          "required": True, "default": "UTC",
          "help": "Records arrive with their offset; this is the zone they're read in."},
     )

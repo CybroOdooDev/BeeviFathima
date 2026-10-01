@@ -11,7 +11,7 @@
  */
 
 // ---- settings: change these two lines when you deploy -------------------
-const APP_URL = 'https://app.example.com';          // where BioBridge runs — just the address, e.g. http://127.0.0.1:8000
+const APP_URL = 'http://localhost:8000';          // where BioBridge runs — just the address, e.g. http://127.0.0.1:8000
 const FORM_ENDPOINT = '';                            // e.g. a Formspree / Basin URL; blank = email fallback
 const SALES_EMAIL = 'sales@example.com';             // used by the email fallback
 // --------------------------------------------------------------------------
@@ -115,11 +115,24 @@ if (form) {
 
 // ---- the app's API ------------------------------------------------------------
 async function callApi(path, body) {
-  const response = await fetch(`${API}${path}`, body === undefined ? {} : {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+  let response;
+  try {
+    response = await fetch(`${API}${path}`, body === undefined ? {} : {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (exc) {
+    // The browser never got an answer: the app is down or unreachable at
+    // APP_URL, or it answered without allowing this site (CORS_ORIGINS).
+    // Visitors get a plain message; the cause goes to the console.
+    console.error(`BioBridge: could not reach ${API}${path} from ${window.location.origin}. `
+      + 'Check APP_URL in assets/site.js, that the app is running, and that the app\'s CORS_ORIGINS '
+      + `includes ${window.location.origin}.`, exc);
+    const error = new Error('We couldn\u2019t reach BioBridge just now. Please try again in a minute.');
+    error.status = 0;
+    throw error;
+  }
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
     const detail = payload && payload.detail;
@@ -190,13 +203,23 @@ if (signupForm) {
   const say = (text, tone = '') => { status.textContent = text; status.className = `form-status ${tone}`; };
   let plans = null;
 
-  // Timezones: every IANA zone the browser knows, the visitor's own selected.
-  const here = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  // Timezones: every IANA zone the browser knows, with the visitor's own —
+  // read from the browser — selected and listed first. Older browsers report
+  // a few zones under their pre-2016 names; those are mapped to the current
+  // name so the right entry is picked. Anything unreadable falls back to UTC.
+  const LEGACY = {
+    'Asia/Calcutta': 'Asia/Kolkata', 'Asia/Katmandu': 'Asia/Kathmandu', 'Asia/Saigon': 'Asia/Ho_Chi_Minh',
+    'Asia/Rangoon': 'Asia/Yangon', 'Europe/Kiev': 'Europe/Kyiv', 'America/Buenos_Aires': 'America/Argentina/Buenos_Aires',
+    'Etc/UTC': 'UTC', 'Etc/GMT': 'UTC', 'GMT': 'UTC', 'Etc/Unknown': 'UTC',
+  };
+  let here = 'UTC';
+  try { here = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { /* keep UTC */ }
+  here = LEGACY[here] || here;
   let zones = [];
-  try { zones = Intl.supportedValuesOf('timeZone'); } catch { zones = [here]; }
-  if (!zones.includes('UTC')) zones.unshift('UTC');
-  if (!zones.includes(here)) zones.unshift(here);
-  tzSelect.innerHTML = zones.map((z) => `<option${z === here ? ' selected' : ''}>${z}</option>`).join('');
+  try { zones = Intl.supportedValuesOf('timeZone').map((z) => LEGACY[z] || z); } catch { zones = []; }
+  zones = [here, ...['UTC', ...zones].filter((z) => z !== here)].filter((z, i, all) => all.indexOf(z) === i);
+  tzSelect.innerHTML = zones.map((z, i) => `<option value="${z}"${i === 0 ? ' selected' : ''}>${
+    i === 0 && here !== 'UTC' ? `${z} (your timezone)` : z}</option>`).join('');
 
   const mode = () => signupForm.querySelector('[name=mode]:checked').value;
   const current = () => plans && plans.find((p) => p.name === planSelect.value);

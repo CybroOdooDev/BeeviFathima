@@ -160,7 +160,7 @@ class CosecCentraProvider(AttendanceProvider):
         {"name": "username", "label": "Username", "type": "text", "required": True, "default": "sa",
          "help": "The COSEC API accepts only the System Administrator account (sa)."},
         {"name": "password", "label": "Password", "type": "password", "required": True},
-        {"name": "server_timezone", "label": "Server timezone", "type": "timezone",
+        {"name": "server_timezone", "label": "Server Timezone", "type": "timezone",
          "required": True, "default": "UTC", "help": "The zone the COSEC server's clock runs in."},
     )
 

@@ -264,6 +264,8 @@ function rowFor(t) {
           <button class="sm save">Save</button>
           <button type="button" class="sm configure-btn">Configure</button>
           <span class="gate">${gateControl(t)}</span>
+          ${['suspended', 'cancelled'].includes(t.status)
+            ? '<button type="button" class="sm danger-outline delete-tenant" title="Delete this deactivated account and all its data">Delete</button>' : ''}
         </div>
       </td>
     </tr>`;
@@ -395,11 +397,11 @@ function openConfigDialog(tenant, { plans, onChange }) {
                         options: STATUSES,
                         help: 'Suspended and cancelled stop this account syncing, '
                             + 'whatever its own settings say.' })}
-              ${field({ name: 'timezone', label: 'Display timezone', value: t.timezone,
+              ${field({ name: 'timezone', label: 'Display Timezone', value: t.timezone,
                         required: true, datalist: timezoneNames() })}
-              ${field({ name: 'work_start_time', label: 'Work starts',
+              ${field({ name: 'work_start_time', label: 'Work Starts',
                         value: t.work_start_time, required: true, placeholder: '09:00' })}
-              ${field({ name: 'late_grace_minutes', label: 'Grace (minutes)',
+              ${field({ name: 'late_grace_minutes', label: 'Grace (Minutes)',
                         type: 'number', value: t.late_grace_minutes, required: true })}
             </div>
             <div>
@@ -409,13 +411,13 @@ function openConfigDialog(tenant, { plans, onChange }) {
                         help: 'Changes how punches become shifts from the next run. '
                             + 'Existing records are left alone.' })}
               ${field({ name: 'min_punch_interval_seconds',
-                        label: 'Ignore repeats within (seconds)', type: 'number',
+                        label: 'Ignore Repeats Within (Seconds)', type: 'number',
                         value: t.min_punch_interval_seconds, required: true })}
-              ${field({ name: 'max_shift_hours', label: 'Maximum shift (hours)',
+              ${field({ name: 'max_shift_hours', label: 'Maximum Shift (Hours)',
                         type: 'number', value: t.max_shift_hours, required: true })}
-              ${field({ name: 'day_boundary_hour', label: 'Shift day starts at (hour)',
+              ${field({ name: 'day_boundary_hour', label: 'Shift Day Starts At (Hour)',
                         type: 'number', value: t.day_boundary_hour, required: true })}
-              ${field({ name: 'orphan_out_policy', label: 'Check-out with no check-in',
+              ${field({ name: 'orphan_out_policy', label: 'Check-Out With No Check-In',
                         value: t.orphan_out_policy, required: true, options: ORPHAN })}
             </div>
           </div>
@@ -427,7 +429,7 @@ function openConfigDialog(tenant, { plans, onChange }) {
                       help: 'Sets this account’s employee, device and sync-speed limits. Assigning a '
                           + 'plan raises a faster sync interval to the plan’s floor. Lowering a plan '
                           + 'never unmaps anyone already matched — only new badges wait.' })}
-            ${field({ name: 'subscription_renews_at', label: 'Renews / paid through',
+            ${field({ name: 'subscription_renews_at', label: 'Renews / Paid Through',
                       type: 'date', value: toDateInput(t.subscription_renews_at),
                       help: 'Past this date, an active account moves itself to past '
                           + 'due and stops syncing — no grace period. Leave empty to '
@@ -443,7 +445,7 @@ function openConfigDialog(tenant, { plans, onChange }) {
             ${field({ tip: true, name: 'limit_max_devices', label: 'Devices', type: 'number',
                       value: t.limit_max_devices ?? '', placeholder: planLimitText(planById(t.plan_id), 'max_devices', ''),
                       help: 'Raising it releases held punches from the newly covered terminals on the next sync.' })}
-            ${field({ tip: true, name: 'limit_min_sync_interval_minutes', label: 'Fastest sync (min)', type: 'number',
+            ${field({ tip: true, name: 'limit_min_sync_interval_minutes', label: 'Fastest Sync (Min)', type: 'number',
                       value: t.limit_min_sync_interval_minutes ?? '',
                       placeholder: planLimitText(planById(t.plan_id), 'min_sync_interval_minutes', ' min'),
                       help: 'The fastest interval the customer can pick themselves.' })}
@@ -576,14 +578,14 @@ function openNewAccountDialog(plans, onCreated) {
         <div class="grid cols-2">
           ${field({ name: 'company_name', label: 'Company', required: true,
                     placeholder: 'Muscat Traders' })}
-          ${field({ name: 'owner_email', label: 'Owner email', type: 'email',
+          ${field({ name: 'owner_email', label: 'Owner Email', type: 'email',
                     required: true, placeholder: 'boss@muscat.com' })}
           ${field({ name: 'plan_id', label: 'Plan', value: defaultPlanId,
                     options: planOptions(plans), tip: true,
                     help: 'Sets the account’s employee, device and sync-speed limits — a faster '
                         + 'interval than the plan allows is raised to it. The renewal date starts '
                         + 'as a standard trial from today.' })}
-          ${field({ name: 'sync_interval_minutes', label: 'Sync every (minutes)',
+          ${field({ name: 'sync_interval_minutes', label: 'Sync Every (Minutes)',
                     type: 'number', required: true, value: 15 })}
           ${field({ name: 'timezone', label: 'Timezone', required: true,
                     value: 'Asia/Dubai', datalist: timezoneNames(), tip: true,
@@ -677,6 +679,11 @@ function wire(mount, route, tenants, plans, linkFor) {
       })
     );
 
+    $('.delete-tenant', row)?.addEventListener('click', () => {
+      const tenant = tenants.find((x) => x.id === id);
+      if (tenant) openDeleteTenantDialog(tenant, (message) => refresh(message));
+    });
+
     $('.configure-btn', row).addEventListener('click', () => {
       const tenant = tenants.find((x) => x.id === id);
       if (tenant) openConfigDialog(tenant, { plans, onChange: () => render(mount, route) });
@@ -734,4 +741,59 @@ function wire(mount, route, tenants, plans, linkFor) {
     };
     wireGate();
   });
+}
+
+
+/* Delete a deactivated account: a modal, the account name typed back, and an
+ * optional reason that goes into Closed accounts. Only offered for suspended
+ * or cancelled accounts — the server enforces the same. */
+function openDeleteTenantDialog(t, onDone) {
+  document.querySelector('dialog.delete-dialog')?.remove();
+  const dialog = document.createElement('dialog');
+  dialog.className = 'wizard delete-dialog';
+  dialog.style.width = 'min(520px, calc(100vw - 24px))';
+  document.body.append(dialog);
+  const close = () => { dialog.close(); dialog.remove(); };
+  dialog.innerHTML = `
+    <div class="wiz-head"><strong>Delete ${esc(t.name)}</strong>
+      <button type="button" class="link wiz-x" data-close aria-label="Close">&times;</button></div>
+    <form id="delTenantForm" style="display:contents" novalidate>
+      <div class="wiz-body">
+        ${banner('This cannot be undone',
+          'Every connection, device, employee mapping, punch, attendance record, user and audit entry of this account is deleted. '
+          + 'A running Stripe subscription is cancelled immediately. Only a closure record (name, owner, reason) is kept.', 'bad')}
+        <div class="field"><label for="delReason">Reason <span class="opt">optional</span></label>
+          <textarea id="delReason" name="reason" rows="2" maxlength="1000" placeholder="e.g. unpaid since March, customer asked to close"></textarea></div>
+        <div class="field"><label for="delName">Type <strong>${esc(t.name)}</strong> to confirm</label>
+          <input id="delName" name="confirm_name" autocomplete="off"></div>
+        <p class="err" id="delErr"></p>
+      </div>
+      <div class="wiz-foot">
+        <button type="button" data-close>Cancel</button>
+        <button type="submit" class="danger" id="delGo" disabled>Delete account</button>
+      </div>
+    </form>`;
+  dialog.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', close));
+  const nameInput = $('#delName', dialog);
+  const go = $('#delGo', dialog);
+  nameInput.addEventListener('input', () => {
+    go.disabled = nameInput.value.trim().toLowerCase() !== t.name.trim().toLowerCase();
+  });
+  $('#delTenantForm', dialog).addEventListener('submit', async (event) => {
+    event.preventDefault();
+    go.disabled = true;
+    try {
+      const result = await api.post(`/admin/tenants/${t.id}/delete`, {
+        confirm_name: nameInput.value, reason: $('#delReason', dialog).value || null,
+      });
+      close();
+      onDone(result.message);
+    } catch (exc) {
+      $('#delErr', dialog).textContent = exc.message || 'Not deleted.';
+      go.disabled = false;
+    }
+  });
+  dialog.addEventListener('close', () => dialog.remove());
+  dialog.showModal();
+  nameInput.focus();
 }

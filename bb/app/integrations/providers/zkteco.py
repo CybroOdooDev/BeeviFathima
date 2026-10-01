@@ -800,13 +800,13 @@ class ZKDeviceProvider(AttendanceProvider):
     })
     kinds = frozenset({"device"})
     config_fields = (
-        {"name": "base_url", "label": "Device address", "type": "text", "required": True,
+        {"name": "base_url", "label": "Device Address", "type": "text", "required": True,
          "help": f"The device's own IP, reachable from wherever BioBridge runs. "
                  f"A port is optional — defaults to {DEFAULT_PORT}."},
-        {"name": "password", "label": "Comm key", "type": "password", "required": False,
+        {"name": "password", "label": "Comm Key", "type": "password", "required": False,
          "help": "Only if the device has a communication password set. Leave "
                  "blank for the factory default (no password)."},
-        {"name": "server_timezone", "label": "Device timezone", "type": "timezone",
+        {"name": "server_timezone", "label": "Device Timezone", "type": "timezone",
          "required": True, "default": "UTC",
          "help": "The zone the device itself runs in. Punch times arrive with "
                  "no offset, so a wrong value shifts every attendance record."},

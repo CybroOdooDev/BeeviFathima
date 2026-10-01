@@ -617,6 +617,23 @@ Off until `STRIPE_SECRET_KEY` is set; with it off, nothing below applies and
 plans work exactly as described above. Code: `app/services/billing.py`,
 `app/api/v1/billing.py`; tests: `tests/test_billing.py`.
 
+**Who pays where.** New customers buy on the website (signup → *Buy now* →
+Stripe Checkout; the account is created when the payment webhook arrives).
+After that Stripe charges the saved card automatically every month, and the
+customer manages it in the app under **Settings → Billing**: next renewal date
+and amount, the card renewals go to (*Update card* opens Stripe's page),
+invoices with PDFs, **Pay now** for a failed or open renewal invoice (Stripe's
+hosted invoice page), and cancel at period end / *Keep my subscription*. Trial
+accounts made on the website pay from Settings → Plan → *Choose a plan*.
+
+**Keys.** Staff set the secret key and webhook signing secret in the console
+under **Platform → Payments** (encrypted in `platform_setting`; only a hint like
+`sk_test_…4242` is ever shown). They take precedence over `STRIPE_*` in `.env`
+while switched on. The page shows the webhook URL and events to subscribe, when
+the last event arrived, and *Test connection* checks the key and every active
+plan's price (exists, monthly, same amount as the plan). Price ids stay on each
+plan (Platform → Plans).
+
 **Setting it up (test mode first):**
 
 1. In Stripe, create one **Product** per plan with a **monthly recurring
@@ -649,6 +666,28 @@ plans work exactly as described above. Code: `app/services/billing.py`,
 - **Staff suspension wins.** A webhook never lifts a `suspended` account.
 - A plan with no `stripe_price_id` can't be bought online; staff can still
   assign it by hand from the console.
+
+## Closing accounts and lapsed subscriptions
+
+- **Syncing stops automatically** when a subscription isn't renewed: a trial
+  ending without a plan, a renewal date passing (staff-billed accounts), a
+  failed Stripe renewal, or a cancellation reaching the end of its paid period.
+  The account becomes `past_due` / `cancelled`, keeps all its data, and resumes
+  when paid again. Owners and admins get an email each time. For Stripe-billed
+  accounts the renewal sweep also stops an account 3 days after its period
+  ended with no renewal recorded — a safety net for missed webhooks.
+- **Customers cancel** under Settings → Billing → *Cancel subscription* (at
+  period end; undoable until then).
+- **Owners delete their account** under Settings → General → *Delete account*:
+  a reason is required ("Other" needs a few words), then the company name and
+  password. A running Stripe subscription is cancelled immediately (no refund),
+  and everything is deleted (`app/services/account_deletion.py`).
+- **Staff delete an account** from All accounts → *Delete*, offered only once
+  it is deactivated (suspended or cancelled), with the name typed back.
+- Every deletion leaves one `account_closure` row — name, owner, plan, who
+  closed it and why — listed under Platform → **Closed accounts**.
+- **Plans** can be deleted from Platform → Plans only while no account is on
+  them (or switching to them) and no website checkout is open; otherwise retire.
 
 ## How a sync run works
 
@@ -1334,7 +1373,14 @@ up. Set `SITE_URL` to its address and add that origin to `CORS_ORIGINS`.
   answer whether or not the address exists.
 - Registration and resend are rate limited per IP
   (`REGISTRATION_RATE_PER_HOUR`) and the form has a hidden honeypot field.
-- Mail goes out through `SMTP_HOST`; with it empty, emails are only logged.
+- Mail goes out through the server set in the staff console under
+  **Platform → Email server** (stored in `platform_setting`, password
+  encrypted). With nothing saved there, `SMTP_*` from `.env` is used; with
+  neither, emails are only logged. The page has a Gmail preset and a
+  "Send test email" button. On Gmail / Workspace use an App Password on
+  `smtp.gmail.com:587` (STARTTLS), and a From address that is the account or a
+  verified "Send mail as" alias. In production run `python3 tools/init_db.py`
+  once after upgrading so the `platform_setting` table exists.
 
 Run `python3 tools/migrate.py --apply` to add the `pending_signup` table and
 the two new `app_user` columns.

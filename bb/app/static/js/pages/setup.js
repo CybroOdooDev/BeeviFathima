@@ -70,13 +70,13 @@ export async function render(mount) {
           help: source ? 'Leave blank to keep the current one.' : '',
         })}
         ${field({
-          name: 'server_timezone', label: 'Server timezone', required: true,
+          name: 'server_timezone', label: 'Server Timezone', required: true,
           value: source?.server_timezone || 'UTC',
           help: 'The zone the BioTime machine itself runs in — not yours and not Odoo’s. Punch times arrive with no offset, so a wrong value shifts every attendance record by hours without any error.',
           strongHelp: true,
         })}
         ${field({
-          name: 'auth_type', label: 'Auth style', value: source?.auth_type || 'token',
+          name: 'auth_type', label: 'Auth Style', value: source?.auth_type || 'token',
           options: ['token', 'jwt'],
           help: 'BioTime 8.5+ usually needs jwt; older builds use token.',
         })}

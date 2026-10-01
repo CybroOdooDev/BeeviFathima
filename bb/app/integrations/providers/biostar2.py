@@ -148,7 +148,7 @@ class BioStar2Provider(AttendanceProvider):
         {"name": "username", "label": "Username", "type": "text", "required": True,
          "help": "A BioStar 2 operator login, e.g. admin."},
         {"name": "password", "label": "Password", "type": "password", "required": True},
-        {"name": "server_timezone", "label": "Site timezone", "type": "timezone",
+        {"name": "server_timezone", "label": "Site Timezone", "type": "timezone",
          "required": True, "default": "UTC",
          "help": "BioStar 2 reports times in UTC; this is the zone attendance is shown in."},
     )

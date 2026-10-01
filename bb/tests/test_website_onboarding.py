@@ -21,7 +21,7 @@ REG = "/api/v1/public/register"
 def mail(monkeypatch):
     sent: list[dict] = []
 
-    def capture(to, subject, body):
+    def capture(to, subject, body, db=None):
         sent.append({"to": to, "subject": subject, "body": body})
 
     monkeypatch.setattr(email_verification, "send_email", capture)
@@ -183,3 +183,49 @@ def test_public_plans_say_which_can_be_bought(client, stripe):
     assert plans["Growth"]["can_buy_online"] is True
     assert plans["Scale"]["can_buy_online"] is False, "no Stripe Price"
     assert "stripe_price_id" not in plans["Growth"]
+
+
+def test_paid_signup_mails_nothing_if_the_webhook_fails(client, mail, stripe, monkeypatch):
+    """The confirmation link goes out only after the account is saved: a
+    webhook that fails (and will be retried by Stripe) must not have mailed
+    a link to a token that was rolled back — and the retry then sends it."""
+    from app.services import billing as billing_mod
+
+    assert client.post(REG, json=form(mode="buy")).status_code == 201
+    s = client.Session()
+    pending_id = s.scalars(select(PendingSignup)).first().id
+    s.close()
+    event = {"id": "evt_fail", "type": "checkout.session.completed", "data": {"object": {
+        "mode": "subscription", "subscription": "sub_9", "customer": "cus_9",
+        "metadata": {"pending_signup_id": pending_id}}}}
+
+    real = billing_mod.retrieve_subscription
+
+    def boom(*a, **k):
+        raise billing_mod.BillingError("Stripe: temporarily unavailable")
+    monkeypatch.setattr(billing_mod, "retrieve_subscription", boom)
+    assert _post_event(client, event).status_code == 503
+    assert mail == [] and user(client) is None
+
+    monkeypatch.setattr(billing_mod, "retrieve_subscription", real)
+    stripe.sub("sub_9", price="price_growth", customer="cus_9")
+    assert _post_event(client, event).status_code == 200
+    assert len(mail) == 1 and "token=" in mail[0]["body"]
+
+
+def test_first_password_needs_no_emailed_password_but_later_changes_do(client, mail):
+    client.post(REG, json=form())
+    client.post("/api/v1/auth/verify-email", json={"token": token_from(mail[0])})
+    password = password_from(mail[-1])
+    head = {"Authorization": f"Bearer {login(client, 'hr@kerala.example.com', password).json()['access_token']}"}
+
+    # Reusing the emailed one isn't a new password.
+    same = client.post("/api/v1/auth/change-password", headers=head, json={"new_password": password})
+    assert same.status_code == 400
+    ok = client.post("/api/v1/auth/change-password", headers=head, json={"new_password": "my-own-long-password"})
+    assert ok.status_code == 200, ok.text
+    assert client.get("/api/v1/tenant", headers=head).status_code == 200
+
+    # From now on the current password is required again.
+    again = client.post("/api/v1/auth/change-password", headers=head, json={"new_password": "another-long-password"})
+    assert again.status_code == 400 and "current password" in again.json()["detail"]

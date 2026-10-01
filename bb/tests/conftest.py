@@ -47,6 +47,17 @@ def _no_network_email_checks(monkeypatch):
     monkeypatch.setattr(settings, "verify_email_deliverability", False)
 
 
+@pytest.fixture(autouse=True)
+def _no_console_stripe_keys():
+    """Console-saved Stripe keys are process-wide (app.services.billing);
+    start and end every test on the .env settings."""
+    from app.services import billing
+
+    billing._CONSOLE = None
+    yield
+    billing._CONSOLE = None
+
+
 class FakeOdoo:
     """In-memory hr.attendance that honours Odoo's real constraints.
 

@@ -22,7 +22,7 @@ from app.services import billing, onboarding
 from app.services.email_check import UngenuineEmailError, assert_genuine_email
 
 log = logging.getLogger(__name__)
-router = APIRouter(prefix="/public", tags=["public"])
+router = APIRouter(prefix="/public", tags=["public"], dependencies=[Depends(billing.use_config)])
 
 CHECK_EMAIL = "Check your inbox — we've sent a link to confirm your email."
 RESEND_OK = "If that address has an account waiting, we've sent the email again."
@@ -36,7 +36,7 @@ def _ip(request: Request) -> str | None:
 
 
 def _can_buy(plan: SubscriptionPlan) -> bool:
-    return bool(settings.billing_enabled and plan.stripe_price_id)
+    return bool(billing.enabled() and plan.stripe_price_id)
 
 
 @router.get("/plans", response_model=list[PublicPlanOut])

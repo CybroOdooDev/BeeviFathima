@@ -1,0 +1,46 @@
+{
+  "company_id": 6,
+  "company_name": "DEMO 9",
+  "departments": [],
+  "employees": [
+    {
+      "id": 16,
+      "emp_code": "90001",
+      "first_name": "Ava",
+      "last_name": "",
+      "department": null,
+      "enable_attendance": true
+    },
+    {
+      "id": 17,
+      "emp_code": "90002",
+      "first_name": "Janine",
+      "last_name": "",
+      "department": null,
+      "enable_attendance": true
+    },
+    {
+      "id": 18,
+      "emp_code": "90003",
+      "first_name": "Micheal",
+      "last_name": "",
+      "department": null,
+      "enable_attendance": true
+    }
+  ],
+  "terminals": [
+    {
+      "id": 961,
+      "sn": "MOCK-C6-GATE-01",
+      "alias": "Main Entrance",
+      "ip_address": "10.6.0.11"
+    },
+    {
+      "id": 962,
+      "sn": "MOCK-C6-GATE-02",
+      "alias": "Back Door",
+      "ip_address": "10.6.0.12"
+    }
+  ],
+  "skipped": []
+}

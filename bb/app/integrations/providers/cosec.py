@@ -122,12 +122,12 @@ class CosecProvider(AttendanceProvider):
     })
     kinds = frozenset({"device"})
     config_fields = (
-        {"name": "base_url", "label": "Device address", "type": "text", "required": True,
+        {"name": "base_url", "label": "Device Address", "type": "text", "required": True,
          "help": "http://<device IP> — add :port if it isn't 80."},
         {"name": "username", "label": "Username", "type": "text", "required": True,
          "default": "admin", "help": "The device's web login (factory default admin)."},
         {"name": "password", "label": "Password", "type": "password", "required": True},
-        {"name": "server_timezone", "label": "Device timezone", "type": "timezone",
+        {"name": "server_timezone", "label": "Device Timezone", "type": "timezone",
          "required": True, "default": "UTC"},
     )
 

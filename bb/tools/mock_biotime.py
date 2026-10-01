@@ -3,24 +3,19 @@
 
 Mimics the parts the connector talks to: token auth, DRF-style pagination with
 an absolute ``next`` URL, and the three list endpoints. Punch data comes from a
-JSON file so a test can change the stream between sync cycles.
+JSON file (tools/generate_punches.py) so the stream can change between syncs.
 
-    python3 tools/mock_biotime.py --port 8099 --punches punches.json
+Serve any company in your Odoo by its res.company id — its active employees
+become the BioTime personnel list, on two mock terminals of its own:
 
-Serves one company's roster at a time, chosen with ``--company``. Company 1
-(the default, unchanged from before ``--company`` existed) is Ahmed Sharma /
-Sara Tanaka / Jane Haddad on MOCK-GATE-01/02. Company 2 is Liam Okafor / Priya
-Nakamura / Noah Fernandes on MOCK-GATE-03/04 — the same three people
-tools/create_company_employees.py creates in a real Odoo, so the two tools
-describe the same fake "company 2" everywhere. Company 4 is Beevi (badge 5) / Marc
-(badge 6001) on MOCK-GATE-05/06. Run multiple instances on different
-ports, one per --company, to drive BioBridge sources against multiple OdooConnections
-that are scoped to different company_id values and confirm each only ever sees
-its own roster:
+    python3 tools/generate_punches.py --company 7
+    python3 tools/mock_biotime.py --company 7 --port 8107
 
-    python3 tools/mock_biotime.py --port 8099 --company 1 &
-    python3 tools/mock_biotime.py --port 8098 --company 2 &
-    python3 tools/mock_biotime.py --port 8097 --company 4 &
+The punches file defaults to the one generate_punches.py writes for that
+company (punches.json for company 1, punches_company<id>.json otherwise). Run
+one instance per company on different ports to test several BioBridge
+accounts at once. Where the roster comes from (Odoo login, cache, built-in
+fixtures for 1/2/4) is described in tools/mock_roster.py.
 """
 
 from __future__ import annotations
@@ -29,6 +24,7 @@ import argparse
 import json
 import os
 import socket
+import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -241,16 +237,12 @@ def build_server(host: str = "127.0.0.1", port: int = 0) -> ThreadingHTTPServer:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8099)
-    parser.add_argument("--punches", default=None)
+    parser.add_argument("--punches", default=None,
+                        help="Punches file (default: the one generate_punches.py writes for --company)")
     parser.add_argument(
-        "--company", type=int, default=1, choices=sorted(DATASETS),
-        help="Which fake roster to serve: 1 (default) is Ahmed Sharma / Sara "
-             "Tanaka / Jane Haddad on MOCK-GATE-01/02; 2 is Liam Okafor / "
-             "Priya Nakamura / Noah Fernandes on MOCK-GATE-03/04 — the same "
-             "people tools/create_company_employees.py makes in a real Odoo; "
-             "4 is Beevi (5) / Marc (6001) on MOCK-GATE-05/06. "
-             "Run one instance per company, on different ports, to test "
-             "BioBridge sources against multiple company_id-scoped OdooConnections.",
+        "--company", type=int, default=1,
+        help="Odoo res.company id whose active employees to serve (default: 1). "
+             "Use --list-companies to see the ids.",
     )
     parser.add_argument(
         "--host", default="127.0.0.1",
@@ -258,14 +250,23 @@ def main():
              "a BioBridge on the same machine and invisible to one in a "
              "container or on another host — use 0.0.0.0 for those.",
     )
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from tools.mock_roster import add_odoo_arguments, describe, list_companies, load_roster
+
+    add_odoo_arguments(parser)
     args = parser.parse_args()
+    if args.list_companies:
+        return list_companies(args)
 
     global PUNCH_FILE, DEPARTMENTS, EMPLOYEES, TERMINALS
-    PUNCH_FILE = args.punches
-    dataset = DATASETS[args.company]
-    DEPARTMENTS = dataset["departments"]
-    EMPLOYEES = dataset["employees"]
-    TERMINALS = dataset["terminals"]
+    roster = load_roster(args, args.company)
+    DEPARTMENTS = roster.departments
+    EMPLOYEES = roster.employees
+    TERMINALS = roster.terminals
+    PUNCH_FILE = args.punches or ("punches.json" if args.company == 1 else f"punches_company{args.company}.json")
+    if not os.path.exists(PUNCH_FILE):
+        print(f"  no punches yet in {PUNCH_FILE} — run: python3 tools/generate_punches.py "
+              f"--company {args.company}", flush=True)
 
     # Threaded: one slow or abandoned client must not stop every other
     # request. BioBridge paginates, so it holds several sequential
@@ -279,8 +280,8 @@ def main():
         f"  point the source's Server URL at exactly http://{args.host}:{args.port}",
         flush=True,
     )
-    names = ", ".join(f"{e['first_name']} {e['last_name']}".strip() for e in EMPLOYEES)
-    print(f"  company {args.company}: {names}", flush=True)
+    print(f"  {describe(roster)}", flush=True)
+    print(f"  punches from {PUNCH_FILE}", flush=True)
     if args.host == "127.0.0.1":
         print("  loopback only — pass --host 0.0.0.0 if BioBridge is not on this machine",
               flush=True)

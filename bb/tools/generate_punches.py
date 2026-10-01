@@ -1,45 +1,42 @@
 #!/usr/bin/env python3
-"""Generate a punches.json for tools/mock_biotime.py.
+"""Generate a punches.json for tools/mock_biotime.py — for any company in your Odoo.
 
-Hand-authoring this file bit us once already: a punch timestamped for 17:00
-today, written at 15:00, sits in the future relative to whenever a sync
-actually runs. BioTime's own fetch window silently drops anything past "now"
-(``app/services/sync_engine.py:_fetch_and_ingest`` caps ``end_utc`` at
-``utcnow + 5 minutes`` of clock-skew tolerance) — so the punch is simply never
-fetched, and it looks exactly like a pairing bug rather than a clock problem.
-That is how "attendance records were matched only for check-ins" happens.
+    python3 tools/generate_punches.py --list-companies
+    python3 tools/generate_punches.py --company 7
+    python3 tools/generate_punches.py --company 7 --days 10 --tz Asia/Kolkata --check-in 08:30 --check-out 17:30
 
-This computes every timestamp relative to *now*, at the moment it runs — so run
-it again whenever the punches feel stale rather than keeping one file around.
-A shift still in progress today (check-in written, check-out time not yet
-reached) is left with no check-out on purpose: that is a real, common state
-worth having in the fixture, not a bug in the generator.
+then serve them:
 
-    python3 tools/generate_punches.py
-    python3 tools/generate_punches.py --days 10 --emp-codes 1001,0042,A7,9001
-    python3 tools/generate_punches.py --tz Asia/Kolkata --check-in 08:30 --check-out 17:30
-    python3 tools/generate_punches.py --company 2
-    python3 tools/generate_punches.py --company 4
+    python3 tools/mock_biotime.py --company 7 --port 8107
 
-Then:
-    python3 tools/mock_biotime.py --punches punches.json
-    python3 tools/mock_biotime.py --company 2 --punches punches_company2.json
+``--company`` is the Odoo res.company id. The roster is that company's active
+employees, read from Odoo (see tools/mock_roster.py for where the Odoo login
+comes from — on a machine where BioBridge is connected to Odoo, nowhere: it
+uses that connection). Each employee's Badge ID (else PIN, else registration
+number) is their device user id, so BioBridge matches every punch straight
+back to them. Employees with none of those are skipped and listed. Without
+any Odoo login, companies 1, 2 and 4 fall back to the built-in fixtures.
 
---tz must match whatever the *device source* is configured with in BioBridge
-("BioTime server timezone" on the Connections screen) — punch_time is a naive
-local string, interpreted in that zone, not UTC and not the tenant's display
-timezone unless the source leaves its own zone unset. Getting this wrong does
-not error; it just shifts every punch by the difference and can push them
-outside the fetch window, which again looks like a pairing bug.
+Every timestamp is computed relative to *now*, at the moment it runs — run it
+again whenever the punches feel stale rather than keeping one file around. A
+punch in the future is never fetched (BioBridge caps its fetch window at now),
+which looks exactly like a pairing bug. A shift still in progress today is
+left with no check-out on purpose.
+
+--tz must match the BioBridge connection's "Server Timezone" — punch_time is a
+naive local time interpreted in that zone.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import sys
 from datetime import datetime, timedelta
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
     from zoneinfo import ZoneInfo
@@ -182,18 +179,14 @@ def main() -> int:
              "never clobbers another's file)",
     )
     parser.add_argument(
-        "--company", type=int, default=1, choices=sorted(COMPANY_EMP_CODES),
-        help="Which tools/mock_biotime.py roster to generate for: 1 (default) "
-             "is Ahmed Sharma / Sara Tanaka / Jane Haddad on MOCK-GATE-01/02; "
-             "2 is Liam Okafor / Priya Nakamura / Noah Fernandes on "
-             "MOCK-GATE-03/04; 4 is Beevi (5) / Marc (6001) on "
-             "MOCK-GATE-05/06. Sets the --emp-codes and terminal defaults; "
-             "an explicit --emp-codes still overrides this.",
+        "--company", type=int, default=1,
+        help="Odoo res.company id whose active employees punch (default: 1). "
+             "Use --list-companies to see the ids.",
     )
     parser.add_argument(
         "--emp-codes", default=None,
-        help="Comma-separated badge codes (default: the three --company's mock "
-             "server already knows by name)",
+        help="Comma-separated badge codes to use instead of the company's whole "
+             "roster (they must exist in it for the mock to show names)",
     )
     parser.add_argument("--days", type=int, default=5,
                         help="How many days back, today included (default: 5)")
@@ -213,9 +206,16 @@ def main() -> int:
                         help="By default Saturday and Sunday are skipped")
     parser.add_argument("--seed", type=int, default=None,
                         help="Fix the jitter for a reproducible file")
-    args = parser.parse_args()
+    from tools.mock_roster import add_odoo_arguments, describe, list_companies, load_roster
 
-    emp_codes_str = args.emp_codes if args.emp_codes is not None else ",".join(COMPANY_EMP_CODES[args.company])
+    add_odoo_arguments(parser)
+    args = parser.parse_args()
+    if args.list_companies:
+        return list_companies(args)
+
+    roster = load_roster(args, args.company)
+    print(describe(roster))
+    emp_codes_str = args.emp_codes if args.emp_codes is not None else ",".join(roster.emp_codes)
     emp_codes = [c.strip() for c in emp_codes_str.split(",") if c.strip()]
     if not emp_codes:
         raise SystemExit("--emp-codes produced no codes")
@@ -236,7 +236,7 @@ def main() -> int:
         jitter_minutes=args.jitter_minutes,
         skip_weekends=not args.include_weekends,
         seed=args.seed,
-        terminals=COMPANY_TERMINALS[args.company],
+        terminals=roster.serials,
     )
 
     if not rows:

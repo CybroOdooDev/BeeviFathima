@@ -84,10 +84,10 @@ class ZKAdmsProvider(AttendanceProvider):
     #: Punches arrive by themselves; the engine claims them instead of fetching.
     pushes = True
     config_fields = (
-        {"name": "base_url", "label": "Device serial number", "type": "text", "required": True,
+        {"name": "base_url", "label": "Device Serial Number", "type": "text", "required": True,
          "help": "On the device: Menu → System Info → Device Info → Serial Number "
                  "(also on the label on its back)."},
-        {"name": "server_timezone", "label": "Device timezone", "type": "timezone",
+        {"name": "server_timezone", "label": "Device Timezone", "type": "timezone",
          "required": True, "default": "UTC",
          "help": "The zone the device's clock is set to. Punch times arrive with "
                  "no offset, so a wrong value shifts every attendance record."},

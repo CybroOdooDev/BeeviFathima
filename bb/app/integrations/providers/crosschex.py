@@ -89,10 +89,10 @@ class CrossChexProvider(AttendanceProvider):
     config_fields = (
         {"name": "base_url", "label": "Region", "type": "text", "required": True,
          "help": "Your CrossChex Cloud region's API address (US, EU or Asia-Pacific)."},
-        {"name": "username", "label": "API key", "type": "text", "required": True,
+        {"name": "username", "label": "API Key", "type": "text", "required": True,
          "help": "CrossChex Cloud → Settings → API: the API key."},
-        {"name": "password", "label": "API secret", "type": "password", "required": True},
-        {"name": "server_timezone", "label": "Site timezone", "type": "timezone",
+        {"name": "password", "label": "API Secret", "type": "password", "required": True},
+        {"name": "server_timezone", "label": "Site Timezone", "type": "timezone",
          "required": True, "default": "UTC",
          "help": "CrossChex Cloud sends times with their offset; this is the zone they're shown in."},
     )

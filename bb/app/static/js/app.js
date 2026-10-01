@@ -14,7 +14,11 @@ import { renderTerminals } from './pages/terminals.js';
 import { render as renderSettings } from './pages/settings.js';
 import { render as renderPlatform } from './pages/platform.js';
 import { render as renderPlanAdmin } from './pages/plans.js';
-import { renderPasswordSettings, renderSetPassword, renderVerifyEmail } from './pages/account.js';
+import { render as renderGetStarted } from './pages/getstarted.js';
+import { render as renderMailAdmin } from './pages/mail.js';
+import { render as renderPaymentsAdmin } from './pages/payments.js';
+import { render as renderClosures } from './pages/closures.js';
+import { renderSetPassword, renderVerifyEmail } from './pages/account.js';
 import { renderConsoleOverview } from './pages/console.js';
 
 const PUBLIC = new Set(['/login', '/signup', '/staff/login', '/plans']);
@@ -52,6 +56,12 @@ const ICON = {
   platform: '<rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/><path d="M7 7h.01M7 17h.01"/>',
   // A price tag.
   plans: '<path d="M3.5 12.2V4.5a1 1 0 0 1 1-1h7.7l8.3 8.3a1.4 1.4 0 0 1 0 2l-6.7 6.7a1.4 1.4 0 0 1-2 0z"/><circle cx="8" cy="8" r="1.5"/>',
+  // An archive box.
+  closed: '<rect x="3" y="4" width="18" height="5" rx="1.2"/><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4"/>',
+  // A card.
+  card: '<rect x="3" y="5.5" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h4"/>',
+  // An envelope.
+  mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3.5 6.5l8.5 6.5 8.5-6.5"/>',
   // A cog: toothed wheel with a hub.
   settings: '<path d="M10.3 3.2h3.4l.5 2.4 1.9.8 2-1.4 2.4 2.4-1.4 2 .8 1.9 2.4.5v3.4l-2.4.5-.8 1.9 1.4 2-2.4 2.4-2-1.4-1.9.8-.5 2.4h-3.4l-.5-2.4-1.9-.8-2 1.4-2.4-2.4 1.4-2-.8-1.9-2.4-.5v-3.4l2.4-.5.8-1.9-1.4-2 2.4-2.4 2 1.4 1.9-.8z"/><circle cx="12" cy="12" r="3.2"/>',
 };
@@ -89,7 +99,7 @@ const NAV = [
           { path: '/settings/pairing', title: 'Pairing' },
           { path: '/settings/hours', title: 'Working hours' },
           { path: '/settings/plan', title: 'Plan' },
-          { path: '/settings/password', title: 'Password' },
+          { path: '/settings/billing', title: 'Billing' },
           { path: '/settings/odoo', title: 'Odoo connection' },
           { path: '/settings/biometric', title: 'Biometric connections' },
         ],
@@ -106,6 +116,9 @@ const NAV = [
       { path: '/console', title: 'Overview', icon: 'overview' },
       { path: '/platform', title: 'All accounts', icon: 'platform', activeFor: ['/platform'] },
       { path: '/platform/plans', title: 'Plans', icon: 'plans' },
+      { path: '/platform/closed', title: 'Closed accounts', icon: 'closed' },
+      { path: '/platform/email', title: 'Email server', icon: 'mail' },
+      { path: '/platform/payments', title: 'Payments', icon: 'card' },
     ],
   },
 ];
@@ -121,6 +134,8 @@ const REDIRECTS = {
   '/setup': '/settings/odoo',
   // A bare /settings has no section of its own — land on the first one.
   '/settings': '/settings/general',
+  // Changing your password moved into Settings → General.
+  '/settings/password': '/settings/general',
 };
 
 /* Each screen's title, and one line under it saying what the screen is for. */
@@ -130,16 +145,20 @@ const ROUTES = {
   '/activity': { title: 'Activity', sub: 'Every punch pulled, and every sync run', render: renderActivity },
   '/employees': { title: 'Employees', sub: 'Badges matched to Odoo employees', render: renderEmployees },
   '/terminals': { title: 'Terminals', sub: 'Every device your biometric connections bring in', render: renderTerminals },
+  '/get-started': { title: 'Get set up', sub: 'Connect Odoo and your biometric system, one step at a time', render: renderGetStarted },
   '/settings/general': { title: 'General', sub: 'Company, timezone and sync schedule', render: renderSettings },
   '/settings/pairing': { title: 'Pairing', sub: 'How raw punches become shifts', render: renderSettings },
   '/settings/hours': { title: 'Working hours', sub: 'Working hours for late arrivals', render: renderSettings },
   '/settings/plan': { title: 'Plan', sub: 'Your subscription plan', render: renderSettings },
-  '/settings/password': { title: 'Password', sub: 'The password you sign in with', render: renderPasswordSettings },
+  '/settings/billing': { title: 'Billing', sub: 'Renewals, payment method and invoices', render: renderSettings },
   '/settings/plan/choose': { title: 'Choose a plan', sub: 'Compare plans and switch', render: renderSettings },
   '/settings/odoo': { title: 'Odoo connection', sub: 'Odoo connection, and badges waiting for a match', render: renderSettings },
   '/settings/biometric': { title: 'Biometric connections', sub: 'Biometric connections — where punches come from', render: renderSettings },
   '/console': { title: 'Platform overview', sub: 'Every account at a glance — health, growth and what needs a person', render: renderConsoleOverview },
   '/platform': { title: 'All accounts', sub: 'Every customer account on this platform', render: renderPlatform },
+  '/platform/closed': { title: 'Closed accounts', sub: 'Deleted accounts — who closed them, and why', render: renderClosures },
+  '/platform/payments': { title: 'Payments (Stripe)', sub: 'The Stripe keys, webhook and prices online billing runs on', render: renderPaymentsAdmin },
+  '/platform/email': { title: 'Email server', sub: 'Where signup confirmations and login details are sent from', render: renderMailAdmin },
   '/platform/plans': { title: 'Plans', sub: 'The tiers accounts are sold under, and the limits each one enforces', render: renderPlanAdmin },
 };
 
@@ -308,13 +327,13 @@ function renderChrome(path) {
     <div class="nav-group"><div class="nav-group-label">${esc(group.label)}</div></div>
     ${group.items.map((item) => {
       if (item.children) {
-        // A parent with its submenus nested under it, always expanded — the
-        // whole configuration menu is visible in the sidebar itself, nothing
-        // hidden behind a second click. The parent itself is a real link (to
-        // its first submenu) and only picks up the subtle "current section"
-        // treatment; the pill highlight belongs to whichever child is open.
+        // A parent whose submenus only appear once you're in its section:
+        // clicking the parent opens its first submenu, and the rest unfold
+        // under it. Anywhere else in the app they stay folded away. The
+        // parent picks up the subtle "current section" treatment; the pill
+        // highlight belongs to whichever child is open.
         const inSection = item.prefix && path.startsWith(item.prefix);
-        const childrenHtml = item.children.map((child) => {
+        const childrenHtml = !inSection ? '' : item.children.map((child) => {
           const childActive = child.path === path;
           return `<a class="nav nav-child ${childActive ? 'active' : ''}" href="#${esc(child.path)}"${childActive ? ' aria-current="page"' : ''}>
             <span class="nav-label">${esc(child.title)}</span>
@@ -454,7 +473,7 @@ async function resolve() {
     // every tenant-scoped screen would 403. Send them to the console instead of
     // showing an error page on the way in.
     // The console's landing page is its overview.
-    if (!auth.tenant && auth.isPlatformAdmin && !['/platform', '/platform/plans', '/console'].includes(route.path)) {
+    if (!auth.tenant && auth.isPlatformAdmin && !['/platform', '/platform/plans', '/platform/email', '/platform/payments', '/platform/closed', '/console'].includes(route.path)) {
       window.location.hash = '#/console';
       return;
     }
@@ -496,12 +515,12 @@ async function resolve() {
   }
 }
 
-window.addEventListener('bb:signed-in', async () => {
+window.addEventListener('bb:signed-in', async (event) => {
   try {
     await loadSession();
   } catch { /* resolve() will retry */ }
   if (auth.user?.is_platform_admin) rememberHat(auth.scope);
-  window.location.hash = '#/';
+  window.location.hash = event.detail?.next || '#/';
   resolve();
 });
 

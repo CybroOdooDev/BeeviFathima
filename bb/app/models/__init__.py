@@ -12,6 +12,7 @@ from app.models.attendance import (
 from app.models.adms import AdmsCommand, AdmsDevice
 from app.models.billing import PendingSignup, StripeEvent
 from app.models.connection import ConnectionStatus, Device, DeviceSource, OdooConnection
+from app.models.platform import AccountClosure, PlatformSetting
 from app.models.scheduler import LEASE_ID, SchedulerLease
 from app.models.subscription import SubscriptionPlan
 from app.models.tenant import (
@@ -41,6 +42,8 @@ __all__ = [
     "MappingStatus",
     "OdooConnection",
     "PunchRecord",
+    "AccountClosure",
+    "PlatformSetting",
     "PunchState",
     "SchedulerLease",
     "SubscriptionPlan",
