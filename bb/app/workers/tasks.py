@@ -146,6 +146,17 @@ def sweep_subscriptions() -> dict[str, int]:
         return _sweep_subscriptions(db)
 
 
+@celery_app.task(name="app.workers.tasks.sweep_alert_emails")
+def sweep_alert_emails() -> dict[str, int]:
+    """Beat entry point: mail owners about red alerts that have stood a while.
+    Same logic as the in-process scheduler's timer — see
+    app.services.alert_emails for the grace and reminder rules."""
+    from app.services.alert_emails import sweep_alert_emails as _sweep
+
+    with session_scope() as db:
+        return _sweep(db)
+
+
 @celery_app.task(name="app.workers.tasks.prune_old_punches")
 def prune_old_punches(retain_days: int = 180) -> dict[str, int]:
     """Keep the ledger bounded. Only fully-resolved punches are eligible."""

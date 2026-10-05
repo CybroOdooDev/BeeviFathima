@@ -29,6 +29,8 @@ from app.db.session import get_db
 from app.models import SubscriptionPlan, Tenant, TenantStatus, User, UserRole, UserSession
 from app.schemas import (
     ChangePasswordIn,
+    ForgotPasswordIn,
+    ResetPasswordIn,
     LoginRequest,
     MessageOut,
     SignupRequest,
@@ -44,6 +46,7 @@ from app.services.email_verification import (
     verify_token,
 )
 from app.services.onboarding import send_credentials
+from app.services import password_reset
 from app.services.timeutils import ensure_aware, is_past
 
 log = logging.getLogger(__name__)
@@ -449,6 +452,37 @@ def change_password(
     db.execute(stmt.values(revoked_at=datetime.now(timezone.utc), revoked_reason="password_changed"))
     db.commit()
     return MessageOut(message="Password changed.")
+
+
+@router.post("/forgot-password", response_model=MessageOut)
+def forgot_password(payload: ForgotPasswordIn, db: Session = Depends(get_db)) -> MessageOut:
+    """Email a reset link. The answer is the same whether or not the address
+    has an account, so this can't be used to find out who is registered."""
+    issued = password_reset.request_reset(db, payload.email)
+    db.commit()
+    if issued is not None:
+        try:
+            password_reset.send_reset_email(db, *issued)
+        except Exception as exc:  # noqa: BLE001 — the reply must not depend on mail
+            log.warning("Could not send password reset to %s: %s", payload.email, exc)
+            # Nothing reached them, so don't make them wait out the cooldown.
+            issued[0].password_reset_sent_at = None
+            db.commit()
+    return MessageOut(message="If that address has a BioBridge account, we've emailed a link to reset the password.")
+
+
+@router.post("/reset-password", response_model=MessageOut)
+def reset_password(payload: ResetPasswordIn, db: Session = Depends(get_db)) -> MessageOut:
+    """The emailed link lands here. The token is the credential."""
+    user = password_reset.consume(db, payload.token, payload.new_password)
+    if user is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "That link is invalid or has expired. Ask for a new one.")
+    db.commit()
+    try:
+        password_reset.send_changed_email(db, user)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Could not send password-changed notice to %s: %s", user.email, exc)
+    return MessageOut(message="Password changed. Sign in with your new password.")
 
 
 @router.post("/resend-verification", response_model=MessageOut)

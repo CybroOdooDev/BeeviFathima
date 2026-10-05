@@ -152,6 +152,30 @@ class VerifyEmailRequest(BaseModel):
     token: str
 
 
+class AlertOut(BaseModel):
+    key: str
+    severity: Literal["bad", "warn"]
+    title: str
+    detail: str
+    href: str | None = None
+    action: str | None = None
+
+
+class AlertsOut(BaseModel):
+    count: int
+    worst: Literal["bad", "warn"] | None = None
+    alerts: list[AlertOut]
+
+
+class ForgotPasswordIn(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+
+
+class ResetPasswordIn(BaseModel):
+    token: str = Field(min_length=10, max_length=200)
+    new_password: str = Field(min_length=10, max_length=128)
+
+
 class TokenPair(BaseModel):
     access_token: str
     refresh_token: str | None = None
@@ -220,6 +244,63 @@ class RegisterOut(BaseModel):
     next: Literal["check_email", "checkout"]
     checkout_url: str | None = None
     message: str
+
+
+class ContactIn(BaseModel):
+    """The website's Contact / Book a demo form (POST /public/contact)."""
+
+    topic: Literal["Demo", "Sales question"] = "Demo"
+    name: str = Field(min_length=2, max_length=120)
+    email: EmailStr
+    company: str = Field(min_length=2, max_length=160)
+    phone: str | None = Field(default=None, max_length=40)
+    employees: str | None = Field(default=None, max_length=40)
+    odoo_version: str | None = Field(default=None, max_length=40)
+    odoo_hosting: str | None = Field(default=None, max_length=40)
+    biometric_system: str | None = Field(default=None, max_length=120)
+    devices: str | None = Field(default=None, max_length=60)
+    message: str | None = Field(default=None, max_length=4000)
+    #: A demo request may say when suits: a date and a part of the day, in the
+    #: visitor's own timezone (the site sends the browser's).
+    preferred_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    preferred_window: Literal["Morning", "Afternoon", "Evening"] | None = None
+    timezone: str | None = Field(default=None, max_length=64)
+    #: Honeypot: a field people never see. Anything in it means a bot.
+    website: str | None = None
+
+
+class ContactOut(BaseModel):
+    message: str
+    #: Set when the deployment has a booking page (DEMO_BOOKING_URL): the site
+    #: offers it so the visitor can pick a slot straight away.
+    booking_url: str | None = None
+
+
+class ContactRequestOut(ORMModel):
+    id: str
+    created_at: datetime
+    topic: str
+    name: str
+    email: str
+    company: str
+    phone: str | None
+    employees: str | None
+    odoo_version: str | None
+    odoo_hosting: str | None
+    biometric_system: str | None
+    device_setup: str | None
+    message: str | None
+    preferred_date: str | None
+    preferred_window: str | None
+    timezone: str | None
+    status: str
+    notes: str | None
+    handled_by: str | None
+
+
+class ContactRequestUpdate(BaseModel):
+    status: Literal["new", "contacted", "demo_booked", "won", "closed"] | None = None
+    notes: str | None = Field(default=None, max_length=4000)
 
 
 class ResendIn(BaseModel):
@@ -434,6 +515,7 @@ class TenantOut(ORMModel):
     timezone: str
     sync_interval_minutes: int
     sync_enabled: bool
+    alert_emails_enabled: bool = True
     pairing_mode: str
     day_boundary_hour: int
     min_punch_interval_seconds: int
@@ -478,6 +560,7 @@ class TenantUpdate(BaseModel):
     timezone: str | None = None
     sync_interval_minutes: int | None = Field(default=None, ge=1, le=1440)
     sync_enabled: bool | None = None
+    alert_emails_enabled: bool | None = None
     pairing_mode: Literal["state_based", "alternating", "first_last"] | None = None
     day_boundary_hour: int | None = Field(default=None, ge=0, le=23)
     min_punch_interval_seconds: int | None = Field(default=None, ge=0, le=3600)

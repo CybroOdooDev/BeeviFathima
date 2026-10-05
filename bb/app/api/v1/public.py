@@ -16,9 +16,9 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.session import get_db
-from app.models import PendingSignup, SubscriptionPlan
-from app.schemas import MessageOut, PublicPlanOut, RegisterIn, RegisterOut, ResendIn
-from app.services import billing, onboarding
+from app.models import ContactRequest, PendingSignup, SubscriptionPlan
+from app.schemas import ContactIn, ContactOut, MessageOut, PublicPlanOut, RegisterIn, RegisterOut, ResendIn
+from app.services import billing, contact as contact_service, onboarding
 from app.services.email_check import UngenuineEmailError, assert_genuine_email
 
 log = logging.getLogger(__name__)
@@ -136,3 +136,44 @@ def resend(payload: ResendIn, request: Request, db: Session = Depends(get_db)) -
                             "Too many attempts from here. Please try again in an hour.")
     onboarding.resend(db, payload.email)
     return MessageOut(message=RESEND_OK)
+
+
+CONTACT_OK = "Thanks — we have your request and will reply within one working day."
+
+
+@router.post("/contact", response_model=ContactOut, status_code=status.HTTP_201_CREATED)
+def contact(payload: ContactIn, request: Request, db: Session = Depends(get_db)) -> ContactOut:
+    """The website's Contact / Book a demo form.
+
+    Saved first, then sales is told and the visitor gets a receipt — so a mail
+    failure can't lose a lead. Rate limited per IP and honeypotted, because it
+    sends an email to an address the visitor typed.
+    """
+    booking = settings.demo_booking_url or None
+    if payload.website:
+        log.info("Contact honeypot tripped from %s", _ip(request))
+        return ContactOut(message=CONTACT_OK)       # look successful, do nothing
+    if not contact_service.allow(_ip(request)):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS,
+                            "Too many requests from here. Please try again in an hour, or email us.")
+    try:
+        email = assert_genuine_email(payload.email).lower()
+    except UngenuineEmailError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+    def clean(value: str | None) -> str | None:
+        return (value or "").strip() or None
+
+    req = ContactRequest(
+        topic=payload.topic, name=payload.name.strip(), email=email, company=payload.company.strip(),
+        phone=clean(payload.phone), employees=clean(payload.employees),
+        odoo_version=clean(payload.odoo_version), odoo_hosting=clean(payload.odoo_hosting),
+        biometric_system=clean(payload.biometric_system), device_setup=clean(payload.devices),
+        message=clean(payload.message), preferred_date=payload.preferred_date,
+        preferred_window=payload.preferred_window, timezone=clean(payload.timezone), ip=_ip(request),
+    )
+    db.add(req)
+    db.commit()
+    contact_service.notify_sales(db, req)
+    contact_service.acknowledge_visitor(db, req)
+    return ContactOut(message=CONTACT_OK, booking_url=booking if payload.topic == "Demo" else None)

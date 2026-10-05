@@ -10,7 +10,7 @@ even though every punch carries the terminal's serial number
 ``link_attendance_devices`` fixes records already in Odoo: for every
 ``hr.attendance`` BioBridge created, it finds the terminal from the
 record's earliest traceable punch (the check-in, normally) and writes it
-onto the Odoo record over XML-RPC — only where Odoo's record has no device
+onto the Odoo record over Odoo's API — only where Odoo's record has no device
 yet, so a device someone set by hand in Odoo is never overwritten.
 """
 
@@ -18,12 +18,13 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
+from datetime import timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.integrations.odoo import OdooClient, OdooError
-from app.models import Device, PunchRecord, Tenant
+from app.models import Device, DeviceSource, PunchRecord, Tenant
 
 
 def device_for_punch(db: Session, punch: PunchRecord) -> Device | None:
@@ -131,3 +132,47 @@ def link_attendance_devices(
             continue
         report.linked += len(ids)
     return report
+
+
+def restore_terminals_from_punches(db: Session, tenant: Tenant, source: DeviceSource) -> list[Device]:
+    """Bring back any terminal that has punches on record but no row.
+
+    A terminal deleted from the Biometric connections page whose punches are
+    still in the ledger must not stay gone: those punches are real history of
+    that device. It is re-created from the ledger — serial, punch count and
+    last-seen time as the punches say — and the punches are linked to it again.
+    Runs at the start of every fetch for the source, so the terminal is back
+    after the next sync whether or not it has sent anything new.
+    """
+    known = set(db.scalars(select(Device.serial_number).where(Device.source_id == source.id)).all())
+    rows = db.execute(
+        select(PunchRecord.terminal_sn, func.count(PunchRecord.id), func.max(PunchRecord.punch_time_utc))
+        .where(
+            PunchRecord.tenant_id == tenant.id,
+            PunchRecord.source_id == source.id,
+            PunchRecord.terminal_sn.is_not(None),
+            PunchRecord.terminal_sn != "",
+        )
+        .group_by(PunchRecord.terminal_sn)
+    ).all()
+    restored: list[Device] = []
+    for serial, count, newest in rows:
+        if serial in known:
+            continue
+        device = Device(
+            tenant_id=tenant.id, source_id=source.id, serial_number=serial,
+            punch_count=count,
+            last_seen_at=newest.replace(tzinfo=newest.tzinfo or timezone.utc) if newest else None,
+        )
+        db.add(device)
+        db.flush()
+        db.execute(
+            update(PunchRecord)
+            .where(PunchRecord.tenant_id == tenant.id, PunchRecord.source_id == source.id,
+                   PunchRecord.terminal_sn == serial, PunchRecord.device_id.is_(None))
+            .values(device_id=device.id)
+        )
+        restored.append(device)
+    if restored:
+        db.commit()
+    return restored

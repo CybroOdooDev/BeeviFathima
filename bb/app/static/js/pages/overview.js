@@ -152,103 +152,12 @@ export async function render(mount) {
     health, devices: devices.length, run, unmapped: data.unmapped_employees,
   });
 
-  const banners = [];
-  if (!auth.tenant?.syncable) {
-    // Above the setup and unmapped-badge banners on purpose: those ask the
-    // customer to go and fix something, and none of it will change anything
-    // while the account is stopped.
-    banners.push(banner(
-      'This account is not syncing',
-      'Syncing has been stopped by BioBridge'
-        + (auth.tenant?.suspended_at ? ` ${fmtAgo(auth.tenant.suspended_at)}` : '')
-        + '. Everything already recorded is still here and still visible — only '
-        + 'the collection of new punches has stopped. Contact support to have it '
-        + 'restored.',
-      'bad'
-    ));
-  }
-  if (needsSetup && !checklist) {
-    banners.push(banner(
-      'Finish connecting',
-      health.odoo === 'missing' && health.source === 'missing'
-        ? 'Neither Odoo nor a device platform is connected yet. Nothing will sync until both are.'
-        : health.odoo === 'missing'
-          ? 'Odoo is not connected. Punches are captured but cannot be pushed.'
-          : 'No device platform is connected, so there is nothing to pull punches from.',
-      'warn'
-    ));
-  }
-  // The server sends the same renewal_warning for a trial and a paid
-  // subscription — both are just "this account's access is good until
-  // subscription_renews_at" (see app.services.scheduling.renewal_warning).
-  // Which one it actually is, and what to say about it, is decided here:
-  //  - trialing: always a trial ending, whether or not a plan is picked —
-  //    signup always assigns one (the default, if none was chosen), so
-  //    "no plan chosen" is not a real state to guard here.
-  //  - active with no plan_id: an edge case (an account a staff member
-  //    created with no plan and no platform default configured) with
-  //    nothing to actually renew — say nothing rather than "your
-  //    subscription ends" for a subscription that was never really there.
-  //  - active with a plan: the paid-subscription warning, as before.
-  const isTrial = auth.tenant?.status === 'trialing';
-  const hasPlan = Boolean(auth.tenant?.plan_id);
-  if (data.renewal_warning && (isTrial || hasPlan)) {
-    // Ranked above the routine operational banners below (unmapped badges,
-    // failed punches) even though nothing is actually broken yet — an
-    // account about to stop syncing entirely is more consequential than
-    // either, and the whole point of a warning is to be seen before it
-    // becomes one of those two banners instead.
-    const { days_left: daysLeft, urgent } = data.renewal_warning;
-    const subject = isTrial ? 'free trial' : 'subscription';
-    banners.push(banner(
-      daysLeft <= 0 ? `Your ${subject} ends today`
-        : `Your ${subject} ends in ${daysLeft} day${daysLeft === 1 ? '' : 's'}`,
-      'Syncing stops automatically when it does. Nothing already recorded is '
-        + 'ever affected — only the collection of new punches would stop. '
-        + (isTrial ? 'Choose a plan to continue.' : 'Contact support to renew.'),
-      // Same message either way — just louder once it's close. 'bad' inside
-      // subscription_urgent_days (default 3), 'warn' from the wider
-      // subscription_warning_days window down to that point.
-      urgent ? 'bad' : 'warn',
-      isTrial ? { href: '#/settings/plan', label: 'Choose a plan' } : null,
-    ));
-  }
-  if (data.unmapped_employees > 0) {
-    banners.push(banner(
-      `${data.unmapped_employees} badge${data.unmapped_employees === 1 ? '' : 's'} waiting to be matched`,
-      'Their attendance is held until each badge is matched to an Odoo employee.',
-      'warn',
-      { href: '#/settings/odoo?show=unmapped', label: 'Match badges' },
-    ));
-  }
-  if (data.punches_held > 0) {
-    banners.push(banner(
-      `${data.punches_held} punch${data.punches_held === 1 ? ' is' : 'es are'} waiting on your plan`,
-      `They come from a terminal beyond your plan's ${data.tenant?.plan_max_devices ?? ''}-device limit. `
-        + 'They are kept safely and go to Odoo as soon as your plan covers the terminal.',
-      'warn',
-      { href: '#/settings/plan/choose', label: 'Upgrade plan' },
-    ));
-  }
-  if (data.punches_error > 0) {
-    banners.push(banner(
-      `${data.punches_error} punch${data.punches_error === 1 ? '' : 'es'} failed to reach Odoo`,
-      'Each one shows the reason Odoo gave. Fix the cause, then Retry.',
-      'bad',
-      { href: '#/activity?state=error', label: 'Review errors' },
-    ));
-  }
-
+  // Failures and warnings (stopped account, renewals, failed punches, unmatched
+  // badges, connections…) live in one place — the bell in the top bar — rather
+  // than being repeated on this page.
   const today = new Date().toISOString().slice(0, 10);
-  // What needs attention sits in a narrow column on the right rather than
-  // stacked full-width above everything — still the first thing in reading
-  // order (and on top again on narrow screens, see .notice-rail), without
-  // pushing the page's actual content below the fold.
-  const rail = banners.length
-    ? `<aside class="notice-rail" aria-label="Needs attention">${banners.join('')}</aside>` : '';
   mount.innerHTML = `
-    <div class="${rail ? 'with-rail' : ''}">
-    ${rail}
+    <div>
     <div class="rail-main">
     ${checklist}
     ${scheduleCard(data.schedule, needsSetup)}

@@ -33,6 +33,13 @@ const ORPHAN = [
   { value: 'ignore', label: 'Ignore — drop it' },
 ];
 
+const TRASH_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+  + 'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>';
+
+/** Accounts staff may delete — the server enforces the same list. */
+const DELETABLE = ['suspended', 'cancelled', 'past_due'];
+
 /** Options for a plan <select>, including the "no plan" choice.
  *
  * Retired plans stay in the list (see GET /admin/plans) — a tenant already
@@ -264,8 +271,8 @@ function rowFor(t) {
           <button class="sm save">Save</button>
           <button type="button" class="sm configure-btn">Configure</button>
           <span class="gate">${gateControl(t)}</span>
-          ${['suspended', 'cancelled'].includes(t.status)
-            ? '<button type="button" class="sm danger-outline delete-tenant" title="Delete this deactivated account and all its data">Delete</button>' : ''}
+          ${DELETABLE.includes(t.status)
+            ? `<button type="button" class="icon-btn delete-tenant" title="Delete account" aria-label="Delete account ${esc(t.name)}">${TRASH_ICON}</button>` : ''}
         </div>
       </td>
     </tr>`;
@@ -744,9 +751,9 @@ function wire(mount, route, tenants, plans, linkFor) {
 }
 
 
-/* Delete a deactivated account: a modal, the account name typed back, and an
- * optional reason that goes into Closed accounts. Only offered for suspended
- * or cancelled accounts — the server enforces the same. */
+/* Delete an account: a modal, the account name typed back, and an optional
+ * reason that goes into Closed accounts. Only offered for suspended, cancelled
+ * or past-due accounts — the server enforces the same. */
 function openDeleteTenantDialog(t, onDone) {
   document.querySelector('dialog.delete-dialog')?.remove();
   const dialog = document.createElement('dialog');

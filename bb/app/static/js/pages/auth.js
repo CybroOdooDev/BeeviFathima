@@ -134,6 +134,7 @@ export function renderLogin(route = {}) {
     <form id="form">
       ${field({ name: 'email', label: 'Email', type: 'email', required: true, value: reauth })}
       ${field({ name: 'password', label: 'Password', type: 'password', required: true })}
+      ${reauth ? '' : '<p class="auth-alt" style="text-align:right;margin:-4px 0 12px"><a href="#/forgot-password">Forgot password?</a></p>'}
       <button class="primary" style="width:100%" id="go">${reauth ? 'Continue' : admin ? 'Sign in to console' : 'Sign in'}</button>
     </form>
     ${reauth ? '<p class="auth-alt"><a href="#/">Cancel</a></p>'

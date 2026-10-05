@@ -13,7 +13,7 @@ Three things make it safe to run in every replica:
   pods behind a load balancer still produce one sync per tenant per interval.
 * **An in-flight set.** A cycle slower than the tick is not started again on
   top of itself; the tenant is simply skipped until it finishes.
-* **A thread pool.** The engine is blocking (``requests`` and ``xmlrpc``), so
+* **A thread pool.** The engine is blocking (``requests``, ``httpx`` and ``xmlrpc``), so
   running it on the event loop would stall every HTTP request served by this
   process for the length of a sync.
 
@@ -53,6 +53,10 @@ STALE_CLOSE_EVERY_SECONDS = 3600
 #: than on every tick.
 SUBSCRIPTION_SWEEP_EVERY_SECONDS = 3600
 
+#: Alert emails need a finer clock than the hourly jobs — the grace period is
+#: minutes — but not every tick.
+ALERT_EMAIL_EVERY_SECONDS = 300
+
 
 class Scheduler:
     """Owns one asyncio task. Start it in ``lifespan``, stop it on shutdown."""
@@ -65,6 +69,7 @@ class Scheduler:
         self._semaphore = asyncio.Semaphore(max(1, settings.scheduler_concurrency))
         self._last_stale_close: datetime | None = None
         self._last_subscription_sweep: datetime | None = None
+        self._last_alert_sweep: datetime | None = None
         self.ticks = 0
         self.dispatched = 0
 
@@ -158,6 +163,9 @@ class Scheduler:
 
         if self._subscription_sweep_due():
             asyncio.create_task(self._run_subscription_sweep())
+
+        if self._alert_sweep_due():
+            asyncio.create_task(self._run_alert_sweep())
 
     def _claim_and_select(self) -> tuple[bool, list[str]]:
         """Claim the lease and read the due list — one short database visit.
@@ -258,6 +266,31 @@ class Scheduler:
                 )
         except Exception:  # noqa: BLE001
             log.exception("Subscription sweep failed")
+
+    def _alert_sweep_due(self) -> bool:
+        now = datetime.now(timezone.utc)
+        if self._last_alert_sweep is None:
+            self._last_alert_sweep = now  # not on the first tick either
+            return False
+        if (now - self._last_alert_sweep).total_seconds() < ALERT_EMAIL_EVERY_SECONDS:
+            return False
+        self._last_alert_sweep = now
+        return True
+
+    async def _run_alert_sweep(self) -> None:
+        try:
+            result = await asyncio.to_thread(self._alert_sweep_blocking)
+            if result["emails_sent"]:
+                log.info("Alert emails: %d sent to %d account(s)", result["emails_sent"], result["tenants_emailed"])
+        except Exception:  # noqa: BLE001
+            log.exception("Alert email sweep failed")
+
+    @staticmethod
+    def _alert_sweep_blocking() -> dict[str, int]:
+        from app.services.alert_emails import sweep_alert_emails
+
+        with session_scope() as db:
+            return sweep_alert_emails(db)
 
     @staticmethod
     def _subscription_sweep_blocking() -> dict[str, int]:

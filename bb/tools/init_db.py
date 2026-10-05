@@ -6,7 +6,7 @@
 
 ``create_all`` only adds tables that are absent. It does not alter or drop an
 existing one, so it cannot migrate a schema that has already diverged — once
-this system holds data you care about, changes belong in Alembic, not here.
+this system holds data you care about, use tools/db_upgrade.py (Alembic), not this.
 """
 
 from __future__ import annotations

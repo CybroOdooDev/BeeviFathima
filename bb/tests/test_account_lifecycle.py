@@ -207,3 +207,21 @@ def test_failed_renewal_and_cancellation_send_a_notice(client, stripe, mail):
                          "data": {"object": {"id": "sub_1", "customer": "cus_1"}}})
     assert _tenant(client).status == "cancelled" and "has ended" in mail[-1][1]
     assert len(mail) == 2
+
+
+def test_staff_can_delete_a_past_due_account_but_not_a_trialing_one(client, dstripe):
+    _signup(client)
+    staff = _staff(client)
+    acme = _acme(client)
+    r = client.post(f"/api/v1/admin/tenants/{acme.id}/delete", headers=staff, json={"confirm_name": "Acme"})
+    assert r.status_code == 400 and "past-due" in r.json()["detail"]
+
+    s = client.Session()
+    s.get(Tenant, acme.id).status = "past_due"
+    s.commit(); s.close()
+    r = client.post(f"/api/v1/admin/tenants/{acme.id}/delete", headers=staff, json={"confirm_name": "Acme"})
+    assert r.status_code == 200, r.text
+    s = client.Session()
+    assert s.get(Tenant, acme.id) is None
+    assert s.scalars(select(AccountClosure)).one().status_before == "past_due"
+    s.close()

@@ -110,6 +110,12 @@ const INFO_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="
  * shown by the app-wide hover / focus label (wireTips). For forms whose
  * fields are self-explanatory most of the time, where a paragraph under
  * every box is more noise than guidance. */
+/** "Server timezone" → "Server Timezone": the first letter of every word in a
+ * form label is capitalised, whatever wrote the label (a page, or a provider's
+ * config_fields). Only first letters change, so "API", "URL" and "BioStar"
+ * stay as they are. */
+export const titleCase = (text) => String(text ?? '').replace(/(^|[\s/(])([a-z])/g, (_m, lead, ch) => lead + ch.toUpperCase());
+
 export function field({ name, label, type = 'text', value = '', help, required, placeholder, options, strongHelp, boolean, datalist, tip }) {
   // A select always yields a string, so a "false" option would PATCH the string
   // "false" — truthy everywhere on the server. data-bool tells readForm to
@@ -141,7 +147,7 @@ export function field({ name, label, type = 'text', value = '', help, required, 
          ${placeholder ? `placeholder="${esc(placeholder)}"` : ''}>`;
   return `
     <div class="field">
-      <label for="${esc(name)}">${esc(label)}${required ? '' : ' <span class="opt">optional</span>'}${
+      <label for="${esc(name)}">${esc(titleCase(label))}${required ? '' : ' <span class="opt">optional</span>'}${
         help && tip ? `<span class="field-tip${strongHelp ? ' strong' : ''}" tabindex="0" role="note"
           aria-label="${esc(help)}" data-tip="${esc(help)}">${INFO_ICON}</span>` : ''}</label>
       ${control}
@@ -332,8 +338,8 @@ export function planCards({
   }).join('');
   return `
     <div class="field"${id ? ` id="${esc(id)}"` : ''}>
-      <label>${esc(label)}${required ? '' : ' <span class="opt">optional</span>'}</label>
-      <div class="plan-grid" role="radiogroup" aria-label="${esc(label)}">${cards}</div>
+      <label>${esc(titleCase(label))}${required ? '' : ' <span class="opt">optional</span>'}</label>
+      <div class="plan-grid" role="radiogroup" aria-label="${esc(titleCase(label))}">${cards}</div>
       ${help ? `<div class="help">${esc(help)}</div>` : ''}
     </div>`;
 }

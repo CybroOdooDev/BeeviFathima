@@ -1,12 +1,28 @@
-"""Odoo external API over XML-RPC.
+"""Odoo external API — JSON-2 on Odoo 19+, XML-RPC on Odoo 14 to 18.
 
-Works against Odoo Online, Odoo.sh and self-hosted, versions 14 to 19, with no
-module installed on the customer side. The customer supplies:
+Works against Odoo Online, Odoo.sh and self-hosted, with no module installed
+on the customer side. The customer supplies:
 
     url       https://acme.odoo.com     (no path — see _check_url)
     db        acme
     username  integration@acme.com
     api_key   Preferences > Account Security > New API Key
+
+Which API
+---------
+Odoo removes XML-RPC *and* JSON-RPC (``/xmlrpc``, ``/xmlrpc/2``, ``/jsonrpc``)
+in Odoo 20. Their replacement, the JSON-2 API (``POST /json/2/<model>/<method>``
+with ``Authorization: bearer <api key>``), first shipped in Odoo 19 — so no
+single transport covers every supported version:
+
+* Odoo 19 and later  → JSON-2
+* Odoo 14 to 18      → XML-RPC (the only external API they have)
+
+``OdooClient`` picks one per server on first use (see ``_detect_api``) and
+remembers it for an hour, so an Odoo upgraded from 18 to 19 moves to JSON-2 on
+its own. Everything above ``execute`` is unaware of the difference: callers
+still pass ``execute_kw``-style positional ``args``, and ``_json2_body`` turns
+them into JSON-2's named arguments.
 
 Datetime contract: Odoo stores ``Datetime`` fields as **naive UTC**. Everything
 this client sends or receives is naive UTC; conversion happens upstream in
@@ -14,24 +30,28 @@ this client sends or receives is naive UTC; conversion happens upstream in
 
 A note on the error messages
 ----------------------------
-``xmlrpc.client`` raises ``ProtocolError`` for any non-200, and its repr is
-accurate but useless to a customer: every status has a different fix, and none of
-them is "check your credentials" — the request never reached Odoo's handler, so
-the database, login and key have not been tested at all. The status is mapped to
-an actionable sentence below, because this is the single most common support
-ticket the product generates.
+A non-200 from either API is accurate but useless to a customer as-is: every
+status has a different fix, and none of them is "check your credentials" — the
+request never reached Odoo's handler, so the database, login and key have not
+been tested at all. The status is mapped to an actionable sentence below,
+because this is the single most common support ticket the product generates.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 import socket
 import ssl
+import threading
+import time
 import xmlrpc.client
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
+
+import httpx
 
 from app.core.config import settings
 
@@ -50,21 +70,54 @@ MATCH_FIELDS: tuple[tuple[str, str], ...] = (
     ("work_email", "work_email"),
 )
 
+# --------------------------------------------------------------------------- #
+# Which API
+# --------------------------------------------------------------------------- #
+API_AUTO = "auto"
+API_JSON2 = "json2"
+API_XMLRPC = "xmlrpc"
+API_LABELS = {API_JSON2: "JSON-2 API", API_XMLRPC: "XML-RPC"}
+
+#: First Odoo major version with the JSON-2 API. (Some Odoo Online
+#: ``saas~18.x`` builds have it too, but they still have XML-RPC as well, so
+#: they stay on XML-RPC until they reach 19.)
+JSON2_MIN_MAJOR = 19
+
+#: How long a server's detected API is trusted before it is looked up again.
+_API_TTL_SECONDS = 3600
+_api_cache: dict[tuple[str, str], tuple[str, dict[str, Any], float]] = {}
+_api_cache_lock = threading.Lock()
+
+#: Tests point this at an httpx.MockTransport standing in for Odoo.
+TRANSPORT: httpx.BaseTransport | None = None
+
+
+def forget_detected_api(url: str | None = None) -> None:
+    """Drop cached API choices — all of them, or one server's."""
+    with _api_cache_lock:
+        if url is None:
+            _api_cache.clear()
+        else:
+            for key in [k for k in _api_cache if k[0] == url.rstrip("/")]:
+                _api_cache.pop(key, None)
+
+
 _TRANSPORT_HINTS: dict[int, str] = {
-    301: "that URL redirects elsewhere, and XML-RPC does not follow redirects. "
-         "Use the redirect target — usually the https:// form of the same host.",
-    302: "that URL redirects elsewhere, and XML-RPC does not follow redirects.",
-    307: "that URL redirects elsewhere, and XML-RPC does not follow redirects.",
-    308: "that URL redirects permanently elsewhere, and XML-RPC does not follow "
-         "redirects. Use the https:// form.",
+    301: "that URL redirects elsewhere, and Odoo's API does not follow "
+         "redirects. Use the redirect target — usually the https:// form of the "
+         "same host.",
+    302: "that URL redirects elsewhere, and Odoo's API does not follow redirects.",
+    307: "that URL redirects elsewhere, and Odoo's API does not follow redirects.",
+    308: "that URL redirects permanently elsewhere, and Odoo's API does not "
+         "follow redirects. Use the https:// form.",
     400: "the server rejected the request. On Odoo 17+ this is what a base URL "
          "with an extra path segment returns — enter only https://host.",
     401: "something in front of Odoo demands HTTP basic authentication, usually "
          "a protected staging site.",
-    403: "a proxy, WAF or CDN is blocking the XML-RPC endpoint before Odoo sees "
-         "it. Cloudflare blocks XML-RPC by default. Allow /xmlrpc/2/* from this "
-         "server's address.",
-    404: "there is no XML-RPC endpoint there. The URL is wrong — most often it "
+    403: "a proxy, WAF or CDN is blocking Odoo's API before Odoo sees it "
+         "(Cloudflare blocks XML-RPC by default). Allow /json/2/* (Odoo 19+) or "
+         "/xmlrpc/2/* (older Odoo) from this server's address.",
+    404: "there is no Odoo API endpoint there. The URL is wrong — most often it "
          "has a path on the end.",
     500: "Odoo itself errored on the request. Check the Odoo server log.",
     502: "a reverse proxy is up but cannot reach Odoo behind it.",
@@ -75,6 +128,9 @@ _TRANSPORT_HINTS: dict[int, str] = {
 
 class OdooError(RuntimeError):
     """Any failure talking to Odoo, already phrased for a human."""
+
+    #: The HTTP status behind a transport failure, when there was one.
+    http_status: int | None = None
 
 
 class OdooAuthError(OdooError):
@@ -87,18 +143,23 @@ class OdooAuthError(OdooError):
 _UNSET = object()
 
 
-def _transport_error(url: str, exc: Exception) -> OdooError:
+def _with_status(err: OdooError, status: int | None) -> OdooError:
+    err.http_status = status
+    return err
+
+
+def _transport_error(url: str, exc: Exception, endpoint: str = "/xmlrpc/2/common") -> OdooError:
     if isinstance(exc, xmlrpc.client.ProtocolError):
         hint = _TRANSPORT_HINTS.get(
             exc.errcode, f"the endpoint answered HTTP {exc.errcode} {exc.errmsg}."
         )
-        return OdooError(
+        return _with_status(OdooError(
             f"Could not reach Odoo's API at {url}: {hint} "
-            f"(HTTP {exc.errcode} on /xmlrpc/2/common)"
-        )
+            f"(HTTP {exc.errcode} on {endpoint})"
+        ), exc.errcode)
     if isinstance(exc, xmlrpc.client.ResponseError):
         return OdooError(
-            f"{url} answered, but with a web page instead of XML-RPC. Something "
+            f"{url} answered, but with a web page instead of Odoo's API. Something "
             "is serving HTML where the API should be."
         )
     if isinstance(exc, ssl.SSLError):
@@ -120,6 +181,131 @@ def _transport_error(url: str, exc: Exception) -> OdooError:
     return OdooError(f"Cannot reach Odoo at {url}: {exc}")
 
 
+def _http_error(url: str, exc: httpx.HTTPError) -> OdooError:
+    """An httpx failure, phrased the same way as the XML-RPC ones."""
+    cause = exc.__cause__ or exc.__context__
+    while cause is not None and not isinstance(
+        cause, (ssl.SSLError, socket.gaierror, ConnectionRefusedError, socket.timeout, TimeoutError)
+    ):
+        cause = cause.__cause__ or cause.__context__
+    if cause is not None:
+        return _transport_error(url, cause)
+    if isinstance(exc, httpx.TimeoutException):
+        return _transport_error(url, TimeoutError())
+    text = str(exc)
+    if "WRONG_VERSION_NUMBER" in text:
+        return _transport_error(url, ssl.SSLError("WRONG_VERSION_NUMBER"))
+    if "SSL" in text or "CERTIFICATE" in text.upper():
+        return OdooError(f"TLS failed for {url}: {text}")
+    if "Name or service not known" in text or "nodename nor servname" in text \
+            or "getaddrinfo failed" in text or "No address associated" in text:
+        return OdooError(f"Cannot resolve the host in {url}: {text}")
+    if "Connection refused" in text or "actively refused" in text:
+        return _transport_error(url, ConnectionRefusedError())
+    return OdooError(f"Cannot reach Odoo at {url}: {text or type(exc).__name__}")
+
+
+def _major(info: dict[str, Any] | None) -> int | None:
+    """Odoo's major version from a version() answer: 19 for "19.0",
+    18 for "saas~18.3", None if it can't be read."""
+    if not info:
+        return None
+    for value in ((info.get("server_version_info") or [None])[0], info.get("server_version")):
+        match = re.search(r"\d+", str(value or ""))
+        if match:
+            return int(match.group())
+    return None
+
+
+# --------------------------------------------------------------------------- #
+# JSON-2: positional execute_kw args → named arguments
+# --------------------------------------------------------------------------- #
+#: method → (first positional arg is the record ids, names of the rest).
+#: JSON-2 has no positional arguments at all, so every method this client (or
+#: a tool built on it) calls with positional ``args`` needs its parameter
+#: names here. Keyword-only calls need no entry.
+_JSON2_SIGNATURES: dict[str, tuple[bool, tuple[str, ...]]] = {
+    "search": (False, ("domain", "offset", "limit", "order")),
+    "search_read": (False, ("domain", "fields", "offset", "limit", "order")),
+    "search_count": (False, ("domain", "limit")),
+    "name_search": (False, ("name", "domain", "operator", "limit")),
+    "create": (False, ("vals_list",)),
+    "fields_get": (False, ("allfields", "attributes")),
+    "check_access_rights": (False, ("operation", "raise_exception")),
+    "has_access": (False, ("operation",)),
+    "context_get": (False, ()),
+    "read": (True, ("fields", "load")),
+    "write": (True, ("vals",)),
+    "unlink": (True, ()),
+    "biobridge_upsert": (False, ("serial_number", "vals")),
+}
+
+
+def _json2_body(model: str, method: str, args: list[Any], kwargs: dict[str, Any]) -> dict[str, Any]:
+    args = list(args or [])
+    body: dict[str, Any] = {}
+    if args:
+        signature = _JSON2_SIGNATURES.get(method)
+        if signature is None:
+            raise OdooError(
+                f"BioBridge can't call {model}.{method} with positional arguments on "
+                "Odoo's JSON-2 API — pass them by name."
+            )
+        takes_ids, names = signature
+        if takes_ids:
+            ids = args.pop(0)
+            body["ids"] = [ids] if isinstance(ids, int) else list(ids or [])
+        if len(args) > len(names):
+            raise OdooError(f"Too many arguments for {model}.{method}.")
+        body.update(zip(names, args))
+    for key, value in (kwargs or {}).items():
+        if key in body:
+            raise OdooError(f"{model}.{method} got {key!r} twice.")
+        body[key] = value
+    if method == "create" and isinstance(body.get("vals_list"), dict):
+        # XML-RPC accepts one dict; JSON-2 wants the list create() takes.
+        body["vals_list"] = [body["vals_list"]]
+    return body
+
+
+def _json2_error(url: str, model: str, method: str, db: str, resp: httpx.Response) -> OdooError:
+    status = resp.status_code
+    try:
+        data = resp.json()
+    except ValueError:
+        data = None
+    if not isinstance(data, dict) or not (data.get("message") or data.get("name")):
+        # Not Odoo's own error document: a proxy, a WAF, or no Odoo at all.
+        hint = _TRANSPORT_HINTS.get(status, f"the endpoint answered HTTP {status}.")
+        return _with_status(OdooError(
+            f"Could not reach Odoo's API at {url}: {hint} "
+            f"(HTTP {status} on /json/2/{model}/{method})"
+        ), status)
+
+    name = str(data.get("name") or "")
+    message = str(data.get("message") or name).strip()
+    lowered = message.lower()
+    if status == 401 or "apikey" in lowered.replace(" ", "") or name.endswith("Unauthorized"):
+        return _with_status(OdooAuthError(
+            "Odoo rejected the API key — it is wrong, was revoked, or has expired "
+            "(API keys on Odoo 19+ have an expiry date). Create a new one in Odoo: "
+            "avatar → My Profile → Account Security → New API Key, and paste it here."
+        ), status)
+    if "database" in lowered and ("not found" in lowered or "does not exist" in lowered
+                                  or "no database" in lowered):
+        return _with_status(OdooAuthError(
+            f"Odoo has no database named {db!r}. On Odoo Online the database name is "
+            "usually the subdomain of the URL."
+        ), status)
+    if status == 403 or "AccessError" in name:
+        return _with_status(OdooAuthError(
+            f"The Odoo user lacks permission for {model}.{method}. Grant "
+            "the 'Employees / Administrator' or HR Officer group."
+            + (f" Odoo said: {message[:200]}" if message else "")
+        ), status)
+    return _with_status(OdooError(f"Odoo {model}.{method} failed: {message[:400]}"), status)
+
+
 @dataclass
 class OdooCredentials:
     url: str
@@ -135,6 +321,8 @@ class OdooCredentials:
     #: it's set, regardless of how many companies the underlying Odoo user
     #: is otherwise a member of.
     company_id: int | None = None
+    #: "auto" (detect from the server's version), "json2" or "xmlrpc".
+    api: str = API_AUTO
 
 
 class _TimeoutMixin:
@@ -163,6 +351,15 @@ class _TimeoutSafeTransport(_TimeoutMixin, xmlrpc.client.SafeTransport):
         self._timeout = timeout
 
 
+_XMLRPC_TRANSPORT_ERRORS = (
+    xmlrpc.client.ProtocolError,
+    xmlrpc.client.ResponseError,
+    ssl.SSLError,
+    OSError,
+    socket.timeout,
+)
+
+
 class OdooClient:
     def __init__(self, creds: OdooCredentials, timeout: int | None = None) -> None:
         self.creds = creds
@@ -171,12 +368,73 @@ class OdooClient:
         self._timeout = timeout or settings.http_timeout_seconds
         self._common: xmlrpc.client.ServerProxy | None = None
         self._models: xmlrpc.client.ServerProxy | None = None
+        self._http: httpx.Client | None = None
+        self._api: str | None = None if (creds.api or API_AUTO) == API_AUTO else creds.api
+        if self._api not in (None, API_JSON2, API_XMLRPC):
+            raise OdooError(f"Unknown Odoo API {creds.api!r} — use auto, json2 or xmlrpc.")
+        self._version_info: dict[str, Any] | None = None
         self._field_cache: dict[str, set[str]] = {}
         #: "module" | "bootstrap" | None | _UNSET (not looked up this
         #: instance's lifetime yet) — see _device_tracking_mode.
         self._device_mode: str | None | object = _UNSET
 
-    # -- transport ---------------------------------------------------------
+    def close(self) -> None:
+        if self._http is not None:
+            self._http.close()
+            self._http = None
+
+    def __del__(self) -> None:  # best effort; a client is cheap to leak
+        try:
+            self.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    # -- which API ---------------------------------------------------------
+    @property
+    def api(self) -> str:
+        """"json2" or "xmlrpc" — detected on first use unless pinned."""
+        if self._models is not None:
+            # An XML-RPC ``object`` proxy was plugged in directly (tests do).
+            return API_XMLRPC
+        if self._api is None:
+            self._api = self._detect_api()
+        return self._api
+
+    @property
+    def api_label(self) -> str:
+        return API_LABELS.get(self.api, self.api)
+
+    def _detect_api(self) -> str:
+        key = (self.url, self.creds.db)
+        with _api_cache_lock:
+            cached = _api_cache.get(key)
+        if cached and cached[2] > time.monotonic():
+            self._version_info = cached[1]
+            return cached[0]
+
+        info = self._web_version()
+        if info is not None:
+            api = API_JSON2 if (_major(info) or 0) >= JSON2_MIN_MAJOR else API_XMLRPC
+        else:
+            try:
+                info = self._xmlrpc_version()
+            except OdooError as exc:
+                if exc.http_status != 404:
+                    raise
+                # Neither /web/version nor XML-RPC: an Odoo 20+ where only
+                # JSON-2 is left. Its own calls will say so if that's wrong.
+                info = {}
+                api = API_JSON2
+            else:
+                api = API_JSON2 if (_major(info) or 0) >= JSON2_MIN_MAJOR else API_XMLRPC
+        self._version_info = info
+        with _api_cache_lock:
+            _api_cache[key] = (api, info, time.monotonic() + _API_TTL_SECONDS)
+        log.info("Odoo at %s: version %s, using %s", self.url,
+                 info.get("server_version") or "unknown", API_LABELS[api])
+        return api
+
+    # -- transports --------------------------------------------------------
     def _proxy(self, endpoint: str) -> xmlrpc.client.ServerProxy:
         transport = (
             _TimeoutSafeTransport(self._timeout)
@@ -200,24 +458,81 @@ class OdooClient:
         return self._models
 
     @property
+    def http(self) -> httpx.Client:
+        if self._http is None:
+            self._http = httpx.Client(
+                timeout=self._timeout,
+                follow_redirects=False,
+                transport=TRANSPORT,
+                headers={"User-Agent": "BioBridge (Odoo attendance sync)"},
+            )
+        return self._http
+
+    def _web_version(self) -> dict[str, Any] | None:
+        """``GET /web/version``, normalised to XML-RPC's version() shape —
+        or None where that route doesn't answer it (older Odoo)."""
+        try:
+            resp = self.http.get(f"{self.url}/web/version")
+        except httpx.HTTPError as exc:
+            raise _http_error(self.url, exc) from exc
+        if resp.status_code != 200:
+            return None
+        try:
+            data = resp.json()
+        except ValueError:
+            return None
+        if not isinstance(data, dict) or not data.get("version_info"):
+            return None
+        return {
+            "server_version": data.get("version") or ".".join(str(p) for p in data["version_info"][:2]),
+            "server_version_info": list(data["version_info"]),
+        }
+
+    def _xmlrpc_version(self) -> dict[str, Any]:
+        try:
+            return self.common.version()
+        except _XMLRPC_TRANSPORT_ERRORS as exc:
+            raise _transport_error(self.url, exc) from exc
+
+    def _json2(self, model: str, method: str, body: dict[str, Any]) -> Any:
+        try:
+            resp = self.http.post(
+                f"{self.url}/json/2/{model}/{method}",
+                json=body,
+                headers={
+                    "Authorization": f"bearer {self.creds.api_key}",
+                    "X-Odoo-Database": self.creds.db,
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise _http_error(self.url, exc) from exc
+        if resp.status_code != 200:
+            raise _json2_error(self.url, model, method, self.creds.db, resp)
+        try:
+            return resp.json()
+        except ValueError:
+            raise OdooError(
+                f"{self.url} answered, but with a web page instead of Odoo's API. "
+                "Something is serving HTML where the API should be."
+            ) from None
+
+    # -- session -----------------------------------------------------------
+    @property
     def uid(self) -> int:
         if self._uid is None:
             self._uid = self.authenticate()
         return self._uid
 
     def version(self) -> dict[str, Any]:
-        try:
-            return self.common.version()
-        except (
-            xmlrpc.client.ProtocolError,
-            xmlrpc.client.ResponseError,
-            ssl.SSLError,
-            OSError,
-            socket.timeout,
-        ) as exc:
-            raise _transport_error(self.url, exc) from exc
+        if self._models is None:
+            self.api  # detection reads the version on the way
+        if self._version_info is None:
+            self._version_info = self._xmlrpc_version()
+        return self._version_info
 
     def authenticate(self) -> int:
+        if self.api == API_JSON2:
+            return self._authenticate_json2()
         try:
             uid = self.common.authenticate(
                 self.creds.db, self.creds.username, self.creds.api_key, {}
@@ -233,13 +548,7 @@ class OdooClient:
                 f"Odoo refused the authentication request: "
                 f"{detail.strip().splitlines()[-1][:300]}"
             ) from exc
-        except (
-            xmlrpc.client.ProtocolError,
-            xmlrpc.client.ResponseError,
-            ssl.SSLError,
-            OSError,
-            socket.timeout,
-        ) as exc:
+        except _XMLRPC_TRANSPORT_ERRORS as exc:
             raise _transport_error(self.url, exc) from exc
 
         if not uid:
@@ -249,6 +558,34 @@ class OdooClient:
                 "Odoo does not say which. Note a password is refused when the "
                 "user has two-factor enabled."
             )
+        self._uid = int(uid)
+        return self._uid
+
+    def _authenticate_json2(self) -> int:
+        """JSON-2 has no login step: the API key *is* the user. Find out
+        which user, and make sure it is the one the customer named — a key
+        created by somebody else would otherwise write attendance as them."""
+        context = self._json2("res.users", "context_get", {})
+        uid = context.get("uid") if isinstance(context, dict) else None
+        login = (self.creds.username or "").strip()
+        if uid:
+            rows = self._json2("res.users", "read", {"ids": [int(uid)], "fields": ["login"]})
+            actual = str((rows or [{}])[0].get("login") or "")
+            if login and actual and actual.strip().lower() != login.lower():
+                raise OdooAuthError(
+                    f"This API key belongs to the Odoo user {actual!r}, not {login!r}. "
+                    f"Enter {actual!r} as the login, or create the key while signed in "
+                    f"as {login!r}."
+                )
+        else:
+            rows = self._json2("res.users", "search_read", {
+                "domain": [["login", "=", login]], "fields": ["id"], "limit": 1,
+            })
+            if not rows:
+                raise OdooAuthError(
+                    f"Odoo accepted the API key, but has no user with the login {login!r}."
+                )
+            uid = rows[0]["id"]
         self._uid = int(uid)
         return self._uid
 
@@ -276,6 +613,10 @@ class OdooClient:
             ctx = dict(kwargs.get("context") or {})
             ctx["allowed_company_ids"] = [self.creds.company_id]
             kwargs["context"] = ctx
+
+        if self.api == API_JSON2:
+            return self._json2(model, method, _json2_body(model, method, args, kwargs))
+
         try:
             return self.models.execute_kw(
                 self.creds.db, self.uid, self.creds.api_key, model, method, args, kwargs or {}
@@ -288,14 +629,25 @@ class OdooClient:
                     "the 'Employees / Administrator' or HR Officer group."
                 ) from exc
             raise OdooError(f"Odoo {model}.{method} failed: {message[:400]}") from exc
-        except (
-            xmlrpc.client.ProtocolError,
-            xmlrpc.client.ResponseError,
-            ssl.SSLError,
-            OSError,
-            socket.timeout,
-        ) as exc:
-            raise _transport_error(self.url, exc) from exc
+        except _XMLRPC_TRANSPORT_ERRORS as exc:
+            raise _transport_error(self.url, exc, "/xmlrpc/2/object") from exc
+
+    def can(self, model: str, operation: str) -> bool | None:
+        """Whether the Odoo user may ``operation`` ("create", "write", …)
+        records of ``model`` — or None when Odoo won't say.
+
+        ``check_access_rights`` is deprecated since Odoo 18 in favour of
+        ``has_access``; whichever this Odoo answers is used.
+        """
+        attempts = [("check_access_rights", [operation], {"raise_exception": False})]
+        if self.api == API_JSON2:
+            attempts.append(("has_access", [operation], {}))
+        for method, args, kwargs in attempts:
+            try:
+                return bool(self.execute(model, method, args, kwargs))
+            except OdooError as exc:
+                log.debug("%s.%s unavailable: %s", model, method, exc)
+        return None
 
     # -- introspection -----------------------------------------------------
     def fields_of(self, model: str) -> set[str]:
@@ -341,17 +693,19 @@ class OdooClient:
             )
 
         employee_count = self.execute("hr.employee", "search_count", [[]])
-        can_create = self.execute(
-            "hr.attendance", "check_access_rights", ["create"], {"raise_exception": False}
-        )
+        can_create = self.can("hr.attendance", "create")
         return {
             "ok": True,
             "server_version": version.get("server_version"),
+            "api": self.api,
+            "api_label": self.api_label,
             "uid": self._uid,
             "employee_count": employee_count,
             # The one that matters: without it the connection tests green and
             # then every push fails.
-            "can_create_attendance": bool(can_create),
+            # None (Odoo wouldn't say) counts as yes: the first push then
+            # fails with Odoo's own, specific permission error.
+            "can_create_attendance": can_create is not False,
             "has_companion_addon": "biotime_ref" in self.fields_of("hr.attendance"),
             "has_device_tracking": self._device_tracking_mode() is not None,
             "device_tracking_mode": self._device_tracking_mode(),
@@ -587,7 +941,7 @@ class OdooClient:
         mode = self._device_tracking_mode()
         if mode == "module":
             # Delegates the actual find-or-create to the model's own
-            # _biobridge_upsert, rather than a search-then-create here, so
+            # biobridge_upsert, rather than a search-then-create here, so
             # two near-simultaneous pushes for a brand new terminal can't
             # create it twice — see that method's docstring in the add-on.
             vals: dict[str, Any] = {}
@@ -599,7 +953,7 @@ class OdooClient:
                 vals["terminal_model"] = terminal_model
             if ip_address:
                 vals["ip_address"] = ip_address
-            result = self.execute("biobridge.device", "_biobridge_upsert", [serial_number, vals])
+            result = self.execute("biobridge.device", "biobridge_upsert", [serial_number, vals])
             return int(result)
 
         if mode == "bootstrap":
@@ -747,10 +1101,7 @@ class OdooClient:
         self._device_mode = _UNSET
 
     def _assert_settings_access(self) -> None:
-        ok = self.execute(
-            "ir.model", "check_access_rights", ["create"], {"raise_exception": False}
-        )
-        if not ok:
+        if self.can("ir.model", "create") is False:
             raise OdooAuthError(
                 "Setting up device tracking needs the Odoo user BioBridge connects "
                 "as to have 'Settings' access — Settings > Users & Companies > "
@@ -923,8 +1274,8 @@ def _check_url(raw: str) -> str:
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         raise OdooError("The Odoo URL must start with http:// or https://")
-    # Every request appends /xmlrpc/2/... so a path here produces
-    # /web/xmlrpc/2/common and a 404. Pasting the browser address bar — which on
+    # Every request appends /json/2/... or /xmlrpc/2/... so a path here
+    # produces /web/json/2/... and a 404. Pasting the browser address bar — which on
     # Odoo 17+ always carries /odoo — is the easiest mistake on this form, so it
     # is caught at construction with the corrected URL in the message.
     if parsed.path not in ("", "/"):

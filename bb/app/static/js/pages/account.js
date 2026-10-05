@@ -349,3 +349,68 @@ export async function openDeleteAccountWizard({ companyName, billedByStripe }) {
   render();
   dialog.showModal();
 }
+
+
+/** #/forgot-password — ask for a reset link. The reply is the same for any
+ * address, so it never says whether an account exists. */
+export function renderForgotPassword() {
+  const root = authShell(`
+    <h1>Forgot your password?</h1>
+    <p class="sub">Enter the email you signed up with and we’ll send you a link to choose a new one.</p>
+    <form id="fpForm">
+      ${field({ name: 'email', label: 'Email', type: 'email', required: true })}
+      <button class="primary" style="width:100%" id="fpGo">Send reset link</button>
+    </form>
+    <p class="auth-alt"><a href="#/login">&larr; Back to sign in</a></p>`);
+  $('#fpForm', root).addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const error = $('#authError', root);
+    const button = $('#fpGo', root);
+    error.textContent = '';
+    button.disabled = true;
+    try {
+      const result = await post('/auth/forgot-password', readForm(event.target));
+      root.querySelector('.auth-card').innerHTML = `
+        <div class="brand"><span class="brand-mark">B</span><span class="brand-word"><b>Bio</b><span>Bridge</span></span></div>
+        <h1>Check your email</h1>
+        <p class="sub">${esc(result.message)} The link works once and expires in an hour.</p>
+        <a class="btn" style="width:100%;text-align:center" href="#/login">Back to sign in</a>`;
+    } catch (e) {
+      error.textContent = e.message;
+      button.disabled = false;
+    }
+  });
+}
+
+/** #/reset-password?token=… — where the emailed link lands. */
+export function renderResetPassword(route = {}) {
+  const token = route.query?.token || '';
+  const root = authShell(`
+    <h1>Choose a new password</h1>
+    <p class="sub">Pick a password you don’t use anywhere else. Signing in elsewhere will end once you save.</p>
+    <form id="rpForm">
+      ${passwordFields({ current: null })}
+      <button class="primary" style="width:100%" id="rpGo">Reset password</button>
+    </form>
+    <p class="auth-alt"><a href="#/login">&larr; Back to sign in</a></p>`);
+  $('#rpForm', root).addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const error = $('#authError', root);
+    const button = $('#rpGo', root);
+    error.textContent = '';
+    button.disabled = true;
+    try {
+      const body = check(readForm(event.target));
+      await post('/auth/reset-password', { token, new_password: body.new_password });
+      root.querySelector('.auth-card').innerHTML = `
+        <div class="brand"><span class="brand-mark">B</span><span class="brand-word"><b>Bio</b><span>Bridge</span></span></div>
+        <h1>Password changed</h1>
+        <p class="sub">You’re all set — sign in with your new password. Any other signed-in devices have been signed out.</p>
+        <a class="btn primary" style="width:100%;text-align:center" href="#/login">Go to sign in</a>`;
+    } catch (e) {
+      error.innerHTML = /invalid or has expired/.test(e.message)
+        ? `${esc(e.message)} <a href="#/forgot-password">Request a new link</a>` : esc(e.message);
+      button.disabled = false;
+    }
+  });
+}

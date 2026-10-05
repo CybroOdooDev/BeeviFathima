@@ -31,6 +31,7 @@ from app.services.email_verification import issue_verification_token, send_verif
 from app.db.session import get_db
 from app.models import (
     AccountClosure,
+    ContactRequest,
     PendingSignup,
     Device,
     DeviceSource,
@@ -47,6 +48,8 @@ from app.models import (
     UserRole,
 )
 from app.schemas import (
+    ContactRequestOut,
+    ContactRequestUpdate,
     ErrorGroup,
     MailSettingsIn,
     StripeSettingsIn,
@@ -1206,6 +1209,13 @@ def delete_plan(
     return MessageOut(message=f"{name} deleted.")
 
 
+#: Accounts staff may delete: deactivated by hand or by the lapse rules
+#: (suspended, cancelled) or not paying (past due). Never trialing or active.
+DELETABLE_STATUSES = (
+    TenantStatus.suspended.value, TenantStatus.cancelled.value, TenantStatus.past_due.value,
+)
+
+
 @router.post("/tenants/{tenant_id}/delete", response_model=MessageOut)
 def delete_tenant_account(
     tenant_id: str,
@@ -1213,15 +1223,17 @@ def delete_tenant_account(
     actor: User = Depends(get_platform_admin),
     db: Session = Depends(get_db),
 ) -> MessageOut:
-    """Permanently delete a customer account that has already been deactivated
-    (suspended or cancelled). The name has to be typed back."""
+    """Permanently delete a customer account that is no longer in good standing:
+    deactivated (suspended or cancelled) or past due. The name has to be typed
+    back. A live Stripe subscription is cancelled first."""
     tenant = db.get(Tenant, tenant_id)
     if tenant is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No such tenant")
-    if tenant.status not in (TenantStatus.suspended.value, TenantStatus.cancelled.value):
+    if tenant.status not in DELETABLE_STATUSES:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            f"{tenant.name} is still {tenant.status}. Deactivate it first — only a deactivated account can be deleted.")
+            f"{tenant.name} is still {tenant.status}. Deactivate it first — only a suspended, cancelled "
+            "or past-due account can be deleted.")
     if payload.confirm_name.strip().lower() != tenant.name.strip().lower():
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "The name typed doesn't match the account name.")
     if actor.tenant_id == tenant.id:
@@ -1252,3 +1264,37 @@ def list_closures(
         "reason_text": r.reason_text, "stripe_subscription_cancelled": r.stripe_subscription_cancelled,
         "closed_at": r.closed_at.isoformat() if r.closed_at else None,
     } for r in rows]
+
+
+# ===========================================================================
+# Leads — the website's Contact / Book a demo requests
+# ===========================================================================
+@router.get("/contact-requests", response_model=list[ContactRequestOut], tags=["platform"])
+def list_contact_requests(
+    status_filter: str | None = Query(default=None, alias="status"),
+    _: User = Depends(get_platform_admin), db: Session = Depends(get_db),
+    limit: int = Query(default=200, le=500),
+) -> list[ContactRequest]:
+    """Newest first. ``status=open`` is everything not won or closed."""
+    stmt = select(ContactRequest).order_by(ContactRequest.created_at.desc()).limit(limit)
+    if status_filter == "open":
+        stmt = stmt.where(ContactRequest.status.in_(["new", "contacted", "demo_booked"]))
+    elif status_filter:
+        stmt = stmt.where(ContactRequest.status == status_filter)
+    return list(db.scalars(stmt).all())
+
+
+@router.patch("/contact-requests/{request_id}", response_model=ContactRequestOut, tags=["platform"])
+def update_contact_request(
+    request_id: str, payload: ContactRequestUpdate,
+    actor: User = Depends(get_platform_admin), db: Session = Depends(get_db),
+) -> ContactRequest:
+    req = db.get(ContactRequest, request_id)
+    if req is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such request")
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(req, key, value)
+    req.handled_by = actor.email
+    db.commit()
+    db.refresh(req)
+    return req

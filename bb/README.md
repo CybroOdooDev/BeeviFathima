@@ -8,7 +8,7 @@ to Odoo — so the customer installs no agent and no Odoo module. They expose a
 BioTime port and issue an Odoo API key.
 
 ```
-ZKTeco devices → BioTime (customer LAN) ──REST──▶ BioBridge ──XML-RPC──▶ Odoo
+ZKTeco devices → BioTime (customer LAN) ──REST──▶ BioBridge ──JSON-2 / XML-RPC──▶ Odoo
 ```
 
 ## Quick start
@@ -40,10 +40,43 @@ Postgres and run the schema step yourself, once.
 python3 tools/init_db.py           # create the tables (--drop wipes first)
 ```
 
-`create_all` only adds missing tables. It never alters an existing one, so a
+### Database migrations (Alembic)
+
+Schema changes are versioned with [Alembic](https://alembic.sqlalchemy.org).
+After pulling a new version — and as part of every deploy — run:
+
+```bash
+python3 tools/db_upgrade.py            # apply anything pending
+python3 tools/db_upgrade.py --check    # report only (exit 1 if behind)
+```
+
+It works from any starting point: an empty database is built, a versioned one is
+brought up to date, and a database made before Alembic was adopted (tables
+exist, no version table) is brought level and adopted the first time. The
+Docker image runs it before the API starts; on PostgreSQL it takes a database
+lock, so two containers starting together take turns.
+
+Making a schema change:
+
+```bash
+# 1. edit the model
+alembic revision --autogenerate -m "add widget size"
+# 2. READ the file it wrote in alembic/versions/ — autogenerate is a draft
+python3 tools/db_upgrade.py
+```
+
+A new NOT NULL column on a table that already has rows needs a `server_default`
+(or a data step in the revision). `tests/test_migrations.py` fails if the models
+and the migrations ever disagree, so a model change without a revision is caught
+before it ships.
+
+**Older note — `tools/migrate.py`.** Before Alembic, `create_all` was topped up
+by this additive tool. `db_upgrade.py` still uses it, once, to adopt a legacy
+database; there is no need to run it yourself any more. `create_all` only adds
+missing tables. It never alters an existing one, so a
 model that gains a **column** has that column simply absent — and the first query
-mentioning it fails with `no such column`, mid-request or mid-sync. So after
-pulling a new version:
+mentioning it fails with `no such column`, mid-request or mid-sync. The old
+tool, if you do run it:
 
 ```bash
 python3 tools/migrate.py            # report what the database is missing
@@ -647,7 +680,7 @@ plan (Platform → Plans).
    customers can update their card, see invoices and cancel.
 4. Set `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_STARTER`,
    `STRIPE_PRICE_GROWTH`, `STRIPE_PRICE_SCALE` (see `.env.example`), then run
-   `python3 tools/migrate.py --apply` and `python3 tools/seed_plans.py`.
+   `python3 tools/db_upgrade.py` and `python3 tools/seed_plans.py`.
 
 **How it behaves:**
 
@@ -688,6 +721,37 @@ plan (Platform → Plans).
   closed it and why — listed under Platform → **Closed accounts**.
 - **Plans** can be deleted from Platform → Plans only while no account is on
   them (or switching to them) and no website checkout is open; otherwise retire.
+
+## Odoo API: JSON-2 or XML-RPC
+
+Odoo 20 removes XML-RPC *and* JSON-RPC (`/xmlrpc`, `/xmlrpc/2`, `/jsonrpc`).
+Their replacement, the JSON-2 API (`POST /json/2/<model>/<method>` with
+`Authorization: bearer <API key>`), first shipped in Odoo 19 — so BioBridge
+speaks both and picks per server:
+
+| Odoo        | API BioBridge uses |
+|-------------|--------------------|
+| 19 and later | JSON-2            |
+| 14 – 18     | XML-RPC (the only external API they have) |
+
+The version is read from `GET /web/version` (falling back to XML-RPC's
+`version()` on Odoo versions that don't answer it, and assuming JSON-2 where
+neither exists) on first use, and remembered for an hour per server — an Odoo
+upgraded from 18 to 19 moves over by itself, and **Test connection** always
+looks again. The test result says which API is in use ("Connected to Odoo 19.0
+over the JSON-2 API …"). Nothing to configure, and the customer still enters
+the same URL, database, login and API key.
+
+On JSON-2 the API key alone identifies the user, so BioBridge checks that the
+key belongs to the login entered and says so if not. Odoo 19 API keys have an
+expiry date: an expired key fails with a message telling the customer to
+create a new one. A WAF in front of Odoo needs to allow `/json/2/*` (and
+`/web/version`) instead of `/xmlrpc/2/*`.
+
+The optional `biobridge_attendance` add-on (1.0.1) now exposes
+`biobridge.device.biobridge_upsert`: the old `_biobridge_upsert` name starts
+with an underscore, and Odoo refuses private methods over *any* external API.
+Update the add-on on databases that have it.
 
 ## How a sync run works
 
@@ -830,7 +894,7 @@ company is filled in on the same row, rather than a second device being
 created for the same serial number — see `upsert_device`).
 
 Everything above is about what *BioBridge itself* reads and writes over
-XML-RPC — it says nothing about what a person clicking around inside Odoo's
+Odoo's API — it says nothing about what a person clicking around inside Odoo's
 own UI sees. `company_id` (or `x_company_id`) sitting on a device row does
 nothing there by itself: ir.model.access controls whether a user can read
 `biobridge.device`/`x_biobridge_device` at all, not which rows of it they
@@ -933,7 +997,7 @@ Records already in Odoo without a device — pushed before device tracking
 was on, or before that fix — are filled in by
 
     python3 tools/link_attendance_devices.py            # report
-    python3 tools/link_attendance_devices.py --apply    # write, over XML-RPC
+    python3 tools/link_attendance_devices.py --apply    # write, over Odoo's API
 
 which takes each record's terminal from its earliest traceable punch, and
 only touches records BioBridge created that have no device in Odoo yet (a
@@ -950,7 +1014,7 @@ app/
     base.py      the seam: AttendanceProvider, PunchEvent, Capability, registry
     providers/   biotime, zkteco (standalone terminals) — add a vendor here,
                  nothing above changes
-    odoo.py      XML-RPC client with timeouts and actionable transport errors
+    odoo.py      Odoo client: JSON-2 (Odoo 19+) or XML-RPC (14–18), auto-detected
   services/
     timeutils.py every timezone conversion, and nowhere else
     pairing.py   punch stream → intervals. Pure, no DB, no network

@@ -171,6 +171,16 @@ async function renderGeneral(mount) {
               + 'Nothing is lost: the cursor stays where it is and the next run '
               + 'picks up from there.',
         })}
+        ${field({
+          name: 'alert_emails_enabled', label: 'Alert Emails', boolean: true, required: true,
+          value: String(tenant.alert_emails_enabled !== false),
+          options: [
+            { value: 'true', label: 'On — email the owner and admins about serious problems' },
+            { value: 'false', label: 'Off — show alerts in the app only' },
+          ],
+          help: 'Sent when a serious alert (like Odoo rejecting the API key) has lasted '
+              + 'about 15 minutes, then once a day while it is unresolved.',
+        })}
       </form>
       <div class="row" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--rule-soft)">
         <button type="button" id="pwOpen">Change user password</button>
@@ -1262,6 +1272,49 @@ function provisionSummary(r) {
   return parts.join(' ');
 }
 
+const TRASH_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+  + 'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>';
+
+/** "Delete this terminal?" — a small confirmation dialog. Resolves true once
+ * the person confirms, false on Cancel / Escape / backdrop click. Modal and
+ * outside the page's own markup, so a re-render can't close it mid-way. */
+function confirmDeleteTerminal(name, serial, punches = 0) {
+  document.querySelector('dialog.confirm-terminal')?.remove();
+  return new Promise((resolve) => {
+    const dialog = document.createElement('dialog');
+    dialog.className = 'wizard confirm-terminal';
+    dialog.setAttribute('aria-labelledby', 'delTermTitle');
+    dialog.style.width = 'min(460px, calc(100vw - 24px))';
+    dialog.innerHTML = `
+      <div class="wiz-head"><strong id="delTermTitle">Delete terminal?</strong>
+        <button type="button" class="link wiz-x" data-no aria-label="Close">&times;</button></div>
+      <div class="wiz-body">
+        <p style="margin:0 0 10px"><strong>${esc(name)}</strong> <span class="mono hint">${esc(serial)}</span></p>
+        ${punches > 0 ? `
+        <p class="hint" style="margin:0 0 8px">This terminal has <strong>${esc(punches)} punch${punches === 1 ? '' : 'es'}</strong> on record,
+          so it <strong>comes back after the next sync</strong>. Its punches belong to it and are never dropped.</p>
+        <p class="hint" style="margin:0">To stop using it, choose <strong>Disable</strong> instead.</p>` : `
+        <p class="hint" style="margin:0 0 8px">This removes the terminal from BioBridge. Attendance already in Odoo is kept.</p>
+        <p class="hint" style="margin:0">If the terminal sends punches later, it is added back. To stop using one
+          without losing it, choose <strong>Disable</strong> instead.</p>`}
+      </div>
+      <div class="wiz-foot">
+        <button type="button" data-no>Cancel</button>
+        <button type="button" class="danger" data-yes>Delete terminal</button>
+      </div>`;
+    document.body.append(dialog);
+    let answer = false;
+    const finish = () => { dialog.close(); dialog.remove(); resolve(answer); };
+    dialog.querySelectorAll('[data-no]').forEach((b) => b.addEventListener('click', finish));
+    dialog.querySelector('[data-yes]').addEventListener('click', () => { answer = true; finish(); });
+    dialog.addEventListener('cancel', (event) => { event.preventDefault(); finish(); });
+    dialog.addEventListener('click', (event) => { if (event.target === dialog) finish(); });
+    dialog.showModal();
+    dialog.querySelector('[data-no]:not(.wiz-x)').focus();
+  });
+}
+
 function sourceCard(source, devices, readonly, canProvision = false, canImport = true) {
   const kindLabel = source.provider === 'zk_adms' ? 'Cloud push device'
     : source.connection_kind === 'device' ? 'Standalone device' : 'Platform server';
@@ -1332,8 +1385,13 @@ function sourceCard(source, devices, readonly, canProvision = false, canImport =
                   <td>${esc(d.pairing_override || 'account default')}</td>
                   <td style="text-align:right">
                     ${readonly ? pill(d.is_enabled ? 'active' : 'skipped')
-                      : `<button type="button" class="sm" data-toggle="${esc(d.id)}" data-on="${d.is_enabled}">
-                          ${d.is_enabled ? 'Disable' : 'Enable'}</button>`}
+                      : `<div class="row" style="justify-content:flex-end;gap:6px;flex-wrap:nowrap">
+                          <button type="button" class="sm" data-toggle="${esc(d.id)}" data-on="${d.is_enabled}">
+                            ${d.is_enabled ? 'Disable' : 'Enable'}</button>
+                          <button type="button" class="icon-btn" data-delete-device="${esc(d.id)}"
+                            data-name="${esc(d.alias || d.serial_number)}" data-serial="${esc(d.serial_number)}" data-punches="${esc(d.punch_count || 0)}"
+                            title="Delete terminal" aria-label="Delete terminal ${esc(d.alias || d.serial_number)}">${TRASH_ICON}</button>
+                        </div>`}
                   </td>
                 </tr>`).join('')}
             </tbody>
@@ -1674,7 +1732,7 @@ function sourceFieldsHtml(source, kind, providers, provider) {
         help: 'Where the device is. Saved on its device record in Odoo once the connection test recognises it.',
       }) : ''}
       ${field({
-        name: 'base_url', label: isZk ? 'Device address' : isDevice ? 'Device address' : 'Server URL',
+        name: 'base_url', label: isZk ? 'Device Address' : isDevice ? 'Device Address' : 'Server URL',
         required: true, value: addressValue,
         placeholder: isZk ? '192.168.1.50' : isBioStar ? 'https://biostar.example.com'
           : isDevice ? 'https://192.168.1.50:8081' : 'https://biotime.example.com:8081',
@@ -1686,7 +1744,7 @@ function sourceFieldsHtml(source, kind, providers, provider) {
       })}
       ${!isZk ? field({ name: 'username', label: 'Username', required: true, value: source?.username || '' }) : ''}
       ${field({
-        name: 'password', label: isZk ? 'Comm key' : 'Password', type: 'password',
+        name: 'password', label: isZk ? 'Comm Key' : 'Password', type: 'password',
         required: !source && !isZk,
         placeholder: source ? 'unchanged' : '',
         help: isZk
@@ -1694,7 +1752,7 @@ function sourceFieldsHtml(source, kind, providers, provider) {
           : source ? 'Leave blank to keep the current one.' : '',
       })}
       ${field({
-        name: 'server_timezone', label: isBioStar ? 'Site timezone' : isDevice ? 'Device timezone' : 'Server timezone',
+        name: 'server_timezone', label: isBioStar ? 'Site Timezone' : isDevice ? 'Device Timezone' : 'Server Timezone',
         required: true, value: source?.server_timezone || auth.tenant?.timezone || 'UTC',
         help: isBioStar
           ? 'BioStar 2 reports punch times in UTC; this is the zone they are shown in on this connection.'
@@ -1897,6 +1955,18 @@ function wireBiometric(mount, providersFor, canProvision = new Set()) {
           editingSourceId = null;
           await renderBiometric(mount);
         })
+      );
+    });
+  });
+
+  mount.querySelectorAll('[data-delete-device]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      if (!(await confirmDeleteTerminal(button.dataset.name, button.dataset.serial, Number(button.dataset.punches) || 0))) return;
+      busy(button, () =>
+        guard(async () => {
+          await api.del(`/devices/${button.dataset.deleteDevice}`);
+          await renderBiometric(mount);
+        }, 'Terminal deleted')
       );
     });
   });

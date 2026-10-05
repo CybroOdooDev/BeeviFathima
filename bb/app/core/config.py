@@ -33,6 +33,15 @@ class Settings(BaseSettings):
     adms_max_body_bytes: int = 2_000_000
     #: Website registrations (and resend requests) allowed per IP per hour.
     registration_rate_per_hour: int = 10
+    #: Where new Contact / Book a demo requests are emailed. Blank = every
+    #: platform staff account.
+    sales_email: str = ""
+    #: Optional: a Calendly / Cal.com / Google Calendar booking page. When set,
+    #: the website offers it after a demo request so the visitor can pick a slot
+    #: themselves instead of waiting for a reply.
+    demo_booking_url: str = ""
+    #: Contact form submissions allowed per IP per hour.
+    contact_rate_per_hour: int = 5
 
     # --- stores --------------------------------------------------------------
     database_url: str = "sqlite:///./biobridge.db"
@@ -135,6 +144,15 @@ class Settings(BaseSettings):
     #: confirmation link before it goes stale and a fresh one has to be
     #: requested (POST /auth/resend-verification).
     email_verification_ttl_hours: int = 48
+    #: How long an emailed password-reset link works, and the shortest gap
+    #: between two requests for the same account.
+    #: Alert emails: a red alert must stand this long before anyone is mailed
+    #: (a blip that clears itself isn't worth an email), then is repeated at
+    #: most this often while it stays unresolved.
+    alert_email_grace_minutes: int = 15
+    alert_email_reminder_hours: int = 24
+    password_reset_ttl_minutes: int = 60
+    password_reset_cooldown_seconds: int = 60
 
     # --- outbound mail -----------------------------------------------------------
     #: Empty means "no SMTP configured": mail is logged instead of sent, so a

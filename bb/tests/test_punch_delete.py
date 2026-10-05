@@ -57,3 +57,16 @@ def test_the_next_sync_neither_re_ingests_nor_pushes_a_deleted_punch(
     assert odoo.attendances == {}, "a deleted punch is never pushed"
     (again,) = db.scalars(select(PunchRecord)).all()
     assert again.process_state == PunchState.deleted.value, "and not re-ingested as new"
+
+
+def test_an_error_punch_already_in_odoo_is_protected_with_a_clear_reason(api):  # noqa: F811
+    from app.db.session import get_db
+    from app.main import app
+
+    pid = _id(api, "error")
+    db = next(app.dependency_overrides[get_db]())
+    db.get(PunchRecord, pid).odoo_attendance_id = 42
+    db.commit()
+    db.close()
+    r = api.delete(f"/api/v1/punches/{pid}")
+    assert r.status_code == 409 and "attendance #42" in r.json()["detail"]

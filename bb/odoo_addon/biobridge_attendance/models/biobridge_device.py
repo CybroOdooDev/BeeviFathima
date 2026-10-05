@@ -85,11 +85,20 @@ class BiobridgeDevice(models.Model):
         ]
 
     @api.model
+    def biobridge_upsert(self, serial_number, vals=None):
+        """Find-or-create by serial number, scoped to the current company.
+
+        The one entry point BioBridge calls over Odoo's external API (JSON-2
+        on Odoo 19+, XML-RPC before). It has to be public: Odoo refuses any
+        method whose name starts with an underscore over RPC.
+        """
+        return self._biobridge_upsert(serial_number, vals)
+
+    @api.model
     def _biobridge_upsert(self, serial_number, vals=None):
         """Find-or-create by serial number, scoped to the current company.
 
-        The one entry point BioBridge's own XML-RPC client calls (as
-        ``biobridge.device`` / ``_biobridge_upsert``) — kept as a single
+        The implementation behind ``biobridge_upsert`` — kept as a single
         model method rather than leaving the search/create race to the
         caller, since two near-simultaneous pushes for a brand new terminal
         would otherwise create it twice.

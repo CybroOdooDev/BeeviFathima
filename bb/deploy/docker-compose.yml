@@ -49,9 +49,11 @@ services:
     <<: *app
     ports: ["8000:8000"]
     # Schema first, then serve. create_all is skipped in production, so this is
-    # the step that makes a fresh volume usable.
+    # the step that makes a fresh volume usable — and, on every later deploy,
+    # applies whatever migrations the new code needs (Alembic; a no-op when
+    # there is nothing to do, and locked so two starts take turns).
     command: >
-      sh -c "python tools/init_db.py &&
+      sh -c "python tools/db_upgrade.py &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers"
 
   # --- the celery profile: only started with --profile celery ---------------
@@ -78,6 +80,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      # The API runs the migrations; wait for it so a first deploy never has a
+      # worker query columns that are not there yet.
+      api:
+        condition: service_healthy
     command: ["celery", "-A", "app.workers.celery_app", "worker",
               "-Q", "sync,maintenance", "--concurrency", "4", "-l", "info"]
 
@@ -91,6 +97,10 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      # The API runs the migrations; wait for it so a first deploy never has a
+      # worker query columns that are not there yet.
+      api:
         condition: service_healthy
     # One beat. Two would double-dispatch — except they no longer can: beat
     # claims the same database lease the in-process scheduler uses, so a second

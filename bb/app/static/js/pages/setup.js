@@ -37,7 +37,7 @@ export async function render(mount) {
         })}
         ${field({ name: 'username', label: 'Login', required: true, value: odoo?.username || '' })}
         ${field({
-          name: 'api_key', label: odoo ? 'API key' : 'API key', type: 'password',
+          name: 'api_key', label: 'API Key', type: 'password',
           required: !odoo,
           placeholder: odoo ? 'unchanged' : '',
           help: odoo

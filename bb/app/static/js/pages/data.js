@@ -6,6 +6,10 @@ import {
   readForm, stat, todayISO,
 } from '../ui.js';
 
+const TRASH_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+  + 'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>';
+
 /* --- Attendance ----------------------------------------------------------- */
 
 /** Quick ranges: the question is almost always "today", "yesterday" or "this
@@ -499,10 +503,10 @@ export async function renderActivity(mount, route) {
                   <td class="num mono">${esc(p.odoo_attendance_id ?? '—')}</td>
                   <td style="color:var(--muted);font-size:12.5px">${esc(p.error_message || '—')}</td>
                   <td class="actions-cell"><div class="row-actions">
-                    ${auth.canWrite && ['error', 'skipped', 'unmapped'].includes(p.process_state)
+                    ${auth.canWrite && !p.odoo_attendance_id && ['error', 'skipped', 'unmapped'].includes(p.process_state)
                       ? `<button class="sm" data-retry="${esc(p.id)}">Retry</button>
-                         <button class="sm" data-delete="${esc(p.id)}"
-                                 title="Remove from the queue. It won't be pushed, and won't come back on the next sync.">Delete</button>` : ''}
+                         <button type="button" class="icon-btn" data-delete="${esc(p.id)}" aria-label="Delete punch"
+                                 title="Delete — removes it from the queue. It won't be pushed, and won't come back on the next sync.">${TRASH_ICON}</button>` : ''}
                     ${auth.canWrite && p.process_state === 'deleted'
                       ? `<button class="sm" data-retry="${esc(p.id)}"
                                  title="Put it back in the queue for the next sync">Restore</button>` : ''}
@@ -548,14 +552,19 @@ export async function renderActivity(mount, route) {
   // arms the button for a few seconds, the second deletes.
   mount.querySelectorAll('[data-delete]').forEach((button) => {
     let armed = null;
+    const icon = button.innerHTML;
     button.addEventListener('click', () => {
       if (!armed) {
+        // Armed: the muted icon turns into a plain "Confirm delete" button for
+        // a few seconds, then goes back.
         button.textContent = 'Confirm delete';
-        button.classList.add('danger');
+        button.classList.remove('icon-btn');
+        button.classList.add('sm', 'danger');
         armed = setTimeout(() => {
           armed = null;
-          button.textContent = 'Delete';
-          button.classList.remove('danger');
+          button.innerHTML = icon;
+          button.classList.remove('sm', 'danger');
+          button.classList.add('icon-btn');
         }, 4000);
         return;
       }

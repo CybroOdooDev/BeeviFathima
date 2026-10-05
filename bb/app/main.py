@@ -49,7 +49,7 @@ def _warn_about_schema_drift() -> None:
             return
         log.warning(
             "The database is behind the models — missing %s. "
-            "Run: python3 tools/migrate.py --apply",
+            "Run: python3 tools/db_upgrade.py",
             drift.summary(),
         )
     except Exception as exc:  # noqa: BLE001 — a diagnostic must never block boot
@@ -65,7 +65,7 @@ async def lifespan(app: FastAPI):
         # with no extra step. create_all only adds missing tables — it never
         # alters or drops an existing one, so it cannot migrate a schema and is
         # deliberately not run in production. Use tools/init_db.py explicitly,
-        # or Alembic once the schema starts changing under live data.
+        # or tools/db_upgrade.py (Alembic) for anything holding data you care about.
         from app.db.base import Base
         from app.db.session import engine
         import app.models  # noqa: F401 — registers every table on Base.metadata

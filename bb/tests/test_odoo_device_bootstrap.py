@@ -147,7 +147,7 @@ class FakeXmlRpcModels:
                 self.x_biobridge_device_records[new_id] = {"id": new_id, **vals}
                 return new_id
 
-        if model == "biobridge.device" and method == "_biobridge_upsert":
+        if model == "biobridge.device" and method == "biobridge_upsert":
             serial_number, vals = args
             for r in self.biobridge_device_records.values():
                 if r["serial_number"] == serial_number:
@@ -373,7 +373,7 @@ def test_company_rule_domain_treats_an_unset_company_as_visible_everywhere():
 
 def test_bootstrap_is_a_true_no_op_in_module_mode():
     """Real add-on installed — biobridge.device already handles its own
-    company scoping server-side (see the add-on's _biobridge_upsert and its
+    company scoping server-side (see the add-on's biobridge_upsert and its
     own security/biobridge_device_security.xml ir.rule), so there is
     nothing for bootstrap to create, and it must not try."""
     fake = FakeXmlRpcModels()
@@ -459,7 +459,7 @@ def test_upsert_device_module_mode_delegates_to_addon_method():
 
     device_id = client.upsert_device("GATE-02", name="Warehouse Door")
 
-    assert "biobridge.device._biobridge_upsert" in fake.calls
+    assert "biobridge.device.biobridge_upsert" in fake.calls
     assert fake.biobridge_device_records[device_id]["serial_number"] == "GATE-02"
     assert "x_biobridge_device.create" not in fake.calls
 

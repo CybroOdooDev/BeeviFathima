@@ -24,6 +24,8 @@ RUN pip install -r requirements.txt \
 
 COPY app ./app
 COPY tools ./tools
+COPY alembic ./alembic
+COPY alembic.ini ./alembic.ini
 
 # Non-root. The container writes nothing but logs when DATABASE_URL points at
 # Postgres; on SQLite, mount a volume owned by this uid.
@@ -40,4 +42,9 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8000/health || exit 1
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+# The schema is brought up to date before the API starts, so a deploy can never
+# serve code that expects columns the database does not have yet. db_upgrade
+# takes a database lock, so replicas starting together take turns, and it is a
+# no-op when nothing is pending. The worker and beat services override this
+# command and do not migrate — they start after the API in compose.
+CMD ["sh", "-c", "python tools/db_upgrade.py && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers"]

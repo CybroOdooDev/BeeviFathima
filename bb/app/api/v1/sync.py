@@ -33,6 +33,7 @@ from app.models import (
     TenantStatus,
 )
 from app.schemas import (
+    AlertsOut,
     AccountDeleteIn,
     AttendanceOut,
     DashboardOut,
@@ -51,6 +52,7 @@ from app.services.scheduling import (
     renewal_warning,
     scheduler_health,
 )
+from app.services.alerts import tenant_alerts
 from app.services.sync_engine import SyncEngine
 from app.services.timeutils import utcnow_naive
 
@@ -404,7 +406,13 @@ def delete_punch(
     punch = db.get(PunchRecord, punch_id)
     if punch is None or punch.tenant_id != principal.tenant.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Punch not found")
-    if punch.process_state not in DELETABLE_STATES or punch.odoo_attendance_id:
+    if punch.odoo_attendance_id:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"This punch can't be deleted — it is already part of Odoo attendance "
+            f"#{punch.odoo_attendance_id}. Remove that record in Odoo instead.",
+        )
+    if punch.process_state not in DELETABLE_STATES:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             f"A {punch.process_state} punch can't be deleted — only error, skipped "
@@ -516,6 +524,13 @@ def list_attendance(
 # ===========================================================================
 # Dashboard
 # ===========================================================================
+@router.get("/alerts", response_model=AlertsOut)
+def alerts(principal: Principal = Depends(get_principal), db: Session = Depends(get_db)) -> AlertsOut:
+    """Everything currently wrong with this account. Empty means healthy."""
+    items = tenant_alerts(db, principal.tenant)
+    return AlertsOut(count=len(items), worst=(items[0]["severity"] if items else None), alerts=items)
+
+
 @router.get("/dashboard", response_model=DashboardOut)
 def dashboard(
     principal: Principal = Depends(get_principal), db: Session = Depends(get_db)

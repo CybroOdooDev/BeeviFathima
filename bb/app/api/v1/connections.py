@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -19,7 +19,7 @@ from app.integrations.base import (
     available_providers,
     get_provider_class,
 )
-from app.integrations.odoo import OdooError
+from app.integrations.odoo import OdooError, forget_detected_api
 from app.models import (
     ConnectionStatus,
     Device,
@@ -27,6 +27,7 @@ from app.models import (
     EmployeeMapping,
     MappingStatus,
     OdooConnection,
+    PunchRecord,
     SyncRun,
 )
 from app.schemas import (
@@ -93,6 +94,9 @@ def _get_odoo(db: Session, principal: Principal, conn_id: str) -> OdooConnection
 
 
 def _probe_odoo(principal: Principal, conn: OdooConnection) -> TestResult:
+    # A test is the moment to look at the server afresh — it may have been
+    # upgraded (say 18 → 19) since its API was last detected.
+    forget_detected_api(conn.url)
     try:
         info = build_odoo_client(principal.tenant, conn).ping()
     except (OdooError, UnsafeTargetError) as exc:
@@ -131,7 +135,8 @@ def _probe_odoo(principal: Principal, conn: OdooConnection) -> TestResult:
     return TestResult(
         ok=True,
         message=(
-            f"Connected to Odoo {info.get('server_version')} — "
+            f"Connected to Odoo {info.get('server_version')} over the "
+            f"{info.get('api_label') or 'external API'} — "
             f"{info['employee_count']} employee(s) visible"
         ),
         detail=info,
@@ -1124,6 +1129,39 @@ def list_devices(
     for device in devices:
         device.over_plan_limit = device.id in over  # read by DeviceOut
     return devices
+
+
+@router.delete(
+    "/devices/{device_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None
+)
+def delete_device(
+    device_id: str,
+    request: Request,
+    principal: Principal = Depends(require_writer),
+    db: Session = Depends(get_db),
+) -> None:
+    """Forget one terminal.
+
+    Only the terminal's own row goes: its punches stay in the ledger (and in
+    Odoo). A terminal with punches on record is restored from them by the next
+    sync (``restore_terminals_from_punches``), and one that sends new punches
+    is recorded again like any unknown terminal — use Disable to keep one but
+    stop using it.
+    """
+    device = db.get(Device, device_id)
+    if device is None or device.tenant_id != principal.tenant.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Device not found")
+    # PunchRecord.device_id is a plain column, not a foreign key: unlink by
+    # hand so nothing is left pointing at a row that no longer exists.
+    db.execute(
+        update(PunchRecord)
+        .where(PunchRecord.tenant_id == principal.tenant.id, PunchRecord.device_id == device.id)
+        .values(device_id=None)
+    )
+    audit(db, principal, "device.delete", device.id,
+          f"{device.alias or device.serial_number} ({device.serial_number})", request)
+    db.delete(device)
+    db.commit()
 
 
 @router.patch("/devices/{device_id}", response_model=DeviceOut)

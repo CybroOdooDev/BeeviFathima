@@ -74,3 +74,18 @@ def test_no_limit_means_nothing_is_held(db, tenant, local_day, monkeypatch):
     rows = _shift(1, "1001", local_day, "GATE-01") + _shift(3, "1002", local_day, "GATE-02")
     run(db, tenant, FakeOdoo(), rows, monkeypatch)
     assert not any(p.process_state == PunchState.held.value for p in db.scalars(select(PunchRecord)).all())
+
+
+def test_sync_brings_back_a_deleted_terminal_that_has_punches(db, tenant, local_day, monkeypatch):
+    run(db, tenant, FakeOdoo(), _shift(1, "1001", local_day, "GATE-01"), monkeypatch)
+    gate = db.scalar(select(Device).where(Device.serial_number == "GATE-01"))
+    db.query(PunchRecord).filter(PunchRecord.device_id == gate.id).update({"device_id": None})
+    db.delete(gate)
+    db.commit()
+    assert db.scalar(select(Device).where(Device.serial_number == "GATE-01")) is None
+
+    run(db, tenant, FakeOdoo(), [], monkeypatch)  # a sync that brings nothing new
+
+    back = db.scalar(select(Device).where(Device.serial_number == "GATE-01"))
+    assert back is not None and back.punch_count >= 2
+    assert all(p.device_id == back.id for p in db.scalars(select(PunchRecord)).all() if p.terminal_sn == "GATE-01")

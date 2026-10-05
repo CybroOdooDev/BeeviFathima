@@ -18,12 +18,13 @@ import { render as renderGetStarted } from './pages/getstarted.js';
 import { render as renderMailAdmin } from './pages/mail.js';
 import { render as renderPaymentsAdmin } from './pages/payments.js';
 import { render as renderClosures } from './pages/closures.js';
-import { renderSetPassword, renderVerifyEmail } from './pages/account.js';
+import { render as renderLeads } from './pages/leads.js';
+import { renderSetPassword, renderVerifyEmail, renderForgotPassword, renderResetPassword } from './pages/account.js';
 import { renderConsoleOverview } from './pages/console.js';
 
-const PUBLIC = new Set(['/login', '/signup', '/staff/login', '/plans']);
+const PUBLIC = new Set(['/login', '/signup', '/staff/login', '/plans', '/forgot-password']);
 // Doors that render the same whether or not someone is signed in.
-const ANYONE = new Set(['/verify-email']);
+const ANYONE = new Set(['/verify-email', '/reset-password']);
 
 /** Where an unauthenticated visitor lands, by path.
  *
@@ -43,6 +44,9 @@ const DOORS = {
   // Where the confirmation email's link lands when there is no marketing
   // site to send it to (SITE_URL unset). Works signed in or out.
   '/verify-email': renderVerifyEmail,
+  // Forgot password: ask for a link, then choose a new password from it.
+  '/forgot-password': renderForgotPassword,
+  '/reset-password': renderResetPassword,
 };
 
 /* Small line icons for the sidebar, inline so nothing is fetched. */
@@ -116,6 +120,7 @@ const NAV = [
       { path: '/console', title: 'Overview', icon: 'overview' },
       { path: '/platform', title: 'All accounts', icon: 'platform', activeFor: ['/platform'] },
       { path: '/platform/plans', title: 'Plans', icon: 'plans' },
+      { path: '/platform/leads', title: 'Leads', icon: 'mail' },
       { path: '/platform/closed', title: 'Closed accounts', icon: 'closed' },
       { path: '/platform/email', title: 'Email server', icon: 'mail' },
       { path: '/platform/payments', title: 'Payments', icon: 'card' },
@@ -156,6 +161,7 @@ const ROUTES = {
   '/settings/biometric': { title: 'Biometric connections', sub: 'Biometric connections — where punches come from', render: renderSettings },
   '/console': { title: 'Platform overview', sub: 'Every account at a glance — health, growth and what needs a person', render: renderConsoleOverview },
   '/platform': { title: 'All accounts', sub: 'Every customer account on this platform', render: renderPlatform },
+  '/platform/leads': { title: 'Leads', sub: 'Contact and demo requests from the website', render: renderLeads },
   '/platform/closed': { title: 'Closed accounts', sub: 'Deleted accounts — who closed them, and why', render: renderClosures },
   '/platform/payments': { title: 'Payments (Stripe)', sub: 'The Stripe keys, webhook and prices online billing runs on', render: renderPaymentsAdmin },
   '/platform/email': { title: 'Email server', sub: 'Where signup confirmations and login details are sent from', render: renderMailAdmin },
@@ -165,6 +171,8 @@ const ROUTES = {
 const badges = { unmapped: 0 };
 /** What the top bar's sync button needs, from the last /dashboard read. */
 const syncState = { lastRun: null, needsSetup: true };
+// What is wrong right now (GET /alerts) — drives the bell in the top bar.
+const alertState = { count: 0, worst: null, alerts: [] };
 
 function parseHash() {
   const raw = window.location.hash.replace(/^#/, '') || '/';
@@ -245,6 +253,7 @@ function mountShell() {
     else window.location.hash = destination;
   });
 
+  watchAlerts();
   paintThemeSwitch();
   $('#themeSwitch', root).addEventListener('click', (event) => {
     const button = event.target.closest('[data-theme-choice]');
@@ -357,6 +366,7 @@ function renderChrome(path) {
   // and both sides connected — otherwise it would only fail.
   const run = syncState.lastRun;
   $('#topActions').innerHTML = auth.tenant && !auth.isStaffSession ? `
+    ${bellHtml()}
     <span class="last-sync" title="${esc(run ? `Last sync ${run.status}` : 'No sync has run yet')}">
       ${run ? `<span class="dot ${run.status === 'success' ? 'ok' : run.status === 'failed' ? 'bad' : 'warn'}"></span>
         Synced ${esc(fmtAgo(run.started_at))}` : 'Never synced'}
@@ -397,12 +407,81 @@ function renderChrome(path) {
   $('#sidebar').classList.remove('open');
 }
 
+const BELL = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" '
+  + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 8 3 8H3s3-1 3-8M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg>';
+
+function bellHtml() {
+  const n = alertState.count;
+  const label = n ? `${n} alert${n === 1 ? '' : 's'} need attention` : 'No alerts';
+  return `<button class="sm bell ${n ? alertState.worst : ''}" id="alertBell" aria-haspopup="true"
+      aria-label="${esc(label)}" title="${esc(label)}">${BELL}${n ? `<span class="bell-count">${n > 9 ? '9+' : n}</span>` : ''}</button>`;
+}
+
+function closeAlertPanel() {
+  const panel = $('#alertPanel');
+  if (panel) panel.remove();
+}
+
+function openAlertPanel() {
+  closeAlertPanel();
+  const bell = $('#alertBell');
+  if (!bell) return;
+  const items = alertState.alerts.map((a) => `
+    <li class="alert-item ${esc(a.severity)}">
+      <strong>${esc(a.title)}</strong>
+      <p>${esc(a.detail)}</p>
+      ${a.href ? `<a href="${esc(a.href)}">${esc(a.action || 'Open')} &rsaquo;</a>` : ''}
+    </li>`).join('');
+  const panel = document.createElement('div');
+  panel.id = 'alertPanel';
+  panel.className = 'alert-panel';
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-label', 'Alerts');
+  panel.innerHTML = `<div class="alert-head">Alerts</div>${items
+    ? `<ul>${items}</ul>`
+    : '<div class="alert-none"><span class="dot ok"></span> Everything is running normally.</div>'}`;
+  document.body.appendChild(panel);
+  const r = bell.getBoundingClientRect();
+  panel.style.top = `${r.bottom + 8}px`;
+  panel.style.right = `${Math.max(12, window.innerWidth - r.right)}px`;
+}
+
+/** Re-read the alerts and repaint just the bell. Never breaks the page. */
+async function refreshAlerts() {
+  if (!auth.tenant || auth.isStaffSession) return;
+  try {
+    const data = await api.get('/alerts');
+    alertState.count = data.count;
+    alertState.worst = data.worst;
+    alertState.alerts = data.alerts;
+  } catch { return; }
+  const bell = $('#alertBell');
+  if (bell) bell.outerHTML = bellHtml();
+  if ($('#alertPanel')) openAlertPanel();
+}
+
+let alertTimer = null;
+function watchAlerts() {
+  if (alertTimer) return;
+  alertTimer = setInterval(() => { if (!document.hidden) refreshAlerts(); }, 60000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshAlerts(); });
+  document.addEventListener('click', (event) => {
+    if (event.target.closest('#alertBell')) {
+      if ($('#alertPanel')) closeAlertPanel(); else openAlertPanel();
+    } else if (!event.target.closest('#alertPanel') || event.target.closest('#alertPanel a')) {
+      closeAlertPanel();
+    }
+  });
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeAlertPanel(); });
+}
+
 /** Badges are decorative: never let them break navigation. */
 async function refreshBadges() {
   if (!auth.tenant) return;  // staff-only: there is no dashboard to count
   try {
     const data = await api.get('/dashboard');
     badges.unmapped = data.unmapped_employees || 0;
+    await refreshAlerts();
     syncState.lastRun = data.last_run || null;
     const health = data.connection_health || {};
     syncState.needsSetup = health.odoo === 'missing' || health.source === 'missing';
@@ -473,7 +552,7 @@ async function resolve() {
     // every tenant-scoped screen would 403. Send them to the console instead of
     // showing an error page on the way in.
     // The console's landing page is its overview.
-    if (!auth.tenant && auth.isPlatformAdmin && !['/platform', '/platform/plans', '/platform/email', '/platform/payments', '/platform/closed', '/console'].includes(route.path)) {
+    if (!auth.tenant && auth.isPlatformAdmin && !['/platform', '/platform/plans', '/platform/email', '/platform/payments', '/platform/closed', '/platform/leads', '/console'].includes(route.path)) {
       window.location.hash = '#/console';
       return;
     }
@@ -515,13 +594,21 @@ async function resolve() {
   }
 }
 
+/** Go to ``hash`` and render it exactly once. Setting a different hash fires
+ * hashchange, which already calls resolve(); calling resolve() as well
+ * rendered the page twice — and two live copies of a polling page (Get set
+ * up) then fought over the same screen. */
+function navigate(hash) {
+  if (window.location.hash !== hash) window.location.hash = hash;
+  else resolve();
+}
+
 window.addEventListener('bb:signed-in', async (event) => {
   try {
     await loadSession();
   } catch { /* resolve() will retry */ }
   if (auth.user?.is_platform_admin) rememberHat(auth.scope);
-  window.location.hash = event.detail?.next || '#/';
-  resolve();
+  navigate(event.detail?.next || '#/');
 });
 
 window.addEventListener('bb:signed-out', async (event) => {
@@ -537,8 +624,7 @@ window.addEventListener('bb:signed-out', async (event) => {
       toast(other === 'tenant'
         ? 'Your console session expired — you are back in your workspace.'
         : 'Your workspace session expired — you are in the staff console.', 'ok');
-      window.location.hash = other === 'staff' ? '#/console' : '#/';
-      resolve();
+      navigate(other === 'staff' ? '#/console' : '#/');
       return;
     }
   }
@@ -546,8 +632,7 @@ window.addEventListener('bb:signed-out', async (event) => {
   $('#app-root').classList.add('hidden');
   $('#app-root').innerHTML = '';
   delete $('#app-root').dataset.built;
-  window.location.hash = '#/login';
-  resolve();
+  navigate('#/login');
 });
 
 window.addEventListener('bb:toast', (event) => toast(event.detail, 'ok'));

@@ -106,7 +106,17 @@ function firstOpen(status) {
   return i === -1 ? STEPS.length : i;
 }
 
+/** Stops the previous visit's status poll. The router can render this page
+ * again while an earlier render is still alive (a hashchange back to it, a
+ * re-render after a save), and both share the same mount — so an old
+ * instance, still holding its own step, would keep repainting the stepper
+ * and footer every few seconds and the page would flip between two steps. */
+let stopPrevious = () => {};
+
 export async function render(mount, route) {
+  stopPrevious();
+  const run = Symbol('setup');
+  mount.setupRun = run;
   if (!auth.canWrite) {
     mount.innerHTML = banner('Setup needs an admin',
       'Ask the account owner or an admin to connect Odoo and your biometric system.', 'warn');
@@ -114,14 +124,17 @@ export async function render(mount, route) {
   }
   mount.innerHTML = loading();
   let status = await setupStatus();
+  if (mount.setupRun !== run) return; // a newer render took over meanwhile
   const asked = Number(route?.query?.step);
   let index = Number.isInteger(asked) && asked >= 1 && asked <= STEPS.length + 1 ? asked - 1 : firstOpen(status);
   let poll = null;
 
   const stop = () => { if (poll) { clearInterval(poll); poll = null; } };
+  stopPrevious = () => { stop(); if (mount.setupRun === run) mount.setupRun = null; };
   // The page's mount stays in the document across routes, so "still here"
-  // means the address still points at this page.
-  const here = () => window.location.hash.startsWith('#/get-started');
+  // means the address still points at this page *and* this is the newest
+  // render of it — never an older one painting over it.
+  const here = () => mount.setupRun === run && window.location.hash.startsWith('#/get-started');
   const go = (i) => {
     index = Math.max(0, Math.min(STEPS.length, i));
     history.replaceState(null, '', `#/get-started?step=${index + 1}`);
@@ -251,6 +264,8 @@ export async function render(mount, route) {
       </div>`;
     paintChrome();
     await paintBody($('#setupBody', mount));
+    if (!here()) return;
+    stop();
     poll = setInterval(refreshStatus, 4000);
   }
 

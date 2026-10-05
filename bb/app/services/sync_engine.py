@@ -48,7 +48,7 @@ from app.models import (
     SyncStatus,
     Tenant,
 )
-from app.services.device_links import device_for_punch
+from app.services.device_links import device_for_punch, restore_terminals_from_punches
 from app.services.connections import (
     UnsafeTargetError,
     build_odoo_client,
@@ -312,6 +312,9 @@ class SyncEngine:
         end_local = utc_to_local(end_utc, tz)
         self._log(f"Fetching '{source.name}' {start_local} -> {end_local} ({tz})")
 
+        # A terminal deleted by hand but still holding punches comes back.
+        for restored in restore_terminals_from_punches(self.db, self.tenant, source):
+            self._log(f"Restored terminal {restored.serial_number} — it has {restored.punch_count} punch(es) on record")
         devices = {
             d.serial_number: d
             for d in self.db.scalars(
@@ -809,6 +812,8 @@ class SyncEngine:
             except OdooError as exc:
                 self.run.error_count += 1
                 for punch in emp_punches:
+                    if punch.process_state == PunchState.synced.value and punch.odoo_attendance_id:
+                        continue  # already in Odoo earlier in this push — a later failure doesn't undo it
                     punch.process_state = PunchState.error.value
                     punch.error_message = str(exc)[:500]
                     punch.attempts += 1

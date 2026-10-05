@@ -6,6 +6,7 @@ import enum
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     DateTime,
     ForeignKey,
@@ -75,6 +76,14 @@ class Tenant(Base, UUIDPk, Timestamped):
     timezone: Mapped[str] = mapped_column(String(64), default="UTC")
     sync_interval_minutes: Mapped[int] = mapped_column(Integer, default=15)
     sync_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    #: Email the owner and admins when a serious (red) alert has stood for a
+    #: while — see app.services.alert_emails. server_default: NOT NULL column
+    #: added to a table that may already have rows.
+    alert_emails_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true"), nullable=False)
+    #: {alert key: {"first_seen": iso, "emailed_at": iso | null}} — what has
+    #: been seen and mailed, so one problem is one email, then a daily reminder.
+    alert_state: Mapped[dict | None] = mapped_column(JSON)
 
     # --- pairing policy, tenant-wide defaults --------------------------------
     pairing_mode: Mapped[str] = mapped_column(String(20), default="alternating")
@@ -265,7 +274,7 @@ class User(Base, UUIDPk, Timestamped):
     #: ``BOOLEAN NOT NULL`` with no DEFAULT, and every existing row has no value
     #: to take — the migration fails outright.
     is_platform_admin: Mapped[bool] = mapped_column(
-        Boolean, default=False, server_default=text("0"), nullable=False
+        Boolean, default=False, server_default=text("false"), nullable=False
     )
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -282,6 +291,12 @@ class User(Base, UUIDPk, Timestamped):
     #: moment the token is used or a fresh one is requested.
     email_verify_token_hash: Mapped[str | None] = mapped_column(String(64))
     email_verify_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    #: Forgot-password link — hash only, one live token per user, cleared when
+    #: used. ``password_reset_sent_at`` rate-limits requests per account.
+    password_reset_token_hash: Mapped[str | None] = mapped_column(String(64))
+    password_reset_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    password_reset_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     failed_login_count: Mapped[int] = mapped_column(Integer, default=0)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

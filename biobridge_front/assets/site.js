@@ -77,35 +77,78 @@ const form = document.querySelector('#contact-form');
 if (form) {
   const status = form.querySelector('.form-status');
   const say = (text, tone) => { status.textContent = text; status.className = `form-status ${tone}`; };
+  const demoFields = form.querySelector('#demo-fields');
+  const dateInput = form.querySelector('[name="preferred_date"]');
+
+  // Demo-only fields show for "Book a demo" and hide for a plain sales question.
+  const syncTopic = () => {
+    const topic = form.querySelector('[name="topic"]:checked');
+    if (demoFields) demoFields.hidden = !(topic && topic.value === 'Demo');
+  };
+  form.querySelectorAll('[name="topic"]').forEach((r) => r.addEventListener('change', syncTopic));
+  syncTopic();
+
+  let tz = '';
+  try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { /* old browser */ }
+  form.querySelector('[name="timezone"]').value = tz;
+  const tzLabel = form.querySelector('#tz-label');
+  if (tzLabel) tzLabel.textContent = tz || 'not detected';
+  if (dateInput) dateInput.min = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+
+  const mailFallback = (data) => {
+    const labelOf = (name) => {
+      const el = form.querySelector(`[name="${name}"]`);
+      const text = el && el.closest('label.field') ? el.closest('label.field').firstChild.textContent.trim() : '';
+      return text || name;
+    };
+    const body = Object.entries(data).map(([k, v]) => `${labelOf(k)}: ${v}`).join('\n');
+    window.location.href = `mailto:${SALES_EMAIL}?subject=${encodeURIComponent(
+      `BioBridge — ${data.topic || 'enquiry'} from ${data.company || data.name}`
+    )}&body=${encodeURIComponent(body)}`;
+  };
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (!form.reportValidity()) return;
-    const data = Object.fromEntries(new FormData(form));
-
-    if (!FORM_ENDPOINT) {
-      // No form service configured: hand the details to the visitor's mail app.
-      const body = Object.entries(data).map(([k, v]) => `${k}: ${v}`).join('\n');
-      window.location.href = `mailto:${SALES_EMAIL}?subject=${encodeURIComponent(
-        `BioBridge — ${data.topic || 'enquiry'} from ${data.company || data.name}`
-      )}&body=${encodeURIComponent(body)}`;
-      return;
-    }
+    const data = {};
+    for (const [k, v] of new FormData(form)) { if (String(v).trim() !== '') data[k] = String(v).trim(); }
+    if (data.topic !== 'Demo') { delete data.preferred_date; delete data.preferred_window; }
 
     const button = form.querySelector('[type=submit]');
     button.disabled = true;
     say('Sending…', '');
     try {
-      const response = await fetch(FORM_ENDPOINT, {
-        method: 'POST',
-        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      });
-      if (!response.ok) throw new Error(String(response.status));
-      form.reset();
-      say('Thanks — we have your request and will be in touch.', 'ok');
-    } catch {
-      say(`That didn't go through. Please email us at ${SALES_EMAIL}.`, 'bad');
+      if (FORM_ENDPOINT) {
+        const response = await fetch(FORM_ENDPOINT, {
+          method: 'POST',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify(data),
+        });
+        if (!response.ok) throw new Error(String(response.status));
+        form.reset(); syncTopic();
+        say('Thanks — we have your request and will be in touch.', 'ok');
+      } else {
+        const result = await callApi('/public/contact', data);
+        form.reset(); syncTopic();
+        status.className = 'form-status ok';
+        status.textContent = (result && result.message) || 'Thanks — we have your request and will be in touch.';
+        if (result && result.booking_url) {
+          status.append(' ');
+          const link = document.createElement('a');
+          link.href = result.booking_url; link.textContent = 'Pick a time now';
+          link.target = '_blank'; link.rel = 'noopener';
+          status.append(link);
+        }
+      }
+    } catch (error) {
+      if (!FORM_ENDPOINT && error.status === 0) {
+        say('We couldn\u2019t reach our server, opening your email app instead\u2026', 'bad');
+        mailFallback(data);
+      } else if (!FORM_ENDPOINT && error.message) {
+        say(error.message, 'bad');
+      } else {
+        say(`That didn't go through. Please email us at ${SALES_EMAIL}.`, 'bad');
+      }
     } finally {
       button.disabled = false;
     }

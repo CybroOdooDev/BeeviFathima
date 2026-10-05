@@ -42,7 +42,7 @@
     <div class="contact-lines">
       <div class="contact-line">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>
-        <div><b>Email</b><a href="mailto:[SALES EMAIL]">[SALES EMAIL]</a></div>
+        <div><b>Email</b><a href="mailto:[SALES EMAIL]">info@cybrosys.com</a></div>
       </div>
       <div class="contact-line">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/></svg>
@@ -65,16 +65,34 @@
       <label class="field">Full Name<input type="text" name="name" autocomplete="name" required></label>
       <label class="field">Work Email<input type="email" name="email" autocomplete="email" required></label>
       <label class="field">Company<input type="text" name="company" autocomplete="organization" required></label>
+      <label class="field">Phone (Optional)<input type="tel" name="phone" autocomplete="tel"></label>
       <label class="field">Employees
         <select name="employees"><option>Up to 25</option><option>26–150</option><option>151–500</option><option>More than 500</option></select>
       </label>
-      <label class="field">Odoo Hosting
-        <select name="odoo"><option>Odoo Online</option><option>Odoo.sh</option><option>Self-hosted</option><option>Not on Odoo yet</option></select>
+      <label class="field">Odoo Version
+        <select name="odoo_version">
+          <option>19 or later</option><option>18</option><option>17</option><option>16</option><option>15</option><option>14</option><option>13 or older</option><option>Not sure</option><option>Not using Odoo yet</option>
+        </select>
       </label>
-      <label class="field">Devices
+      <label class="field">Odoo Hosting
+        <select name="odoo_hosting"><option>Odoo Online</option><option>Odoo.sh</option><option>Self-hosted</option><option>Not sure</option></select>
+      </label>
+      <label class="field">Biometric System
+        <input type="text" name="biometric_system" autocomplete="off" placeholder="e.g. ZKTeco, Hikvision">
+      </label>
+      <label class="field">Device Setup
         <select name="devices"><option>BioTime server</option><option>Standalone ZKTeco terminals</option><option>Both</option><option>Not sure</option></select>
       </label>
     </div>
+    <div id="demo-fields" class="grid cols-2" style="gap:16px">
+      <label class="field">Preferred Demo Date<input type="date" name="preferred_date"></label>
+      <label class="field">Preferred Time
+        <select name="preferred_window"><option value="">No preference</option><option>Morning</option><option>Afternoon</option><option>Evening</option></select>
+      </label>
+      <p class="fine" style="grid-column:1/-1;margin:0">Times are in your timezone: <b id="tz-label">detecting…</b></p>
+    </div>
+    <input type="hidden" name="timezone">
+    <label class="hp" aria-hidden="true">Website<input type="text" name="website" tabindex="-1" autocomplete="off"></label>
     <label class="field">Anything We Should Know?<textarea name="message" rows="4" placeholder="Number of sites, devices, go-live date…"></textarea></label>
     <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
       <button type="submit" class="btn btn-primary">Send request</button>

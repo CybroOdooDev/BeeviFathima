@@ -36,6 +36,7 @@ celery_app.conf.update(
         "app.workers.tasks.close_stale_attendances": {"queue": "maintenance"},
         "app.workers.tasks.prune_old_punches": {"queue": "maintenance"},
         "app.workers.tasks.sweep_subscriptions": {"queue": "maintenance"},
+        "app.workers.tasks.sweep_alert_emails": {"queue": "maintenance"},
     },
     beat_schedule={
         # Every minute; the task itself decides who is actually due, which keeps
@@ -59,6 +60,10 @@ celery_app.conf.update(
         "sweep-subscriptions": {
             "task": "app.workers.tasks.sweep_subscriptions",
             "schedule": crontab(minute=45),
+        },
+        "sweep-alert-emails": {
+            "task": "app.workers.tasks.sweep_alert_emails",
+            "schedule": crontab(minute="*/5"),
         },
     },
 )
