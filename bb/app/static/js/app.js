@@ -5,7 +5,7 @@
  * not control.
  */
 
-import { api, auth, loadSession, switchSession } from './api.js';
+import { api, auth, loadSession } from './api.js';
 import { $, esc, fmtAgo, toast, wireSearchSelects, wireTips } from './ui.js';
 import { renderLogin, renderPlans, renderSignup } from './pages/auth.js';
 import { render as renderOverview } from './pages/overview.js';
@@ -101,7 +101,6 @@ const NAV = [
         children: [
           { path: '/settings/general', title: 'General' },
           { path: '/settings/pairing', title: 'Pairing' },
-          { path: '/settings/hours', title: 'Working hours' },
           { path: '/settings/plan', title: 'Plan' },
           { path: '/settings/billing', title: 'Billing' },
           { path: '/settings/odoo', title: 'Odoo connection' },
@@ -153,7 +152,6 @@ const ROUTES = {
   '/get-started': { title: 'Get set up', sub: 'Connect Odoo and your biometric system, one step at a time', render: renderGetStarted },
   '/settings/general': { title: 'General', sub: 'Company, timezone and sync schedule', render: renderSettings },
   '/settings/pairing': { title: 'Pairing', sub: 'How raw punches become shifts', render: renderSettings },
-  '/settings/hours': { title: 'Working hours', sub: 'Working hours for late arrivals', render: renderSettings },
   '/settings/plan': { title: 'Plan', sub: 'Your subscription plan', render: renderSettings },
   '/settings/billing': { title: 'Billing', sub: 'Renewals, payment method and invoices', render: renderSettings },
   '/settings/plan/choose': { title: 'Choose a plan', sub: 'Compare plans and switch', render: renderSettings },
@@ -199,7 +197,6 @@ function mountShell() {
         <nav id="sidenav"></nav>
         <div class="side-foot">
           <div class="side-user" id="sideUser"></div>
-          <div id="consoleSwitch"></div>
           <div class="theme-toggle" id="themeSwitch" role="group" aria-label="Theme"></div>
           <button class="link" id="signOut" style="padding-left:0">Sign out</button>
         </div>
@@ -220,8 +217,6 @@ function mountShell() {
     </div>`;
 
   $('#signOut', root).addEventListener('click', async () => {
-    // Both hats, if both are open: "Sign out" that left a console session
-    // alive in the tab would be the surprising kind of convenience.
     // Failure is ignored: signing out locally is what actually matters.
     for (const token of auth.allRefreshTokens()) {
       try {
@@ -229,28 +224,6 @@ function mountShell() {
       } catch { /* already gone */ }
     }
     window.dispatchEvent(new CustomEvent('bb:signed-out'));
-  });
-
-  // One click between a dual-role person's workspace and the console. If the
-  // session for the other side is still open it is just made active; if not
-  // (the console session lives a day at most) the sign-in asks for the
-  // password again, email filled in, and reopens both.
-  $('#consoleSwitch', root).addEventListener('click', async (event) => {
-    const button = event.target.closest('[data-switch]');
-    if (!button) return;
-    const target = button.dataset.switch;
-    button.disabled = true;
-    let switched = false;
-    try {
-      switched = await switchSession(target);
-    } catch { /* fall through to the password prompt */ }
-    button.disabled = false;
-    if (switched) rememberHat(target);
-    const destination = switched
-      ? (target === 'staff' ? '#/console' : '#/')
-      : `#/login?reauth=${target}`;
-    if (window.location.hash === destination) resolve();
-    else window.location.hash = destination;
   });
 
   watchAlerts();
@@ -321,13 +294,6 @@ function paintThemeSwitch() {
       ${t.label}</button>`).join('');
 }
 
-/** Which hat to land in at the next sign-in on this browser. */
-function rememberHat(scope) {
-  try {
-    localStorage.setItem('bb.hat', scope);
-  } catch { /* a convenience only */ }
-}
-
 function renderChrome(path) {
   $('#sidenav').innerHTML = NAV.filter(
     (group) => (!group.staffOnly || auth.isPlatformAdmin)
@@ -379,15 +345,6 @@ function renderChrome(path) {
   sideUser.textContent = auth.user?.email || '';
   sideUser.title = auth.user?.email || '';   // the truncated address, in full, on hover
 
-  // Someone who is both staff and a customer wears one hat at a time — each
-  // is its own session — and switches here. Offered rather than hidden,
-  // because the console is unadvertised and there is no other way to find it.
-  $('#consoleSwitch').innerHTML =
-    auth.user?.is_platform_admin === true && !auth.isStaffSession
-      ? '<button type="button" class="sm hat-switch" data-switch="staff">Staff console &rsaquo;</button>'
-      : auth.isStaffSession && auth.user?.tenant_id
-        ? '<button type="button" class="sm hat-switch" data-switch="tenant">&lsaquo; My workspace</button>'
-        : '';
   // Three states, and the order matters. A stopped account used to show the
   // green pill — the pill was keyed on sync_enabled alone, so an account the
   // platform had suspended looked perfectly healthy while nothing synced. The
@@ -440,10 +397,14 @@ function openAlertPanel() {
   panel.innerHTML = `<div class="alert-head">Alerts</div>${items
     ? `<ul>${items}</ul>`
     : '<div class="alert-none"><span class="dot ok"></span> Everything is running normally.</div>'}`;
-  document.body.appendChild(panel);
+  // Lives inside the top bar (not fixed to the window), so it scrolls away
+  // with the page instead of hovering over the content.
+  const bar = bell.closest('.topbar') || document.body;
+  bar.appendChild(panel);
   const r = bell.getBoundingClientRect();
-  panel.style.top = `${r.bottom + 8}px`;
-  panel.style.right = `${Math.max(12, window.innerWidth - r.right)}px`;
+  const b = bar.getBoundingClientRect();
+  panel.style.top = `${r.bottom - b.top + 8}px`;
+  panel.style.right = `${Math.max(12, b.right - r.right)}px`;
 }
 
 /** Re-read the alerts and repaint just the bell. Never breaks the page. */
@@ -607,32 +568,18 @@ window.addEventListener('bb:signed-in', async (event) => {
   try {
     await loadSession();
   } catch { /* resolve() will retry */ }
-  if (auth.user?.is_platform_admin) rememberHat(auth.scope);
   navigate(event.detail?.next || '#/');
 });
 
-window.addEventListener('bb:signed-out', async (event) => {
-  // One session expired, not a sign-out: if the other hat is still open, carry
-  // on in it rather than dropping the person at a login page.
-  if (event.detail?.expired) {
-    const other = auth.lastDoor === 'staff' ? 'tenant' : 'staff';
-    let switched = false;
-    try {
-      switched = await switchSession(other);
-    } catch { /* sign out below */ }
-    if (switched) {
-      toast(other === 'tenant'
-        ? 'Your console session expired — you are back in your workspace.'
-        : 'Your workspace session expired — you are in the staff console.', 'ok');
-      navigate(other === 'staff' ? '#/console' : '#/');
-      return;
-    }
-  }
+window.addEventListener('bb:signed-out', () => {
+  // Staff and customers never share a session, so there is nothing to fall
+  // back to: clear it and send the person to the door they came in by.
+  const wasStaff = auth.scope === 'staff';
   auth.clear();
   $('#app-root').classList.add('hidden');
   $('#app-root').innerHTML = '';
   delete $('#app-root').dataset.built;
-  navigate('#/login');
+  navigate(wasStaff ? '#/staff/login' : '#/login');
 });
 
 window.addEventListener('bb:toast', (event) => toast(event.detail, 'ok'));

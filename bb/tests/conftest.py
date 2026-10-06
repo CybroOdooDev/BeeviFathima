@@ -85,11 +85,24 @@ class FakeOdoo:
         #: default so every test not about that feature sees no roster and
         #: it stays a no-op.
         self.roster: list[dict] = []
+        #: Enabled company ids, or None for "no restriction" — what
+        #: OdooClient.company_scope() answers. A test sets it (together with
+        #: `roster` as the in-scope people) to drive the company switches.
+        self.scope: list[int] | None = None
+        #: Employees that exist but sit in a switched-off company; found only
+        #: by an unscoped lookup.
+        self.out_of_scope_employees: dict[str, tuple[int, str]] = {}
 
     def authenticate(self) -> int:
         return self.uid
 
-    def find_employee(self, emp_code):
+    def company_scope(self):
+        return self.scope
+
+    def find_employee(self, emp_code, *, scoped=True):
+        if not scoped and emp_code in self.out_of_scope_employees:
+            emp_id, name = self.out_of_scope_employees[emp_code]
+            return emp_id, name, "barcode"
         if emp_code in self.employees:
             emp_id, name = self.employees[emp_code]
             return emp_id, name, "barcode"
@@ -276,8 +289,6 @@ def tenant(db):
         pairing_mode="alternating",
         min_punch_interval_seconds=60,
         max_shift_hours=16,
-        work_start_time="08:30",
-        late_grace_minutes=15,
     )
     db.add(row)
     db.flush()

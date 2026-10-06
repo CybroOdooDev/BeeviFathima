@@ -212,3 +212,47 @@ def test_updating_company_id_clears_the_stale_display_name(client, monkeypatch):
 
     client.post(f"/api/v1/odoo-connections/{created['id']}/test", headers=auth(token))
     assert client.get("/api/v1/odoo-connections", headers=auth(token)).json()[0]["company_name"] == "Acme B"
+
+
+# --------------------------------------------------------------------------- #
+# Per-company switches
+# --------------------------------------------------------------------------- #
+def _create(client, token, monkeypatch, **extra):
+    monkeypatch.setattr(
+        connections_mod, "build_odoo_client",
+        lambda t, c: _StubOdooClient(_ping_ok([{"id": 10, "name": "A"}, {"id": 20, "name": "B"}])),
+    )
+    response = client.post(
+        "/api/v1/odoo-connections", headers=auth(token),
+        json={"name": "Primary Odoo", "url": "https://acme.odoo.com", "db_name": "acme",
+              "username": "bot@acme.com", "api_key": "key", **extra},
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def test_every_company_is_on_by_default(client, monkeypatch):
+    token = signup(client, "Acme", "owner@acme.com")
+    assert _create(client, token, monkeypatch)["disabled_company_ids"] == []
+
+
+def test_switches_round_trip_through_create_update_and_read(client, monkeypatch):
+    token = signup(client, "Acme", "owner@acme.com")
+    created = _create(client, token, monkeypatch, disabled_company_ids=[20, 20])
+    assert created["disabled_company_ids"] == [20]
+
+    patched = client.patch(
+        f"/api/v1/odoo-connections/{created['id']}", headers=auth(token),
+        json={"disabled_company_ids": [10], "company_id": None},
+    ).json()
+    assert patched["disabled_company_ids"] == [10]
+    assert patched["company_id"] is None
+
+    cleared = client.patch(
+        f"/api/v1/odoo-connections/{created['id']}", headers=auth(token),
+        json={"disabled_company_ids": []},
+    ).json()
+    assert cleared["disabled_company_ids"] == []
+
+    listed = client.get("/api/v1/odoo-connections", headers=auth(token)).json()
+    assert listed[0]["disabled_company_ids"] == []

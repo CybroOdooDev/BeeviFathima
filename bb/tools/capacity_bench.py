@@ -64,7 +64,10 @@ class CountingOdoo:
         self._hit("authenticate")
         return self.uid
 
-    def find_employee(self, emp_code):
+    def company_scope(self):
+        return None
+
+    def find_employee(self, emp_code, *, scoped=True):
         self._hit("find_employee")
         if emp_code in self.employees:
             emp_id, name = self.employees[emp_code]

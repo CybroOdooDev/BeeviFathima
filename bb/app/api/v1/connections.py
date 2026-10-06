@@ -180,6 +180,7 @@ def create_odoo(
         username=payload.username,
         api_key_enc=encrypt(payload.api_key, principal.tenant.crypto_key),
         company_id=payload.company_id,
+        disabled_company_ids=sorted(set(payload.disabled_company_ids or [])) or None,
     )
     db.add(conn)
     _dupe_name_guard(db, payload.name)
@@ -201,6 +202,8 @@ def update_odoo(
     conn = _get_odoo(db, principal, conn_id)
     data = payload.model_dump(exclude_unset=True)
     api_key = data.pop("api_key", None)
+    if "disabled_company_ids" in data:
+        data["disabled_company_ids"] = sorted(set(data["disabled_company_ids"] or [])) or None
     for key, value in data.items():
         setattr(conn, key, value)
     if api_key:
@@ -243,6 +246,7 @@ def test_odoo_unsaved(
         username=payload.username,
         api_key_enc=api_key_enc,
         company_id=payload.company_id,
+        disabled_company_ids=sorted(set(payload.disabled_company_ids or [])) or None,
     )
     return _probe_odoo(principal, draft)
 
@@ -1036,11 +1040,11 @@ def provision_employees(
     a Badge ID or PIN, on this source's device — see
     app.services.provisioning for the exact rule.
 
-    The settings page calls this right after "Import terminals" succeeds, for
-    any provider that can create employees; it's its own endpoint so the
-    import itself (terminals into BioBridge) never fails or slows down over
-    a problem on the Odoo or employee side, and so the result can be reported
-    back on its own.
+    The settings page calls this right after a successful "Test connection"
+    (and after Connect), for any provider that can create employees. It is
+    not part of Import terminals. It's its own endpoint so the test itself
+    never fails or slows down over a problem on the Odoo or employee side,
+    and so the result can be reported back on its own.
     """
     source = _get_source(db, principal, source_id)
     try:

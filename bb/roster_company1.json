@@ -1,0 +1,48 @@
+{
+  "company_id": 1,
+  "company_name": "My Company",
+  "departments": [],
+  "employees": [
+    {
+      "id": 2,
+      "emp_code": "0042",
+      "first_name": "Sara",
+      "last_name": "Tanaka",
+      "department": null,
+      "enable_attendance": true
+    },
+    {
+      "id": 3,
+      "emp_code": "1001",
+      "first_name": "Ahmed",
+      "last_name": "Sharma",
+      "department": null,
+      "enable_attendance": true
+    },
+    {
+      "id": 4,
+      "emp_code": "A7",
+      "first_name": "Jane",
+      "last_name": "Haddad",
+      "department": null,
+      "enable_attendance": true
+    }
+  ],
+  "terminals": [
+    {
+      "id": 911,
+      "sn": "MOCK-C1-GATE-01",
+      "alias": "Main Entrance",
+      "ip_address": "10.1.0.11"
+    },
+    {
+      "id": 912,
+      "sn": "MOCK-C1-GATE-02",
+      "alias": "Back Door",
+      "ip_address": "10.1.0.12"
+    }
+  ],
+  "skipped": [
+    "Administrator"
+  ]
+}

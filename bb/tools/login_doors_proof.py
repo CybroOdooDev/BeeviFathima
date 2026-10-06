@@ -178,7 +178,8 @@ def main() -> int:
             page.wait_for_selector("#authError:not(:empty)", timeout=15_000)
             refusal = page.locator("#authError").inner_text()
             check("is turned away from the customer door", bool(refusal), refusal)
-            check("and told where to go instead", "staff console" in refusal.lower(),
+            check("with the same words as a wrong password, saying nothing about staff",
+                  refusal == "Incorrect email or password" and "staff" not in refusal.lower(),
                   refusal)
 
             print("\nThe console door")
@@ -189,33 +190,27 @@ def main() -> int:
             check("and lands on the console", "PLATFORM" in nav, nav.replace("\n", " · "))
             check("with no customer screens offered", "ATTENDANCE" not in nav,
                   nav.replace("\n", " · "))
-            check("and the console is what rendered", "/platform" in page.url, page.url)
+            check("and the console is what rendered", "/console" in page.url, page.url)
             page.screenshot(path=args.shot)
             sign_out(page)
             check("signing out returns to the CONSOLE door, not the customer one",
                   "staff/login" in page.url, page.url)
 
-            print("\nSomeone who is both a customer and staff")
+            print("\nA staff account that also owns a workspace")
             sign_in(page, base, BOTH, "customer")
-            page.wait_for_selector("#app-root:not(.hidden)", timeout=20_000)
-            nav = page.locator("#sidenav").inner_text().upper()
-            check("signs in to their own workspace", "ATTENDANCE" in nav)
-            check("and the console is NOT in their nav", "PLATFORM" not in nav,
-                  nav.replace("\n", " · "))
-            check("but is offered as a separate session",
-                  page.locator("#consoleSwitch a").count() == 1)
+            page.wait_for_selector("#authError:not(:empty)", timeout=15_000)
+            refusal = page.locator("#authError").inner_text()
+            check("is refused at the customer door, like a wrong password",
+                  refusal == "Incorrect email or password", refusal)
+            check("and is never handed a console session from it",
+                  not page.locator("#sidenav").is_visible())
 
-            page.locator("#consoleSwitch a").click()
-            page.wait_for_selector("#form input[name=email]", timeout=15_000)
-            check("that link reaches the console door rather than bouncing home",
-                  "staff/login" in page.url, page.url)
-            page.fill("#form input[name=email]", BOTH)
-            page.fill("#form input[name=password]", PASSWORD)
-            page.click("#go")
+            sign_in(page, base, BOTH, "staff")
             page.wait_for_selector("#app-root:not(.hidden)", timeout=20_000)
             nav = page.locator("#sidenav").inner_text().upper()
-            check("and signing in there swaps the hat rather than adding one",
-                  "PLATFORM" in nav and "ATTENDANCE" not in nav,
+            check("the console door admits it", "PLATFORM" in nav, nav.replace("\n", " · "))
+            check("with no customer screens, and no switch to a workspace",
+                  "ATTENDANCE" not in nav and page.locator("#consoleSwitch a").count() == 0,
                   nav.replace("\n", " · "))
 
             browser.close()

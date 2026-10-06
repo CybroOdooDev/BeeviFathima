@@ -95,6 +95,92 @@ def test_staff_can_list_and_work_the_leads_and_customers_cannot(client):  # noqa
                      json={"status": "contacted", "notes": "Called, sending a quote"})
     assert r.status_code == 200 and r.json()["status"] == "contacted" and r.json()["handled_by"] == "ops@platform.example.com"
     assert client.get("/api/v1/admin/contact-requests?status=open", headers=staff).json()[0]["notes"].startswith("Called")
-    client.patch(f"/api/v1/admin/contact-requests/{rows[0]['id']}", headers=staff, json={"status": "closed"})
+    client.patch(f"/api/v1/admin/contact-requests/{rows[0]['id']}", headers=staff, json={"status": "lost"})
     assert client.get("/api/v1/admin/contact-requests?status=open", headers=staff).json() == []
     assert client.patch("/api/v1/admin/contact-requests/nope", headers=staff, json={"status": "won"}).status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# The pipeline: stages, history, summary
+# --------------------------------------------------------------------------- #
+def _lead(client, staff, **over):  # noqa: F811
+    client.post("/api/v1/public/contact", json={**FORM, **over})
+    return client.get("/api/v1/admin/contact-requests", headers=staff).json()[0]
+
+
+def test_a_new_lead_starts_in_new_with_an_opening_entry_in_its_history(client):  # noqa: F811
+    _signup(client)
+    staff = _staff(client)
+    lead = _lead(client, staff)
+    assert lead["status"] == "new" and lead["stage_changed_at"]
+    events = client.get(f"/api/v1/admin/contact-requests/{lead['id']}/events", headers=staff).json()
+    assert [(e["kind"], e["from_stage"], e["to_stage"], e["actor"]) for e in events] == [
+        ("stage", None, "new", "website")]
+
+
+def test_every_move_between_stages_is_recorded_in_order(client):  # noqa: F811
+    _signup(client)
+    staff = _staff(client)
+    lead = _lead(client, staff)
+    url = f"/api/v1/admin/contact-requests/{lead['id']}"
+    for stage in ("contacted", "qualified", "demo"):
+        assert client.patch(url, headers=staff, json={"status": stage}).json()["status"] == stage
+    client.patch(url, headers=staff, json={"status": "demo", "notes": "same stage, new note"})
+    events = client.get(url + "/events", headers=staff).json()
+    moves = [(e["from_stage"], e["to_stage"]) for e in reversed(events) if e["kind"] == "stage"]
+    assert moves == [(None, "new"), ("new", "contacted"), ("contacted", "qualified"), ("qualified", "demo")], \
+        "saving without changing the stage adds nothing to the history"
+
+
+def test_a_lost_lead_keeps_its_reason_and_loses_it_again_if_revived(client):  # noqa: F811
+    _signup(client)
+    staff = _staff(client)
+    lead = _lead(client, staff)
+    url = f"/api/v1/admin/contact-requests/{lead['id']}"
+    out = client.patch(url, headers=staff, json={"status": "lost", "lost_reason": "chose a competitor"}).json()
+    assert out["status"] == "lost" and out["lost_reason"] == "chose a competitor"
+    out = client.patch(url, headers=staff, json={"status": "contacted"}).json()
+    assert out["lost_reason"] is None, "a reason belongs to a lost lead only"
+
+
+def test_notes_on_the_timeline(client):  # noqa: F811
+    _signup(client)
+    staff = _staff(client)
+    lead = _lead(client, staff)
+    url = f"/api/v1/admin/contact-requests/{lead['id']}/events"
+    assert client.post(url, headers=staff, json={"note": "Left a voicemail"}).status_code == 201
+    assert client.post(url, headers=staff, json={"note": ""}).status_code == 422
+    top = client.get(url, headers=staff).json()[0]
+    assert (top["kind"], top["note"], top["actor"]) == ("note", "Left a voicemail", "ops@platform.example.com")
+    assert client.post("/api/v1/admin/contact-requests/nope/events", headers=staff,
+                       json={"note": "x"}).status_code == 404
+
+
+def test_the_pipeline_summary_counts_stages_and_conversion(client):  # noqa: F811
+    _signup(client)
+    staff = _staff(client)
+    contact_service._hits.clear()
+    ids = []
+    for n in range(4):
+        contact_service._hits.clear()
+        client.post("/api/v1/public/contact", json={**FORM, "email": f"p{n}@globex.com"})
+    rows = client.get("/api/v1/admin/contact-requests", headers=staff).json()
+    ids = [r["id"] for r in rows]
+    patch = lambda i, st: client.patch(f"/api/v1/admin/contact-requests/{ids[i]}", headers=staff, json={"status": st})  # noqa: E731
+    patch(0, "won"); patch(1, "lost"); patch(2, "demo")
+    summary = client.get("/api/v1/admin/contact-requests/pipeline", headers=staff).json()
+    by = {s["stage"]: s["count"] for s in summary["stages"]}
+    assert [s["stage"] for s in summary["stages"]] == ["new", "contacted", "demo", "qualified", "won", "lost"]
+    assert by == {"new": 1, "contacted": 0, "qualified": 0, "demo": 1, "won": 1, "lost": 1}
+    assert summary["open"] == 2 and summary["won"] == 1 and summary["lost"] == 1
+    assert summary["conversion"] == 0.5, "won / (won + lost); leads still open do not count against it"
+    assert summary["avg_days_to_win"] is not None
+
+
+def test_the_old_status_names_are_refused(client):  # noqa: F811
+    _signup(client)
+    staff = _staff(client)
+    lead = _lead(client, staff)
+    for old in ("demo_booked", "closed"):
+        assert client.patch(f"/api/v1/admin/contact-requests/{lead['id']}", headers=staff,
+                            json={"status": old}).status_code == 422

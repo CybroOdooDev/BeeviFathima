@@ -294,13 +294,31 @@ class ContactRequestOut(ORMModel):
     preferred_window: str | None
     timezone: str | None
     status: str
+    stage_changed_at: datetime | None = None
+    lost_reason: str | None = None
     notes: str | None
     handled_by: str | None
 
 
 class ContactRequestUpdate(BaseModel):
-    status: Literal["new", "contacted", "demo_booked", "won", "closed"] | None = None
+    #: The pipeline stage.
+    status: Literal["new", "contacted", "qualified", "demo", "won", "lost"] | None = None
     notes: str | None = Field(default=None, max_length=4000)
+    lost_reason: str | None = Field(default=None, max_length=160)
+
+
+class ContactEventOut(ORMModel):
+    id: str
+    created_at: datetime
+    kind: str
+    from_stage: str | None
+    to_stage: str | None
+    note: str | None
+    actor: str | None
+
+
+class ContactNoteIn(BaseModel):
+    note: str = Field(min_length=1, max_length=4000)
 
 
 class ResendIn(BaseModel):
@@ -377,8 +395,6 @@ class TenantAdminOut(TenantScheduleOut):
     min_punch_interval_seconds: int
     max_shift_hours: int
     orphan_out_policy: str
-    work_start_time: str
-    late_grace_minutes: int
     users: int = 0
     odoo_connected: bool = False
     source_connected: bool = False
@@ -422,8 +438,6 @@ class TenantConfigUpdate(BaseModel):
     min_punch_interval_seconds: int | None = Field(default=None, ge=0, le=3600)
     max_shift_hours: int | None = Field(default=None, ge=1, le=48)
     orphan_out_policy: Literal["flag", "create", "ignore"] | None = None
-    work_start_time: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}$")
-    late_grace_minutes: int | None = Field(default=None, ge=0, le=240)
 
     #: Which tier this account is sold under. Explicitly nullable: sending
     #: ``null`` clears the plan (nothing enforced from then on), distinct from
@@ -521,8 +535,6 @@ class TenantOut(ORMModel):
     min_punch_interval_seconds: int
     max_shift_hours: int
     orphan_out_policy: str
-    work_start_time: str
-    late_grace_minutes: int
     consecutive_failures: int
     #: The kind of connection added most recently — see Tenant.biometric_mode.
     biometric_mode: str | None = None
@@ -567,8 +579,6 @@ class TenantUpdate(BaseModel):
     max_shift_hours: int | None = Field(default=None, ge=1, le=48)
     orphan_out_policy: Literal["flag", "create", "ignore"] | None = None
     auto_create_employees: bool | None = None
-    work_start_time: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}$")
-    late_grace_minutes: int | None = Field(default=None, ge=0, le=240)
     #: Kept for older clients — see Tenant.biometric_mode. No longer limits
     #: which kind of connection can be added.
     biometric_mode: Literal["platform", "device"] | None = None
@@ -624,6 +634,8 @@ class OdooConnectionIn(BaseModel):
     #: single-company Odoo. Required for real isolation on a multi-company
     #: one; see OdooConnection.company_id.
     company_id: int | None = None
+    #: res.company ids switched off. Leave unset for "every company is on".
+    disabled_company_ids: list[int] | None = None
 
     @field_validator("url")
     @classmethod
@@ -639,6 +651,7 @@ class OdooConnectionUpdate(BaseModel):
     api_key: str | None = None
     is_active: bool | None = None
     company_id: int | None = None
+    disabled_company_ids: list[int] | None = None
 
     @field_validator("url")
     @classmethod
@@ -660,6 +673,7 @@ class OdooConnectionTestIn(BaseModel):
     username: str
     api_key: str = ""
     company_id: int | None = None
+    disabled_company_ids: list[int] | None = None
     conn_id: str | None = None
 
     @field_validator("url")
@@ -680,10 +694,17 @@ class OdooConnectionOut(ORMModel):
     device_tracking_mode: str | None
     company_id: int | None
     company_name: str | None
+    #: Companies switched off; empty means all are on.
+    disabled_company_ids: list[int] = []
     status: str
     status_message: str | None
     last_checked_at: datetime | None
     is_active: bool
+    @field_validator("disabled_company_ids", mode="before")
+    @classmethod
+    def _none_is_empty(cls, value):
+        return value or []
+
     # No api_key field. That is the whole mechanism.
 
 
@@ -907,8 +928,6 @@ class AttendanceOut(ORMModel):
     device_serial: str | None
     is_auto_closed: bool
     is_orphan_out: bool
-    is_late: bool
-    late_minutes: int
     notes: str | None
 
 

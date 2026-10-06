@@ -406,10 +406,6 @@ function openConfigDialog(tenant, { plans, onChange }) {
                             + 'whatever its own settings say.' })}
               ${field({ name: 'timezone', label: 'Display Timezone', value: t.timezone,
                         required: true, datalist: timezoneNames() })}
-              ${field({ name: 'work_start_time', label: 'Work Starts',
-                        value: t.work_start_time, required: true, placeholder: '09:00' })}
-              ${field({ name: 'late_grace_minutes', label: 'Grace (Minutes)',
-                        type: 'number', value: t.late_grace_minutes, required: true })}
             </div>
             <div>
               <h3 style="margin:0 0 10px;font-size:13px">Pairing</h3>

@@ -62,7 +62,10 @@ class QuietOdoo:
         self.calls += 1
         return self.uid
 
-    def find_employee(self, emp_code):
+    def company_scope(self):
+        return None
+
+    def find_employee(self, emp_code, *, scoped=True):
         self.calls += 1
         hit = self.roster.get(emp_code)
         return (hit[0], hit[1], "barcode") if hit else (None, None, None)

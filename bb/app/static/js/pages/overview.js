@@ -73,9 +73,9 @@ function scheduleCard(schedule, needsSetup) {
     </div>`;
 }
 
-/* Getting started: the five things between signing up and attendance
+/* Getting started: the four things between signing up and attendance
  * arriving in Odoo, in order, each with the button that does it. Shown until
- * the first four are done — the fifth (matching badges) keeps coming back as
+ * the first three are done — the fourth (matching badges) keeps coming back as
  * new people punch, and has its own banner for that. */
 function setupChecklist({ health, devices, run, unmapped }) {
   const connected = (state) => state && state !== 'missing';
@@ -93,25 +93,19 @@ function setupChecklist({ health, devices, run, unmapped }) {
       action: { href: '#/get-started?step=2', label: 'Add connection' },
     },
     {
-      done: devices > 0,
-      title: 'Import your terminals',
-      body: 'So each punch knows which device it came from. “Import terminals” on the connection.',
-      action: { href: '#/get-started?step=3', label: 'Import terminals' },
-    },
-    {
       done: Boolean(run),
       title: 'Run the first sync',
       body: 'Pulls punches and writes attendance. After this it runs on its own schedule.',
-      action: { href: '#/get-started?step=4', label: 'Run first sync' },
+      action: { href: '#/get-started?step=3', label: 'Run first sync' },
     },
     {
       done: Boolean(run) && unmapped === 0,
       title: 'Match any unknown badges',
       body: 'Badges no Odoo employee carries yet are held until they are matched.',
-      action: { href: '#/get-started?step=5', label: 'Match badges' },
+      action: { href: '#/get-started?step=4', label: 'Match badges' },
     },
   ];
-  if (steps.slice(0, 4).every((s) => s.done)) return '';
+  if (steps.slice(0, 3).every((s) => s.done)) return '';
   const next = steps.findIndex((s) => !s.done);
   const doneCount = steps.filter((s) => s.done).length;
   return `

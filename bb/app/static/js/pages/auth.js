@@ -1,6 +1,6 @@
 /* Sign in and sign up. Rendered into #auth-root, outside the app shell. */
 
-import { api, ApiError, auth, switchSession } from '../api.js';
+import { api, ApiError, auth } from '../api.js';
 import { $, empty, esc, field, pricingCards, readForm, timezoneNames, wirePricingCards } from '../ui.js';
 
 /** The sign-in card, plus an optional line under it — outside the card, the
@@ -64,51 +64,19 @@ async function credentials(path, values) {
   return payload;
 }
 
-/** One sign-in for every hat the account has.
- *
- * The server still has two doors and still mints two separately-scoped
- * sessions — a workspace one and, for platform staff, a console one — and it
- * still refuses each at the other's routes. What changes is that nobody has
- * to find the second door: the password typed here opens both, and the
- * sidebar switches between them.
- *
- * Returns 'tenant' or 'staff': which session is active now. */
+/** The customer door. A platform staff account is refused here — staff is a
+ * backend role and signs in at the console door only ("Log in as admin").
+ * Returns 'tenant'. */
 async function signIn(values) {
-  let workspace;
-  try {
-    workspace = await credentials('/auth/login', values);
-  } catch (error) {
-    // 403 at the customer door is "platform staff with no workspace of their
-    // own" (or a disabled account, which the console door refuses too).
-    if (error.status !== 403) throw error;
-    const console_ = await credentials('/auth/staff/login', values).catch(() => { throw error; });
-    auth.persist(console_);
-    return 'staff';
-  }
-  auth.persist(workspace);
-
-  // Only for accounts that hold the flag — asking the console door on behalf
-  // of every customer would be pointless and would fill the server log with
-  // refused console sign-ins.
-  const me = await api.get('/auth/me');
-  if (me.is_platform_admin) {
-    try {
-      auth.stash(await credentials('/auth/staff/login', values));
-    } catch { /* the workspace session still works on its own */ }
-  }
+  auth.persist(await credentials('/auth/login', values));
   return 'tenant';
 }
 
-/** "Log in as admin": the console door first, so the console is where this
- * lands. A non-staff account gets the same answer as a wrong password — the
- * server will not say who holds the flag. The person's own workspace, if they
- * have one, is opened alongside as usual. */
+/** "Log in as admin": the console door only. A non-staff account gets the same
+ * answer as a wrong password — the server will not say who holds the flag.
+ * Returns 'staff'. */
 async function signInAsAdmin(values) {
   auth.persist(await credentials('/auth/staff/login', values));
-  try {
-    const me = await api.get('/auth/me');
-    if (me.tenant_id) auth.stash(await credentials('/auth/login', values));
-  } catch { /* the console session still works on its own */ }
   return 'staff';
 }
 
@@ -129,7 +97,7 @@ export function renderLogin(route = {}) {
     <p class="sub">${reauth
       ? `Your ${target === 'staff' ? 'staff console' : 'workspace'} session has ended. Enter your password to reopen it.`
       : admin
-        ? 'For BioBridge platform staff. Opens the staff console — your own workspace too, if you have one.'
+        ? 'For BioBridge platform staff only.'
         : 'Biometric attendance, synced into Odoo.'}</p>
     <form id="form">
       ${field({ name: 'email', label: 'Email', type: 'email', required: true, value: reauth })}
@@ -151,14 +119,7 @@ export function renderLogin(route = {}) {
     event.preventDefault();
     const values = readForm(event.target);
     submit($('#go', root), async () => {
-      const active = admin ? await signInAsAdmin(values) : await signIn(values);
-      // Land where this person works: the console when they asked for it,
-      // the hat they last used, or the one they were switching to when they
-      // were asked to sign in again.
-      const wanted = admin ? 'staff' : target || rememberedHat();
-      if (active === 'tenant' && wanted === 'staff' && auth.stashed('staff')) {
-        await switchSession('staff');
-      }
+      if (admin) await signInAsAdmin(values); else await signIn(values);
       window.dispatchEvent(new CustomEvent('bb:signed-in'));
     });
   });

@@ -28,6 +28,11 @@ class MappingStatus(str, enum.Enum):
     unmapped = "unmapped"
     ignored = "ignored"
     ambiguous = "ambiguous"
+    #: The Odoo employee belongs to a company switched off on the Odoo
+    #: connection. Kept (so switching it back on restores the link and
+    #: releases the held punches) but hidden from the Employees list, not
+    #: counted against the plan, and never synced.
+    out_of_scope = "out_of_scope"
 
 
 class Direction(str, enum.Enum):

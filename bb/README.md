@@ -248,7 +248,6 @@ From **Platform → All accounts**, staff can:
 | Scheduling | Interval, automatic sync on/off, clear the failure backoff |
 | Account | Company name, status, display timezone |
 | Pairing | Mode, dedupe window, max shift, shift-day boundary, orphan-out policy |
-| Working hours | Day start and grace, for late scoring |
 | Onboarding | Create an account and its owner, password shown once, plan optional |
 | Subscription | Stop and restart syncing with a reason; assign a plan; set the renewal date — see [Subscription plans](#subscription-plans) |
 | Support | Run a sync now; see why an account is stuck |
@@ -354,43 +353,29 @@ doors, and the token each one mints is scoped to its surface:
 | Access token life | 12 h | 1 h |
 | Refresh token life | 30 d | 1 d |
 
-**The scope comes from the door, not from the account.** Before the split, the
-flag on the user row decided what the console answered, so a support engineer
-signing in to look at their own attendance was handed a session that could also
-list every other customer. Now that same sign-in is tenant-scoped and the
-console refuses it — they have to go through the console door, which is also
-where the short session life applies. A refresh returns to the surface it
-started on, so a customer session can never renew itself into a console one.
+**Staff is a backend role, not a customer role.** A platform staff account
+(`is_platform_admin`) signs in at the console door only. The customer door
+refuses it — whatever else the account owns — and answers exactly as it answers
+a wrong password, because "this is a staff account" would turn the customer form
+into a lookup for which addresses hold the flag. The server enforces it on every
+request too: a customer-scoped token held by a staff-flagged account is refused
+at every workspace route and cannot be refreshed, so granting the flag ends any
+customer session the account already had.
 
-Two consequences worth knowing:
+The sign-in page follows the same split. *Sign in* only ever calls the customer
+door. **Log in as admin**, the link under the sign-in card (`/#/staff/login`),
+only ever calls the console door, and answers a non-staff account exactly like a
+wrong password. There is no second session and no switch between a workspace and
+the console: staff see the console, customers see their workspace.
+
+Things worth knowing:
 
 - **The flag alone does not open the console for a session already held.**
-  After `grant_admin.py`, the person signs out and in again; the sign-in then
-  opens the console session alongside their workspace.
-- **A staff account with no workspace is turned away by the customer door**
-  itself (the API refuses to mint a session that would fail on every screen);
-  the sign-in page takes that as its cue to use the console door instead.
-
-**One sign-in, both hats.** The sign-in page calls the customer door and, for an
-account that holds the staff flag, the console door too, with the password
-already typed — so a platform admin signs in once and switches between their
-workspace and the console from the sidebar (*Staff console ›* / *‹ My
-workspace*) without being asked again. Staff with no workspace of their own are
-turned away by the customer door (403), so the page goes to the console door
-and they land in the console. Nothing server-side changed: they are still two
-separately-scoped tokens, only one is sent at a time, and each is refused at the
-other's routes.
-
-- The next sign-in on the same browser lands in whichever of the two was used
-  last. **Log in as admin**, the link under the sign-in card (`/#/staff/login`),
-  is the same form aimed at the console door first: it always lands in the
-  console, and answers a non-staff account exactly like a wrong password.
-- The console session still lives a day at most. When it has expired, the
-  switch asks for the password again on the same page, email filled in, and
-  reopens both.
-- *Sign out* ends both.
-- A customer without the flag only ever gets a workspace session; the page
-  never tries the console door for them.
+  After `grant_admin.py`, the person signs in at the console door.
+- **Give staff their own account.** Create it with `grant_admin.py --create`
+  (no workspace). Promoting an address that owns a workspace leaves that
+  workspace's data in place but locks the account out of it.
+- The console session still lives a day at most, and *Sign out* ends it.
 
 The console door answers a non-staff account exactly as it answers a wrong
 password. Saying "you are not staff" would turn it into a lookup for which
@@ -404,7 +389,7 @@ buys is that a console credential is never typed into the customer form, that a
 cross-tenant token expires in an hour rather than twelve, and that
 `user_session.scope` can answer "which live sessions could reach other
 customers" during an incident — a question `tenant_id` cannot answer, because a
-dual-role person has a tenant either way.
+staff account that still owns a workspace has a tenant either way.
 
 Reaching any of it needs `is_platform_admin`, which is **not** a role either.
 Roles (owner, admin, viewer) are positions inside one customer's account and
@@ -445,10 +430,10 @@ python3 tools/gate_proof.py           # stopping and restarting an account
 ```
 
 `login_doors_proof.py` asserts that a customer is never shown the console, that
-a staff-only account is refused at the customer door and admitted at the other,
-that signing out of the console returns to the *console* login rather than the
-customer one, and that a dual-role user's customer session shows no console nav
-but does offer a link across to it.
+a staff account — with or without a workspace — is refused at the customer door
+with a wrong-password answer and admitted only at the console door, and that
+signing out of the console returns to the *console* login rather than the
+customer one.
 
 `gate_proof.py` stops an account from the console and then checks what the
 *customer* sees — the banner, the pill, the schedule card, the refused Sync now
@@ -818,9 +803,9 @@ change to the matching logic itself, just each provider implementing
 `fetch_employees`/`create_employee` (`Capability.READ_EMPLOYEES` /
 `WRITE_EMPLOYEES`).
 
-**Import terminals** does a narrower version of the same thing, on demand:
+**Test connection** does a narrower version of the same thing, on demand:
 for a provider that can create employees (ZKTeco and BioTime), the settings
-page follows a successful import with `POST
+page follows a successful test (or Connect) with `POST
 /sources/{id}/provision-employees`, which creates on the device every
 **active** Odoo employee who is **not mapped to a device user yet** and has a
 **Badge ID or PIN** — those two fields only, never a registration number or
@@ -865,6 +850,22 @@ underneath. Left alone, `OdooClient` has no idea that distinction exists:
 every `search_read` it issues is scoped only by whatever companies the
 authenticated Odoo API user happens to be a member of, which for a shared
 integration user is often "all of them."
+
+**Company switches (what the Settings page shows).** Instead of picking one
+company from a dropdown, Settings → Odoo lists every company the login can
+reach, each with a switch, all **on** by default. What is stored is the
+exceptions — `OdooConnection.disabled_company_ids` — so a company created in
+Odoo later arrives switched on. `OdooClient.company_scope()` turns that into
+the enabled ids (read from Odoo each run); `execute` sends them as
+`allowed_company_ids` (first = default company for new records) and searches
+use `company_id = X` / `in [...]`. At least one must stay on — an empty list
+would fall back to *every* company, so it is refused. Employees of a company
+switched off are set aside at the next sync (`EmployeeMapping.status =
+out_of_scope`): hidden from the Employees list, not counted against the plan,
+not synced, never auto-created into another company, and restored with the
+same Odoo link when the company is switched back on (their punches wait in
+the ledger meanwhile). The paragraphs below describe the older single-company
+pin, which still works and reads as "every other company is off".
 
 `OdooConnection.company_id` closes that gap — the res.company id this one
 connection is pinned to, set from the company list Test Connection returns
@@ -1749,3 +1750,25 @@ network is involved — Anviz terminals report to CrossChex Cloud themselves.
 
 Code `app/integrations/providers/crosschex.py`; tests `tests/test_crosschex.py`
 use a simulated service. **Not yet run against a live CrossChex Cloud account.**
+
+
+## Lead pipeline
+
+Website enquiries (`contact_request`) are worked as a pipeline in the staff
+console (Platform → Leads): **New → Contacted → Qualified → Demo → Won / Lost**.
+A board (drag a card to a column) and a list share one API.
+
+- `contact_request.status` holds the stage (`PIPELINE_STAGES` in
+  `app/models/contact.py`); `stage_changed_at` says how long a lead has sat
+  there, `lost_reason` why one was lost (cleared if the lead is revived).
+  Movement is free in both directions.
+- `contact_event` is the history: an opening "came in as New" entry (written
+  by `POST /public/contact`), one `stage` entry per move, and `note` entries
+  staff add. Saving without changing the stage writes nothing.
+- API (all staff-only): `GET /admin/contact-requests[?status=open|<stage>]`,
+  `GET /admin/contact-requests/pipeline` (count per stage, open, won, lost,
+  conversion = won ÷ (won + lost), average days new → won),
+  `PATCH /admin/contact-requests/{id}` (`status`, `notes`, `lost_reason`),
+  `GET|POST /admin/contact-requests/{id}/events`.
+- Migration `0004` renames the old statuses (`demo_booked` → `demo`,
+  `closed` → `lost`) and gives every existing lead an opening history entry.

@@ -167,25 +167,35 @@ def test_the_console_door_locks_out_a_guesser_like_the_other_one(api):
 # Being sent to the right door
 # ===========================================================================
 def test_a_tenantless_staff_account_is_turned_away_from_the_customer_door(api):
-    """A token minted here would authenticate and then fail on every screen.
-
-    Refusing at the door, with the address of the one that works, beats handing
-    back a session that reads as a broken account.
-    """
+    """Staff is a backend role: the customer door never admits it, and answers
+    exactly as it answers a wrong password."""
     make_staff(api)  # creates the account and signs in at the console door
     response = login(api, STAFF_EMAIL)
-    assert response.status_code == 403
-    assert "staff console" in response.json()["detail"]
+    assert response.status_code == 401
+    assert response.json()["detail"] == login(api, STAFF_EMAIL, password="wrong-password-123").json()["detail"]
 
 
-def test_a_staff_user_with_a_workspace_is_still_welcome_at_the_customer_door(api):
-    """Being staff is not a reason to refuse someone their own account."""
+def test_a_staff_user_with_a_workspace_is_refused_at_the_customer_door(api):
+    """Holding the staff flag ends customer sign-in, whatever else the account
+    owns — the person uses the console door, and only that."""
     signup(api, "Acme", "owner@acme.example.com")
     promote(api, "owner@acme.example.com")
 
     response = login(api, "owner@acme.example.com")
-    assert response.status_code == 200, response.text
-    assert response.json()["scope"] == "tenant"
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Incorrect email or password"
+    assert login(api, "owner@acme.example.com", door="staff").status_code == 200
+
+
+def test_a_customer_session_held_when_the_flag_is_granted_stops_working(api):
+    """Granting the flag must not leave a customer session behind: it can
+    neither use the workspace nor renew itself."""
+    customer = signup(api, "Acme", "owner@acme.example.com")
+    opened = login(api, "owner@acme.example.com").json()
+    promote(api, "owner@acme.example.com")
+
+    assert api.get("/api/v1/tenant", headers=head(customer)).status_code == 403
+    assert _refresh(api, opened["refresh_token"]).status_code == 401
 
 
 # ===========================================================================
@@ -208,7 +218,6 @@ def test_refreshing_a_console_session_stays_a_console_session(api):
 def test_refreshing_a_customer_session_cannot_become_a_console_one(api):
     """The scope comes from the signed token, so there is nothing to ask for."""
     signup(api, "Acme", "owner@acme.example.com")
-    promote(api, "owner@acme.example.com")
     opened = login(api, "owner@acme.example.com").json()
 
     renewed = _refresh(api, opened["refresh_token"]).json()

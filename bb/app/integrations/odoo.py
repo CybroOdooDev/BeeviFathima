@@ -46,7 +46,7 @@ import ssl
 import threading
 import time
 import xmlrpc.client
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
@@ -321,6 +321,13 @@ class OdooCredentials:
     #: it's set, regardless of how many companies the underlying Odoo user
     #: is otherwise a member of.
     company_id: int | None = None
+    #: Companies switched OFF for this connection (res.company ids). Every
+    #: other company the Odoo user can see is on — including ones created in
+    #: Odoo after this was saved, which is why the choice is stored as the
+    #: exceptions rather than as a list of the enabled. Empty = all on.
+    #: Combined with ``company_id`` (the older single-company pin) by
+    #: OdooClient.company_scope.
+    disabled_company_ids: list[int] = field(default_factory=list)
     #: "auto" (detect from the server's version), "json2" or "xmlrpc".
     api: str = API_AUTO
 
@@ -374,6 +381,12 @@ class OdooClient:
             raise OdooError(f"Unknown Odoo API {creds.api!r} — use auto, json2 or xmlrpc.")
         self._version_info: dict[str, Any] | None = None
         self._field_cache: dict[str, set[str]] = {}
+        self._scope: list[int] | None | object = _UNSET
+        self._scope_key: tuple | None = None
+        #: Whether this Odoo keeps access rights and record rules in the one
+        #: ``ir.access`` model (Odoo 20) rather than ``ir.model.access`` +
+        #: ``ir.rule``. None = not looked at yet.
+        self._unified_access: bool | None = None
         #: "module" | "bootstrap" | None | _UNSET (not looked up this
         #: instance's lifetime yet) — see _device_tracking_mode.
         self._device_mode: str | None | object = _UNSET
@@ -599,7 +612,8 @@ class OdooClient:
         scope_to_company: bool = True,
     ):
         kwargs = dict(kwargs or {})
-        if scope_to_company and self.creds.company_id is not None:
+        scope = self.company_scope() if scope_to_company else None
+        if scope is not None:
             # allowed_company_ids is how Odoo's own multi-company record
             # rules scope a call — env.companies (and so every ir.rule that
             # checks company_id in company_ids) reads it straight from the
@@ -611,7 +625,7 @@ class OdooClient:
             # never builds a domain at all, and even for an Odoo user who is
             # technically a member of several companies.
             ctx = dict(kwargs.get("context") or {})
-            ctx["allowed_company_ids"] = [self.creds.company_id]
+            ctx["allowed_company_ids"] = list(scope)
             kwargs["context"] = ctx
 
         if self.api == API_JSON2:
@@ -655,6 +669,49 @@ class OdooClient:
             data = self.execute(model, "fields_get", [[], ["type"]])
             self._field_cache[model] = set(data or {})
         return self._field_cache[model]
+
+    def company_scope(self) -> list[int] | None:
+        """The companies this connection may touch, or None for "no
+        restriction" (every company the Odoo user can see).
+
+        The first id is the default company for anything created without one
+        (Odoo's ``env.company`` is the first of ``allowed_company_ids``).
+        Resolved once per client: the list of companies is read from Odoo
+        itself, so a company added there later is on from the start.
+
+        Raises when nothing is left enabled — an empty ``allowed_company_ids``
+        would silently fall back to *every* company, the opposite of what
+        switching them all off means.
+        """
+        disabled = set(self.creds.disabled_company_ids or [])
+        pinned = self.creds.company_id
+        key = (pinned, tuple(sorted(disabled)))
+        if self._scope is not _UNSET and self._scope_key == key:
+            return self._scope  # type: ignore[return-value]
+        scope: list[int] | None
+        if pinned is not None:
+            scope = [] if pinned in disabled else [pinned]
+        elif disabled:
+            scope = [c["id"] for c in self.list_companies() if c["id"] not in disabled]
+        else:
+            scope = None
+        if scope is not None and not scope:
+            raise OdooError(
+                "Every company is switched off for this connection, so there is "
+                "nothing to sync. Turn at least one on under Settings → Odoo."
+            )
+        self._scope, self._scope_key = scope, key
+        return scope
+
+    def _in_scope(self, field_name: str) -> list[tuple[str, str, Any]]:
+        """``field_name`` restricted to the enabled companies — ``=`` for one,
+        ``in`` for several, nothing when unrestricted."""
+        scope = self.company_scope()
+        if scope is None:
+            return []
+        if len(scope) == 1:
+            return [(field_name, "=", scope[0])]
+        return [(field_name, "in", list(scope))]
 
     def list_companies(self) -> list[dict[str, Any]]:
         """Every res.company this Odoo user can see — deliberately not
@@ -724,12 +781,14 @@ class OdooClient:
         aside) and makes the scoping visible right here rather than only
         as an emergent effect of the transport layer.
         """
-        if self.creds.company_id is not None and "company_id" in available_fields:
-            return [("company_id", "=", self.creds.company_id)]
+        if "company_id" in available_fields:
+            return self._in_scope("company_id")
         return []
 
     # -- employees ---------------------------------------------------------
-    def find_employee(self, emp_code: str) -> tuple[int | None, str | None, str | None]:
+    def find_employee(
+        self, emp_code: str, *, scoped: bool = True
+    ) -> tuple[int | None, str | None, str | None]:
         """Resolve a badge to an hr.employee.
 
         Returns ``(id, name, method)``. Ambiguity is reported, not resolved: the
@@ -740,7 +799,7 @@ class OdooClient:
         """
         available = self.fields_of("hr.employee")
         ctx = {"active_test": False}
-        company_domain = self._company_domain(available)
+        company_domain = self._company_domain(available) if scoped else []
 
         for field_name, method in MATCH_FIELDS:
             if field_name not in available:
@@ -750,6 +809,7 @@ class OdooClient:
                 "search_read",
                 [[(field_name, "=", emp_code), *company_domain]],
                 {"fields": ["id", "name"], "limit": 2, "context": ctx},
+                scope_to_company=scoped,
             )
             if len(found) == 1:
                 return found[0]["id"], found[0]["name"], method
@@ -789,8 +849,9 @@ class OdooClient:
             vals["barcode"] = emp_code
         if "pin" in available:
             vals["pin"] = emp_code
-        if self.creds.company_id is not None and "company_id" in available:
-            vals["company_id"] = self.creds.company_id
+        scope = self.company_scope()
+        if scope is not None and "company_id" in available:
+            vals["company_id"] = scope[0]
         result = self.execute("hr.employee", "create", [vals])
         return int(result if isinstance(result, int) else result[0])
 
@@ -974,11 +1035,8 @@ class OdooClient:
             # the same Odoo would find and overwrite each other's device
             # with the same serial number.
             has_company_field = "x_company_id" in self.fields_of("x_biobridge_device")
-            company_domain = (
-                [("x_company_id", "=", self.creds.company_id)]
-                if has_company_field and self.creds.company_id is not None
-                else []
-            )
+            scope = self.company_scope()
+            company_domain = self._in_scope("x_company_id") if has_company_field else []
             vals = {
                 k: v
                 for k, v in {
@@ -988,14 +1046,17 @@ class OdooClient:
                 }.items()
                 if v
             }
-            if has_company_field and self.creds.company_id is not None:
-                vals["x_company_id"] = self.creds.company_id
+            # Only stamped on a row being created or claimed: a device found
+            # in one enabled company must not be moved to another just
+            # because several are on.
+            new_company = scope[0] if has_company_field and scope is not None else None
             existing = self.execute(
                 "x_biobridge_device",
                 "search_read",
                 [[("x_serial_number", "=", serial_number), *company_domain]],
                 {"fields": ["id"], "limit": 1},
             )
+            claimed = False
             if not existing and company_domain:
                 # A row with this serial and no company at all predates this
                 # connection being scoped (or predates x_company_id itself,
@@ -1011,10 +1072,15 @@ class OdooClient:
                     [[("x_serial_number", "=", serial_number), ("x_company_id", "=", False)]],
                     {"fields": ["id"], "limit": 1},
                 )
+                claimed = bool(existing)
             if existing:
+                if claimed and new_company is not None:
+                    vals["x_company_id"] = new_company
                 if vals:
                     self.execute("x_biobridge_device", "write", [[existing[0]["id"]], vals])
                 return int(existing[0]["id"])
+            if new_company is not None:
+                vals["x_company_id"] = new_company
             vals["x_serial_number"] = serial_number
             vals["x_name"] = name or serial_number
             result = self.execute("x_biobridge_device", "create", [vals])
@@ -1190,6 +1256,12 @@ class OdooClient:
             f"['|', ('{company_field}', '=', False), "
             f"('{company_field}', 'in', company_ids)]"
         )
+        if self._unified_access:
+            # Odoo 20: a restriction is an ir.access row with no group.
+            self._ensure_access_row(
+                model_id, name, group_id=False, domain=domain, repair_domain=True
+            )
+            return
         existing = self.execute(
             "ir.rule",
             "search_read",
@@ -1237,12 +1309,29 @@ class OdooClient:
         names and locations being broadly readable and writable. It isn't
         sensitive HR data.
         """
-        existing = self.execute(
-            "ir.model.access",
-            "search",
-            [[("model_id", "=", model_id), ("name", "=", f"{model_name}.biobridge")]],
-            {"limit": 1},
-        )
+        # Odoo 20 folded ir.model.access and ir.rule into one ir.access model,
+        # so the old one answers "does not exist" there. Found by asking —
+        # no version parsing — and remembered for the rule step that follows.
+        existing = None
+        if not self._unified_access:
+            try:
+                existing = self.execute(
+                    "ir.model.access",
+                    "search",
+                    [[("model_id", "=", model_id), ("name", "=", f"{model_name}.biobridge")]],
+                    {"limit": 1},
+                )
+                self._unified_access = False
+            except OdooError as exc:
+                if not self._model_missing(exc, "ir.model.access"):
+                    raise
+                self._unified_access = True
+        if self._unified_access:
+            self._ensure_access_row(
+                model_id, f"{model_name}.biobridge",
+                group_id=self._xmlid_to_id("base", "group_user"),
+            )
+            return
         if existing:
             return
         self.execute(
@@ -1260,6 +1349,38 @@ class OdooClient:
                 }
             ],
         )
+
+    @staticmethod
+    def _model_missing(exc: OdooError, model: str) -> bool:
+        """Odoo saying a model does not exist — worded differently over
+        JSON-2 ("the model 'x' does not exist") and XML-RPC ("Object x doesn't
+        exist"), so match on the pieces both share."""
+        message = str(exc).lower()
+        return model in message and "exist" in message
+
+    def _ensure_access_row(
+        self, model_id: int, name: str, *, group_id: int | bool, domain: str | None = None,
+        repair_domain: bool = False,
+    ) -> None:
+        """Create-if-missing ``ir.access`` row (Odoo 20). With a group it is a
+        permission (full CRUD for that group); with none and a domain it is a
+        restriction — what ``ir.rule`` used to be."""
+        existing = self.execute(
+            "ir.access", "search_read",
+            [[("model_id", "=", model_id), ("name", "=", name)]],
+            {"fields": ["domain"], "limit": 1},
+        )
+        if existing:
+            if repair_domain and (existing[0].get("domain") or "").strip() != (domain or ""):
+                self.execute("ir.access", "write", [[existing[0]["id"]], {"domain": domain}])
+            return
+        vals: dict[str, Any] = {
+            "name": name, "model_id": model_id, "group_id": group_id or False,
+            "operation": "crud",
+        }
+        if domain:
+            vals["domain"] = domain
+        self.execute("ir.access", "create", [vals])
 
     def close_attendance(self, attendance_id: int, check_out: datetime) -> bool:
         return bool(

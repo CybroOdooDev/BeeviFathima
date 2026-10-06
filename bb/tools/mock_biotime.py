@@ -190,7 +190,38 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path in ("/api-token-auth/", "/jwt-api-token-auth/"):
             return self._json({"token": TOKEN})
+        if path == "/personnel/api/employees/":
+            return self._create_employee()
         self._json({"detail": "Not found."}, 404)
+
+    def _create_employee(self):
+        """POST /personnel/api/employees/ — what BioBridge's "create the
+        Odoo employees BioTime is missing" step calls. Held in memory only, so
+        a restart of this mock forgets them (and BioBridge simply creates
+        them again on the next test)."""
+        if not self._authorised():
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            return self._json({"detail": "Invalid JSON."}, 400)
+        code = str(body.get("emp_code") or "").strip()
+        if not code:
+            return self._json({"emp_code": ["This field is required."]}, 400)
+        if any(str(e.get("emp_code")) == code for e in EMPLOYEES):
+            # BioTime's own wording for a duplicate; BioBridge keys on it.
+            return self._json({"emp_code": ["employee with this emp code already exists."]}, 400)
+        row = _emp(
+            max([int(e.get("id") or 0) for e in EMPLOYEES] + [0]) + 1,
+            code,
+            str(body.get("first_name") or code),
+            str(body.get("last_name") or ""),
+            None,
+        )
+        row["enable_attendance"] = bool(body.get("enable_attendance", True))
+        EMPLOYEES.append(row)
+        self._json(row, 201)
 
     def do_GET(self):
         if not self._authorised():

@@ -109,7 +109,7 @@ def main():
     db = sessionmaker(bind=engine, autoflush=False, autocommit=False)()
 
     tenant = Tenant(name="Proof Co", slug="proof", status="active", timezone=TZ,
-                    pairing_mode="alternating", max_shift_hours=16, work_start_time="08:30")
+                    pairing_mode="alternating", max_shift_hours=16)
     db.add(tenant)
     db.flush()
 

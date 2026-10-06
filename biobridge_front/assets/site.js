@@ -77,23 +77,129 @@ const form = document.querySelector('#contact-form');
 if (form) {
   const status = form.querySelector('.form-status');
   const say = (text, tone) => { status.textContent = text; status.className = `form-status ${tone}`; };
-  const demoFields = form.querySelector('#demo-fields');
-  const dateInput = form.querySelector('[name="preferred_date"]');
-
-  // Demo-only fields show for "Book a demo" and hide for a plain sales question.
-  const syncTopic = () => {
-    const topic = form.querySelector('[name="topic"]:checked');
-    if (demoFields) demoFields.hidden = !(topic && topic.value === 'Demo');
-  };
-  form.querySelectorAll('[name="topic"]').forEach((r) => r.addEventListener('change', syncTopic));
-  syncTopic();
 
   let tz = '';
   try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { /* old browser */ }
   form.querySelector('[name="timezone"]').value = tz;
-  const tzLabel = form.querySelector('#tz-label');
-  if (tzLabel) tzLabel.textContent = tz || 'not detected';
-  if (dateInput) dateInput.min = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+
+  // Country code defaults to the visitor's country, guessed from the browser
+  // (language region first, then timezone). They can change it.
+  const codeSelect = form.querySelector('[name="phone_code"]');
+  if (codeSelect) {
+    const byTz = { 'Asia/Kolkata': 'IN', 'Asia/Calcutta': 'IN', 'Asia/Dubai': 'AE', 'Asia/Riyadh': 'SA', 'Asia/Qatar': 'QA',
+      'Asia/Kuwait': 'KW', 'Asia/Muscat': 'OM', 'Asia/Bahrain': 'BH', 'Asia/Karachi': 'PK', 'Asia/Dhaka': 'BD',
+      'Asia/Colombo': 'LK', 'Asia/Kathmandu': 'NP', 'Asia/Singapore': 'SG', 'Asia/Kuala_Lumpur': 'MY', 'Asia/Jakarta': 'ID',
+      'Asia/Bangkok': 'TH', 'Asia/Manila': 'PH', 'Asia/Shanghai': 'CN', 'Asia/Hong_Kong': 'HK', 'Asia/Tokyo': 'JP',
+      'Asia/Seoul': 'KR', 'Europe/London': 'GB', 'Europe/Dublin': 'IE', 'Europe/Berlin': 'DE', 'Europe/Paris': 'FR',
+      'Europe/Madrid': 'ES', 'Europe/Rome': 'IT', 'Europe/Amsterdam': 'NL', 'Africa/Cairo': 'EG', 'Africa/Lagos': 'NG',
+      'Africa/Nairobi': 'KE', 'Africa/Johannesburg': 'ZA', 'Australia/Sydney': 'AU', 'Pacific/Auckland': 'NZ',
+      'America/New_York': 'US', 'America/Chicago': 'US', 'America/Denver': 'US', 'America/Los_Angeles': 'US',
+      'America/Toronto': 'CA', 'America/Mexico_City': 'MX', 'America/Sao_Paulo': 'BR' };
+    const regionOf = (tag) => { try { return new Intl.Locale(tag).maximize().region || ''; } catch { return ''; } };
+    // The timezone says where the visitor physically is; the language only says
+    // what they read, so it is the fallback.
+    const fromLang = [...(navigator.languages || [navigator.language || ''])]
+      .map((t) => (/-[A-Za-z]{2}\b/.test(t) ? regionOf(t) : '')).find(Boolean);
+    const guess = byTz[tz] || fromLang || '';
+    const hit = [...codeSelect.options].find((o) => o.dataset.iso === guess);
+    if (hit) codeSelect.value = hit.value;
+    // The closed control shows just "flag +code"; the list keeps full names.
+    // The <select> stays as the stored value (and the no-JS fallback); what the
+    // visitor sees is a searchable list on top of it: type "91", "ind" or "uk".
+    const view = form.querySelector('.phone-code-view');
+    const wrap = view && view.parentElement;
+    const flagOf = (iso) => String.fromCodePoint(...[...iso].map((c) => 0x1F1E6 + c.charCodeAt(0) - 65));
+    const paint = () => {
+      const o = codeSelect.selectedOptions[0];
+      if (view && o) view.textContent = `${flagOf(o.dataset.iso)} ${o.value}`;
+    };
+    codeSelect.addEventListener('change', paint);
+    paint();
+
+    if (view && wrap) {
+      codeSelect.tabIndex = -1;
+      codeSelect.setAttribute('aria-hidden', 'true');
+      wrap.classList.add('is-searchable');
+      view.tabIndex = 0;
+      view.setAttribute('role', 'combobox');
+      view.setAttribute('aria-haspopup', 'listbox');
+      view.setAttribute('aria-expanded', 'false');
+      view.setAttribute('aria-label', 'Country code');
+      view.removeAttribute('aria-hidden');
+
+      const all = [...codeSelect.options].map((o, i) => ({
+        i, iso: o.dataset.iso, code: o.value,
+        name: o.textContent.replace(/^\S+\s/, '').replace(/\s*\(\+\d+\)\s*$/, ''),
+      }));
+      const pop = document.createElement('div');
+      pop.className = 'phone-code-pop';
+      pop.hidden = true;
+      pop.innerHTML = '<input type="text" class="phone-code-search" placeholder="Search country or code" '
+        + 'autocomplete="off" aria-label="Search country or code"><ul role="listbox"></ul>';
+      wrap.appendChild(pop);
+      const search = pop.querySelector('input');
+      const list = pop.querySelector('ul');
+      let shown = []; let active = 0;
+
+      const render = () => {
+        const q = search.value.trim().toLowerCase().replace(/^\+/, '');
+        shown = all.filter((c) => !q || c.name.toLowerCase().includes(q)
+          || c.code.slice(1).startsWith(q) || c.iso.toLowerCase() === q);
+        // Names that start with the query first, then the rest.
+        shown.sort((a, b) => (b.name.toLowerCase().startsWith(q) - a.name.toLowerCase().startsWith(q)) || (a.i - b.i));
+        active = Math.min(active, Math.max(shown.length - 1, 0));
+        list.innerHTML = shown.length ? '' : '<li class="none">No match</li>';
+        shown.forEach((c, n) => {
+          const li = document.createElement('li');
+          li.setAttribute('role', 'option');
+          li.dataset.index = String(c.i);
+          if (n === active) li.classList.add('active');
+          if (c.i === codeSelect.selectedIndex) li.setAttribute('aria-selected', 'true');
+          li.textContent = `${flagOf(c.iso)} ${c.name} (${c.code})`;
+          list.appendChild(li);
+        });
+        const cur = list.querySelector('.active');
+        if (cur) cur.scrollIntoView({ block: 'nearest' });
+      };
+      const open = (seed = '') => {
+        pop.hidden = false;
+        view.setAttribute('aria-expanded', 'true');
+        search.value = seed;
+        active = 0;
+        render();
+        search.focus();
+      };
+      const close = (refocus) => {
+        pop.hidden = true;
+        view.setAttribute('aria-expanded', 'false');
+        if (refocus) view.focus();
+      };
+      const choose = (index) => {
+        codeSelect.selectedIndex = index;
+        codeSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        close(true);
+      };
+
+      view.addEventListener('click', () => (pop.hidden ? open() : close(false)));
+      view.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') { e.preventDefault(); open(); }
+        else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); open(e.key); }
+      });
+      search.addEventListener('input', () => { active = 0; render(); });
+      search.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowDown') { e.preventDefault(); active = Math.min(active + 1, shown.length - 1); render(); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); active = Math.max(active - 1, 0); render(); }
+        else if (e.key === 'Enter') { e.preventDefault(); if (shown[active]) choose(shown[active].i); }
+        else if (e.key === 'Escape') { e.preventDefault(); close(true); }
+        else if (e.key === 'Tab') close(false);
+      });
+      list.addEventListener('mousedown', (e) => {
+        const li = e.target.closest('li[data-index]');
+        if (li) { e.preventDefault(); choose(Number(li.dataset.index)); }
+      });
+      document.addEventListener('mousedown', (e) => { if (!pop.hidden && !wrap.contains(e.target)) close(false); });
+    }
+  }
 
   const mailFallback = (data) => {
     const labelOf = (name) => {
@@ -112,7 +218,10 @@ if (form) {
     if (!form.reportValidity()) return;
     const data = {};
     for (const [k, v] of new FormData(form)) { if (String(v).trim() !== '') data[k] = String(v).trim(); }
-    if (data.topic !== 'Demo') { delete data.preferred_date; delete data.preferred_window; }
+    // One phone value: "+91 98765 43210"; a lone country code is no number.
+    const code = data.phone_code; const num = data.phone_number;
+    delete data.phone_code; delete data.phone_number;
+    if (num) data.phone = `${code || ''} ${num}`.trim();
 
     const button = form.querySelector('[type=submit]');
     button.disabled = true;
@@ -125,11 +234,11 @@ if (form) {
           body: JSON.stringify(data),
         });
         if (!response.ok) throw new Error(String(response.status));
-        form.reset(); syncTopic();
+        form.reset();
         say('Thanks — we have your request and will be in touch.', 'ok');
       } else {
         const result = await callApi('/public/contact', data);
-        form.reset(); syncTopic();
+        form.reset();
         status.className = 'form-status ok';
         status.textContent = (result && result.message) || 'Thanks — we have your request and will be in touch.';
         if (result && result.booking_url) {
@@ -262,7 +371,7 @@ if (signupForm) {
   try { zones = Intl.supportedValuesOf('timeZone').map((z) => LEGACY[z] || z); } catch { zones = []; }
   zones = [here, ...['UTC', ...zones].filter((z) => z !== here)].filter((z, i, all) => all.indexOf(z) === i);
   tzSelect.innerHTML = zones.map((z, i) => `<option value="${z}"${i === 0 ? ' selected' : ''}>${
-    i === 0 && here !== 'UTC' ? `${z} (your timezone)` : z}</option>`).join('');
+    i === 0 && here !== 'UTC' ? `${z} (default)` : z}</option>`).join('');
 
   const mode = () => signupForm.querySelector('[name=mode]:checked').value;
   const current = () => plans && plans.find((p) => p.name === planSelect.value);

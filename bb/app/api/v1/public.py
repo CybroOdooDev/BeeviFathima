@@ -9,6 +9,7 @@ typed.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func, select
@@ -16,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.session import get_db
-from app.models import ContactRequest, PendingSignup, SubscriptionPlan
+from app.models import ContactEvent, ContactRequest, PendingSignup, SubscriptionPlan
 from app.schemas import ContactIn, ContactOut, MessageOut, PublicPlanOut, RegisterIn, RegisterOut, ResendIn
 from app.services import billing, contact as contact_service, onboarding
 from app.services.email_check import UngenuineEmailError, assert_genuine_email
@@ -172,7 +173,11 @@ def contact(payload: ContactIn, request: Request, db: Session = Depends(get_db))
         message=clean(payload.message), preferred_date=payload.preferred_date,
         preferred_window=payload.preferred_window, timezone=clean(payload.timezone), ip=_ip(request),
     )
+    req.stage_changed_at = datetime.now(timezone.utc)
     db.add(req)
+    db.flush()
+    db.add(ContactEvent(contact_id=req.id, kind="stage", from_stage=None, to_stage="new", actor="website",
+                       created_at=req.stage_changed_at))
     db.commit()
     contact_service.notify_sales(db, req)
     contact_service.acknowledge_visitor(db, req)

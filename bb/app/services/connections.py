@@ -62,6 +62,7 @@ def build_odoo_client(tenant: Tenant, conn: OdooConnection) -> OdooClient:
             api_key=decrypt(conn.api_key_enc, tenant.crypto_key) or "",
             uid=conn.uid_cache,
             company_id=conn.company_id,
+            disabled_company_ids=list(conn.disabled_company_ids or []),
         )
     )
 

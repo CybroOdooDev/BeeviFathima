@@ -313,23 +313,6 @@ def test_local_mirror_matches_what_was_pushed(db, tenant, local_day, monkeypatch
     assert record.check_in == local_day.replace(hour=8) - DUBAI_OFFSET
 
 
-def test_late_arrival_scored_once_per_day(db, tenant, local_day, monkeypatch):
-    """Coming back from lunch must not read as hours late."""
-    odoo = FakeOdoo()
-    rows = [
-        punch(1, "1001", local_day.replace(hour=9, minute=30)),   # 60 min late
-        punch(2, "1001", local_day.replace(hour=12)),
-        punch(3, "1001", local_day.replace(hour=13)),             # not a late arrival
-        punch(4, "1001", local_day.replace(hour=17)),
-    ]
-    run(db, tenant, odoo, rows, monkeypatch)
-
-    records = db.scalars(select(AttendanceRecord).order_by(AttendanceRecord.check_in)).all()
-    assert len(records) == 2
-    assert records[0].is_late is True and records[0].late_minutes == 60
-    assert records[1].is_late is False
-
-
 def test_each_punch_is_stamped_with_the_run_that_ingested_it(
     db, tenant, local_day, monkeypatch
 ):

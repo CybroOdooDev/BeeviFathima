@@ -156,3 +156,34 @@ def test_company_flag_rejects_an_unknown_company() -> None:
             main()
     finally:
         sys.argv = old_argv
+
+
+def test_mock_biotime_can_create_an_employee_and_refuses_a_duplicate(monkeypatch) -> None:
+    """BioBridge's Test connection creates Odoo employees BioTime is missing
+    with POST /personnel/api/employees/ — the mock must have that endpoint."""
+    monkeypatch.setattr(mock_biotime, "EMPLOYEES", list(DATASETS[2]["employees"]))
+    server = build_server()
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        base = f"http://127.0.0.1:{server.server_port}"
+        headers = {"Authorization": f"Token {TOKEN}"}
+        url = f"{base}/personnel/api/employees/"
+        body = {"emp_code": "10004", "first_name": "Nadia", "last_name": "Khan", "enable_attendance": True}
+
+        assert httpx.post(url, json=body, timeout=5.0).status_code == 401  # needs the token
+
+        created = httpx.post(url, json=body, headers=headers, timeout=5.0)
+        assert created.status_code == 201
+        assert created.json()["emp_code"] == "10004"
+
+        codes, page = set(), url   # the mock pages two at a time; follow `next`
+        while page:
+            data = httpx.get(page, headers=headers, timeout=5.0).json()
+            codes |= {r["emp_code"] for r in data["data"]}
+            page = data["next"]
+        assert "10004" in codes, "a created employee shows up in the list"
+
+        again = httpx.post(url, json=body, headers=headers, timeout=5.0)
+        assert again.status_code == 400 and "already exists" in again.text
+    finally:
+        server.shutdown()

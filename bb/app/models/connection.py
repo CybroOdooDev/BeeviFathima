@@ -76,6 +76,11 @@ class OdooConnection(Base, UUIDPk, Timestamped):
     #: safe non-null value to backfill an existing single-company connection
     #: with — null already means exactly what those rows need.
     company_id: Mapped[int | None] = mapped_column(Integer)
+    #: Companies switched OFF for this connection. Null/empty = every company
+    #: the Odoo user can see is on — the default, and it includes companies
+    #: created in Odoo later, which is why the exceptions are stored rather
+    #: than the enabled list. See OdooClient.company_scope.
+    disabled_company_ids: Mapped[list | None] = mapped_column(JSON)
     #: Display cache only — filled from Test Connection's company list, never
     #: authoritative, never read by anything that makes a security decision.
     company_name: Mapped[str | None] = mapped_column(String(120))

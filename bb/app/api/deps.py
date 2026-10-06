@@ -94,6 +94,14 @@ def get_principal(
             "workspace of your own.",
         )
 
+    if user.is_platform_admin:
+        # Staff is a backend role: it never acts inside a customer account,
+        # even through a customer-scoped token minted before the flag was set.
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Platform staff accounts use the staff console, not a customer workspace.",
+        )
+
     if user.tenant_id is None:
         # Platform staff have no customer workspace, which is the point — they
         # are not a tenant. Say so rather than 401, which would read as a broken

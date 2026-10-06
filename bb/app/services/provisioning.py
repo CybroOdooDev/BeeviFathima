@@ -1,6 +1,6 @@
-"""Create Odoo employees on a device, as part of "Import terminals".
+"""Create Odoo employees on a device, as part of "Test connection".
 
-The rule, as the product owner set it: on import, an **active** Odoo
+The rule, as the product owner set it: on a successful connection test, an **active** Odoo
 employee who is **not mapped to a device user yet** and **has a Badge ID
 (``barcode``) or a PIN** is created on the device, with that value as their
 device user id. Nothing else qualifies — not a registration number or a work
@@ -14,8 +14,8 @@ people actually punch with, an email never is.
 * no ``EmployeeMapping`` in BioBridge already ties this Odoo employee to a
   badge (someone matched by hand to a different code must not get a second
   device user under their Odoo code), and
-* the device has no user with that code already (so re-running Import
-  terminals never creates duplicates).
+* the device has no user with that code already (so re-running Test
+  connection never creates duplicates).
 
 Identity only, as everywhere else: the device gets a user id and name. A
 fingerprint, face or card still has to be enrolled at the terminal.

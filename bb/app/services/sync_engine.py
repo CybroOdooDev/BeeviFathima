@@ -250,6 +250,7 @@ class SyncEngine:
             # and they've punched for real).
             self._provision_employees(odoo, sources)
 
+            self._reconcile_company_scope(odoo)
             self._resolve_mappings(odoo)
             self._push(odoo, odoo_conn)
 
@@ -627,6 +628,60 @@ class SyncEngine:
 
         self.run.employees_provisioned = provisioned
 
+    # -- stage 4b: which companies are on --------------------------------
+    def _reconcile_company_scope(self, odoo: OdooClient) -> None:
+        """Keep mappings in step with the companies switched on for this Odoo.
+
+        An employee whose company was switched off leaves the active roster
+        (status ``out_of_scope``: hidden, uncounted, not synced) and comes back
+        — to ``mapped``, with the same Odoo employee — the run after it is
+        switched on again. The roster is read from Odoo itself, so this holds
+        however the company set changed. No-op when nothing is restricted and
+        nothing is held out.
+        """
+        held = list(self.db.scalars(
+            select(EmployeeMapping).where(
+                EmployeeMapping.tenant_id == self.tenant.id,
+                EmployeeMapping.status == MappingStatus.out_of_scope.value,
+            )
+        ).all())
+        scope = odoo.company_scope()
+        if scope is None and not held:
+            return
+        try:
+            enabled = {row["id"] for row in odoo.list_employees()}
+        except OdooError as exc:
+            self._log(f"Could not check which companies are on: {exc}", "warning")
+            return
+
+        released = parked = 0
+        for mapping in held:
+            if mapping.odoo_employee_id in enabled or scope is None:
+                mapping.status = MappingStatus.mapped.value
+                mapping.match_note = None
+                released += 1
+        if scope is not None:
+            mapped = self.db.scalars(
+                select(EmployeeMapping).where(
+                    EmployeeMapping.tenant_id == self.tenant.id,
+                    EmployeeMapping.status == MappingStatus.mapped.value,
+                    EmployeeMapping.odoo_employee_id.is_not(None),
+                )
+            ).all()
+            for mapping in mapped:
+                if mapping.odoo_employee_id not in enabled:
+                    mapping.status = MappingStatus.out_of_scope.value
+                    mapping.match_note = (
+                        "This employee is not in a company that is switched on for "
+                        "your Odoo connection."
+                    )
+                    parked += 1
+        if released or parked:
+            self.db.flush()
+            self._log(
+                f"Company switches: {parked} employee(s) set aside, {released} restored"
+            )
+
     # -- stage 5 -----------------------------------------------------------
     def _resolve_mappings(self, odoo: OdooClient) -> None:
         pending = set(
@@ -674,6 +729,7 @@ class SyncEngine:
             if mapping and mapping.status in (
                 MappingStatus.mapped.value,
                 MappingStatus.ignored.value,
+                MappingStatus.out_of_scope.value,
             ):
                 continue
             if mapping is None:
@@ -719,6 +775,8 @@ class SyncEngine:
                     f"Several Odoo employees share {method.split(':')[1]}={code}. "
                     "Pick one in the dashboard."
                 )
+            elif self._in_switched_off_company(odoo, code, mapping):
+                continue
             elif self.tenant.auto_create_employees:
                 name = self._name_for(code) or f"Employee {code}"
                 try:
@@ -743,6 +801,29 @@ class SyncEngine:
         self.db.flush()
         if matched:
             self._log(f"Matched {matched} new employee(s) to Odoo")
+
+    def _in_switched_off_company(
+        self, odoo: OdooClient, code: str, mapping: EmployeeMapping
+    ) -> bool:
+        """Whether this badge belongs to an employee of a company that is
+        switched off — checked before auto-creating, so a person from a
+        disabled company is not duplicated into an enabled one."""
+        if odoo.company_scope() is None:
+            return False
+        try:
+            emp_id, emp_name, _method = odoo.find_employee(code, scoped=False)
+        except OdooError:
+            return False
+        if not emp_id:
+            return False
+        mapping.odoo_employee_id = emp_id
+        mapping.odoo_employee_name = emp_name
+        mapping.status = MappingStatus.out_of_scope.value
+        mapping.match_note = (
+            "This employee is in a company that is switched off for your Odoo "
+            "connection. Switch it on to sync their attendance."
+        )
+        return True
 
     # -- stages 6-8 --------------------------------------------------------
     def _push(self, odoo: OdooClient, odoo_conn: OdooConnection) -> None:
@@ -790,7 +871,9 @@ class SyncEngine:
                     held += 1
                     continue
             mapping = mappings.get(punch.emp_code)
-            if mapping is None or mapping.status == MappingStatus.unmapped.value:
+            if mapping is None or mapping.status in (
+                MappingStatus.unmapped.value, MappingStatus.out_of_scope.value,
+            ):
                 punch.process_state = PunchState.unmapped.value
                 continue
             if mapping.status in (MappingStatus.ignored.value, MappingStatus.ambiguous.value):
@@ -1091,20 +1174,6 @@ class SyncEngine:
             )
         ).first()
 
-        # Lateness applies to the *arrival*, so only the first interval of a
-        # shift-day is eligible. Without this, coming back from lunch at 13:00
-        # reads as hours late and everyone looks chronically tardy.
-        earlier_today = self.db.scalar(
-            select(func.count(AttendanceRecord.id)).where(
-                AttendanceRecord.tenant_id == self.tenant.id,
-                AttendanceRecord.emp_code == mapping.emp_code,
-                AttendanceRecord.shift_date == shift_date,
-                AttendanceRecord.check_in < interval.check_in,
-                AttendanceRecord.id != (existing.id if existing else ""),
-            )
-        ) or 0
-        late_minutes = 0 if earlier_today else self._late_minutes(check_in_local)
-
         values = {
             "emp_code": mapping.emp_code,
             "employee_name": mapping.odoo_employee_name or mapping.source_name,
@@ -1120,8 +1189,6 @@ class SyncEngine:
             "pairing_mode": self.tenant.pairing_mode,
             "is_auto_closed": interval.auto_closed,
             "is_orphan_out": interval.orphan_out,
-            "is_late": late_minutes > 0,
-            "late_minutes": late_minutes,
             "notes": "; ".join(interval.notes) or None,
         }
 
@@ -1135,21 +1202,9 @@ class SyncEngine:
                 )
             )
 
-        # The session runs with autoflush off, so without this the next interval
-        # of the same day cannot see this one and is scored late a second time.
+        # The session runs with autoflush off, so flush now: the next interval
+        # handled in this run must be able to see this record.
         self.db.flush()
-
-    def _late_minutes(self, check_in_local: datetime) -> int:
-        try:
-            hour, minute = (int(p) for p in self.tenant.work_start_time.split(":"))
-        except (ValueError, AttributeError):
-            return 0
-        expected = check_in_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        delta = (check_in_local - expected).total_seconds() / 60
-        # A night shift starts before the "work start" time; never call it late.
-        if delta <= self.tenant.late_grace_minutes or delta > 12 * 60:
-            return 0
-        return int(delta)
 
     # -- helpers -----------------------------------------------------------
     def _active_odoo_connection(self) -> OdooConnection | None:

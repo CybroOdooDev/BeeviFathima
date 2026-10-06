@@ -374,13 +374,11 @@ def test_staff_change_pairing_rules(api):
 
     body = api.patch(
         f"/api/v1/admin/tenants/{acme['id']}/config",
-        json={"pairing_mode": "first_last", "max_shift_hours": 12,
-              "work_start_time": "07:30", "late_grace_minutes": 5},
+        json={"pairing_mode": "first_last", "max_shift_hours": 12},
         headers=head(staff),
     ).json()
     assert body["pairing_mode"] == "first_last"
     assert body["max_shift_hours"] == 12
-    assert body["work_start_time"] == "07:30"
 
 
 def test_config_rejects_values_the_engine_cannot_use(api):
@@ -392,7 +390,6 @@ def test_config_rejects_values_the_engine_cannot_use(api):
         {"pairing_mode": "telepathy"},
         {"max_shift_hours": 0},
         {"day_boundary_hour": 24},
-        {"work_start_time": "9am"},
         {"status": "deleted"},
     ):
         response = api.patch(
@@ -665,22 +662,17 @@ def test_the_scheduler_never_picks_up_a_staff_user(api):
     db.close()
 
 
-def test_a_dual_role_user_keeps_their_customer_account(api):
-    """Someone who really is both stays both — the tenant is optional, not
-    forbidden.
-
-    What changed when the doors were split is that they hold one hat at a
-    time. Both accounts still work; neither session reaches the other's
-    surface, so the flag alone no longer turns a customer login into a
-    cross-tenant credential.
-    """
+def test_a_staff_flag_ends_workspace_use_for_that_account(api):
+    """Staff is a backend role. Promoting an account that owns a workspace
+    leaves the data in place, but the account only ever reaches the console:
+    its customer session stops working, and so does a console session at the
+    workspace's routes."""
     customer = signup(api, "Acme", "owner@acme.example.com")
+    assert api.get("/api/v1/tenant", headers=head(customer)).status_code == 200
+
     console = promote(api, "owner@acme.example.com")
 
-    # The customer door: their own workspace, and no console.
-    assert api.get("/api/v1/tenant", headers=head(customer)).status_code == 200
+    assert api.get("/api/v1/tenant", headers=head(customer)).status_code == 403
     assert api.get("/api/v1/admin/tenants", headers=head(customer)).status_code == 403
-
-    # The console door: every tenant, and not their own workspace.
     assert api.get("/api/v1/admin/tenants", headers=head(console)).status_code == 200
     assert api.get("/api/v1/tenant", headers=head(console)).status_code == 403

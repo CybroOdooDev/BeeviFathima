@@ -555,3 +555,62 @@ def test_a_current_company_rule_is_left_untouched():
     client.ensure_device_tracking_bootstrap()
     client.ensure_device_tracking_bootstrap()
     assert "ir.rule.write" not in fake.calls
+
+
+# --------------------------------------------------------------------------- #
+# Odoo 20: ir.model.access and ir.rule became one model, ir.access
+# --------------------------------------------------------------------------- #
+class FakeOdoo20(FakeXmlRpcModels):
+    def __init__(self) -> None:
+        super().__init__()
+        self.ir_access_rows: list[dict] = []
+
+    def execute_kw(self, db, uid, key, model, method, args, kwargs=None):
+        import xmlrpc.client
+
+        if model in ("ir.model.access", "ir.rule"):
+            raise xmlrpc.client.Fault(1, f"Object {model} doesn't exist")
+        if model == "ir.access":
+            self.calls.append(f"{model}.{method}")
+            if method == "search_read":
+                domain = args[0]
+                mid = self._domain_value(domain, "model_id")
+                name = self._domain_value(domain, "name")
+                return [
+                    {"id": 7000 + i, "domain": r.get("domain")}
+                    for i, r in enumerate(self.ir_access_rows)
+                    if (r["model_id"], r["name"]) == (mid, name)
+                ][:1]
+            if method == "create":
+                self.ir_access_rows.append(dict(args[0]))
+                return self._new_id()
+            if method == "write":
+                ids, vals = args
+                for i in ids:
+                    self.ir_access_rows[i - 7000].update(vals)
+                return True
+        return super().execute_kw(db, uid, key, model, method, args, kwargs)
+
+
+def test_bootstrap_on_odoo_20_uses_ir_access_for_permission_and_company_restriction():
+    fake = FakeOdoo20()
+    client = make_client(fake)
+
+    client.ensure_device_tracking_bootstrap()
+
+    model_id = fake.model_name_to_id["x_biobridge_device"]
+    permission = next(r for r in fake.ir_access_rows if r["name"] == "x_biobridge_device.biobridge")
+    assert permission["model_id"] == model_id
+    assert permission["group_id"] == 501 and permission["operation"] == "crud"
+
+    restriction = next(r for r in fake.ir_access_rows if r["name"].endswith(".biobridge_company"))
+    assert restriction["group_id"] is False, "no group = a restriction, what ir.rule used to be"
+    assert "company_ids" in restriction["domain"] and "x_company_id" in restriction["domain"]
+
+
+def test_bootstrap_on_odoo_20_is_idempotent():
+    fake = FakeOdoo20()
+    client = make_client(fake)
+    client.ensure_device_tracking_bootstrap()
+    client.ensure_device_tracking_bootstrap()
+    assert len(fake.ir_access_rows) == 2

@@ -2,9 +2,8 @@
  *
  *   1 Connect Odoo            where attendance is written
  *   2 Add a biometric source  where punches come from
- *   3 Import terminals        so each punch knows its device (skippable)
- *   4 Run the first sync      pulls punches, writes attendance
- *   5 Match unknown badges    anyone Odoo doesn't recognise yet (skippable)
+ *   3 Run the first sync      pulls punches, writes attendance
+ *   4 Match unknown badges    anyone Odoo doesn't recognise yet (skippable)
  *   ✓ Done
  *
  * Each step shows the same form the Settings pages use (rendered into this
@@ -38,14 +37,6 @@ const STEPS = [
     help: 'Not sure which to pick? If your staff punch on terminals managed by software on a PC or '
       + 'server, choose that software. If the terminal works on its own, choose the device.',
     done: (s) => s.source,
-  },
-  {
-    key: 'terminals', title: 'Import your terminals', short: 'Terminals', skippable: true,
-    intro: 'Click <strong>Import terminals</strong> on your connection below. BioBridge lists every '
-      + 'device it can see, so each punch in Odoo shows which terminal it came from.',
-    help: 'Some systems don’t list their devices — they appear automatically with the first punches. '
-      + 'You can skip this step in that case.',
-    done: (s) => s.devices > 0,
   },
   {
     key: 'sync', title: 'Run the first sync', short: 'First sync',
@@ -94,10 +85,10 @@ export async function setupStatus() {
   };
 }
 
-/** True while the first four steps aren't all done (or skipped). */
+/** True while the first three steps aren't all done (or skipped). */
 export function setupIncomplete(status) {
   const skipped = skippedSet();
-  return STEPS.slice(0, 4).some((step) => !step.done(status) && !skipped.has(step.key));
+  return STEPS.slice(0, 3).some((step) => !step.done(status) && !skipped.has(step.key));
 }
 
 function firstOpen(status) {
@@ -202,7 +193,7 @@ export async function render(mount, route) {
     const step = STEPS[index];
     if (step.key === 'odoo') {
       await renderSettings(body, { path: '/settings/odoo', query: {} });
-    } else if (step.key === 'biometric' || step.key === 'terminals') {
+    } else if (step.key === 'biometric') {
       await renderSettings(body, { path: '/settings/biometric', query: {} });
       // No connection yet: open the add-connection wizard straight away.
       if (step.key === 'biometric' && !status.source) $('#addConnection', body)?.click();

@@ -31,7 +31,10 @@ from app.services.email_verification import issue_verification_token, send_verif
 from app.db.session import get_db
 from app.models import (
     AccountClosure,
+    ContactEvent,
     ContactRequest,
+    OPEN_STAGES,
+    PIPELINE_STAGES,
     PendingSignup,
     Device,
     DeviceSource,
@@ -48,6 +51,8 @@ from app.models import (
     UserRole,
 )
 from app.schemas import (
+    ContactEventOut,
+    ContactNoteIn,
     ContactRequestOut,
     ContactRequestUpdate,
     ErrorGroup,
@@ -126,8 +131,6 @@ def _to_out(db: Session, tenant: Tenant) -> TenantAdminOut:
         min_punch_interval_seconds=tenant.min_punch_interval_seconds,
         max_shift_hours=tenant.max_shift_hours,
         orphan_out_policy=tenant.orphan_out_policy,
-        work_start_time=tenant.work_start_time,
-        late_grace_minutes=tenant.late_grace_minutes,
         users=db.scalar(
             select(func.count(User.id)).where(User.tenant_id == tenant.id)
         ) or 0,
@@ -1273,15 +1276,42 @@ def list_closures(
 def list_contact_requests(
     status_filter: str | None = Query(default=None, alias="status"),
     _: User = Depends(get_platform_admin), db: Session = Depends(get_db),
-    limit: int = Query(default=200, le=500),
+    limit: int = Query(default=300, le=500),
 ) -> list[ContactRequest]:
-    """Newest first. ``status=open`` is everything not won or closed."""
+    """Newest first. ``status=open`` is every stage before won / lost."""
     stmt = select(ContactRequest).order_by(ContactRequest.created_at.desc()).limit(limit)
     if status_filter == "open":
-        stmt = stmt.where(ContactRequest.status.in_(["new", "contacted", "demo_booked"]))
+        stmt = stmt.where(ContactRequest.status.in_(OPEN_STAGES))
     elif status_filter:
         stmt = stmt.where(ContactRequest.status == status_filter)
     return list(db.scalars(stmt).all())
+
+
+@router.get("/contact-requests/pipeline", tags=["platform"])
+def contact_pipeline(
+    _: User = Depends(get_platform_admin), db: Session = Depends(get_db),
+) -> dict:
+    """The pipeline at a glance: a count per stage (in order), what is still
+    open, and how well leads close. Conversion is won / (won + lost) — leads
+    still in play are neither yet, so they do not drag it down."""
+    counts = dict(db.execute(
+        select(ContactRequest.status, func.count()).group_by(ContactRequest.status)
+    ).all())
+    stages = [{"stage": st, "count": int(counts.get(st, 0))} for st in PIPELINE_STAGES]
+    won, lost = int(counts.get("won", 0)), int(counts.get("lost", 0))
+    won_rows = db.execute(
+        select(ContactRequest.created_at, ContactRequest.stage_changed_at)
+        .where(ContactRequest.status == "won", ContactRequest.stage_changed_at.is_not(None))
+    ).all()
+    days = [(w - c).total_seconds() / 86400 for c, w in won_rows if w and c]
+    return {
+        "stages": stages,
+        "open": sum(int(counts.get(st, 0)) for st in OPEN_STAGES),
+        "won": won,
+        "lost": lost,
+        "conversion": round(won / (won + lost), 3) if (won + lost) else None,
+        "avg_days_to_win": round(sum(days) / len(days), 1) if days else None,
+    }
 
 
 @router.patch("/contact-requests/{request_id}", response_model=ContactRequestOut, tags=["platform"])
@@ -1292,9 +1322,60 @@ def update_contact_request(
     req = db.get(ContactRequest, request_id)
     if req is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No such request")
-    for key, value in payload.model_dump(exclude_unset=True).items():
-        setattr(req, key, value)
+    data = payload.model_dump(exclude_unset=True)
+    new_stage = data.get("status")
+    if new_stage and new_stage != req.status:
+        db.add(ContactEvent(
+            contact_id=req.id, kind="stage", from_stage=req.status, to_stage=new_stage,
+            actor=actor.email, created_at=datetime.now(timezone.utc),
+        ))
+        req.status = new_stage
+        req.stage_changed_at = datetime.now(timezone.utc)
+        if new_stage != "lost":
+            req.lost_reason = None   # a reason belongs to a lost lead only
+    if "notes" in data:
+        req.notes = data["notes"]
+    if "lost_reason" in data and req.status == "lost":
+        req.lost_reason = (data["lost_reason"] or "").strip() or None
     req.handled_by = actor.email
     db.commit()
     db.refresh(req)
     return req
+
+
+@router.get(
+    "/contact-requests/{request_id}/events", response_model=list[ContactEventOut], tags=["platform"]
+)
+def contact_request_events(
+    request_id: str, _: User = Depends(get_platform_admin), db: Session = Depends(get_db),
+) -> list[ContactEvent]:
+    """A lead's history, newest first."""
+    if db.get(ContactRequest, request_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such request")
+    return list(db.scalars(
+        select(ContactEvent).where(ContactEvent.contact_id == request_id)
+        .order_by(ContactEvent.created_at.desc())
+    ).all())
+
+
+@router.post(
+    "/contact-requests/{request_id}/events", response_model=ContactEventOut,
+    status_code=status.HTTP_201_CREATED, tags=["platform"],
+)
+def add_contact_note(
+    request_id: str, payload: ContactNoteIn,
+    actor: User = Depends(get_platform_admin), db: Session = Depends(get_db),
+) -> ContactEvent:
+    """A dated note on the lead's timeline ("called, voicemail")."""
+    req = db.get(ContactRequest, request_id)
+    if req is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such request")
+    event = ContactEvent(
+        contact_id=req.id, kind="note", note=payload.note.strip(), actor=actor.email,
+        created_at=datetime.now(timezone.utc),
+    )
+    req.handled_by = actor.email
+    db.add(event)
+    db.commit()
+    db.refresh(event)
+    return event

@@ -283,26 +283,23 @@ def _record_login(user: User) -> None:
 
 @router.post("/login", response_model=TokenPair)
 def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)) -> TokenPair:
-    _refuse_pending(db, payload.email)
-    """The customer door. Issues a tenant-scoped session, whoever signs in.
+    """The customer door. Issues a tenant-scoped session — to customers only.
 
-    Being platform staff is not a reason to refuse someone their own workspace,
-    so a dual-role account is admitted here — it simply arrives without the
-    console, because this token is tenant-scoped no matter who presents it.
+    Platform staff is a backend role, not a customer role: a staff account is
+    refused here, whatever it also owns, and is answered exactly as a wrong
+    password is. Saying "this is a staff account" would turn the customer form
+    into a lookup for which addresses hold the flag.
     """
+    _refuse_pending(db, payload.email)
     user = _verify_credentials(db, payload)
 
+    if user.is_platform_admin:
+        log.warning("Customer sign-in refused: %s is platform staff", user.email)
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, BAD_CREDENTIALS)
+
     if user.tenant_id is None:
-        # Staff with no workspace of their own. A token minted here would
-        # authenticate and then fail on every screen — the tenant routes have
-        # nothing of theirs to show, and the console refuses a customer
-        # session — which reads as a broken account rather than a wrong door.
-        # Cheaper to say so now, with the address of the door that works.
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            "This is a platform staff account with no customer workspace of its "
-            "own. Sign in at the staff console instead.",
-        )
+        # No workspace and not staff: nothing for a customer session to show.
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, BAD_CREDENTIALS)
 
     _record_login(user)
     tokens = _issue(db, user, request, SCOPE_TENANT)
@@ -358,6 +355,13 @@ def refresh(refresh_token: str, db: Session = Depends(get_db)) -> TokenPair:
     # returns to the same surface the session was opened on, so a customer
     # session can never be renewed into a console one.
     scope = scope_of(payload)
+
+    if scope != SCOPE_STAFF and user.is_platform_admin:
+        # Staff is console-only. A customer session that predates the flag (or
+        # one opened before this rule) must not keep renewing itself.
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, "Platform staff sign in at the staff console"
+        )
 
     if scope == SCOPE_STAFF and not user.is_platform_admin:
         # The flag was taken away while the session was open. Every console

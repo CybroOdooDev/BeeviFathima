@@ -316,3 +316,26 @@ section { padding: 96px 0; }
 @media (max-width: 560px) { .notice-card { padding: 32px 22px; } .inline-row { flex-direction: column; } }
 
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } * { transition: none !important; } }
+
+#demo-fields[hidden] { display: none; }
+
+.phone-row { display: flex; gap: 8px; }
+.phone-code-wrap { position: relative; flex: 0 0 112px; display: block; }
+.phone-code-view { display: flex; align-items: center; height: 100%; min-height: 44px; padding: 0 30px 0 12px; border: 1px solid var(--rule, #d9dbe8); border-radius: 12px; background: #fff; white-space: nowrap; font-weight: 500; }
+.phone-code-wrap::after { content: ""; position: absolute; right: 12px; top: 50%; width: 6px; height: 6px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: translateY(-70%) rotate(45deg); pointer-events: none; opacity: .6; }
+.phone-code-wrap .phone-code { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.phone-row input { flex: 1; min-width: 0; }
+
+/* Searchable country code: the select stays underneath as the stored value. */
+.phone-code-wrap.is-searchable .phone-code { pointer-events: none; }
+.phone-code-wrap.is-searchable .phone-code-view { cursor: pointer; }
+.phone-code-wrap.is-searchable .phone-code-view:focus-visible { outline: 2px solid var(--brand, #5b5bd6); outline-offset: 2px; }
+.phone-code-pop { position: absolute; z-index: 30; top: calc(100% + 6px); left: 0; width: 300px; max-width: calc(100vw - 32px); background: #fff; border: 1px solid var(--rule, #d9dbe8); border-radius: 12px; box-shadow: 0 12px 32px rgba(20, 20, 50, .16); padding: 8px; }
+.phone-code-pop[hidden] { display: none; }
+.phone-code-search { width: 100%; box-sizing: border-box; min-height: 40px; padding: 0 12px; border: 1px solid var(--rule, #d9dbe8); border-radius: 8px; font: inherit; }
+.phone-code-pop ul { list-style: none; margin: 6px 0 0; padding: 0; max-height: 240px; overflow-y: auto; }
+.phone-code-pop li { padding: 8px 10px; border-radius: 8px; cursor: pointer; font-weight: 500; font-size: .95rem; }
+.phone-code-pop li.active, .phone-code-pop li:hover { background: #eef0fb; }
+.phone-code-pop li[aria-selected="true"] { font-weight: 700; }
+.phone-code-pop li.none { cursor: default; color: #7a7d96; }
+.phone-code-pop li.none:hover { background: none; }

@@ -440,6 +440,10 @@ def list_mappings(
     stmt = select(EmployeeMapping).where(EmployeeMapping.tenant_id == principal.tenant.id)
     if status_filter:
         stmt = stmt.where(EmployeeMapping.status == status_filter)
+    else:
+        # People in a company switched off are not part of the roster until it
+        # is switched back on (ask for them with ?status=out_of_scope).
+        stmt = stmt.where(EmployeeMapping.status != MappingStatus.out_of_scope.value)
     return list(
         db.scalars(
             stmt.order_by(EmployeeMapping.status, EmployeeMapping.emp_code).limit(limit)

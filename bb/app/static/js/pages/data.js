@@ -74,13 +74,11 @@ export async function renderAttendance(mount, route) {
     const hours = rows.reduce((sum, r) => sum + (r.worked_hours || 0), 0);
     const people = new Set(rows.map((r) => r.emp_code)).size;
     const open = rows.filter((r) => !r.check_out_local).length;
-    const late = rows.filter((r) => r.is_late).length;
     $('#rows', mount).innerHTML = rows.length ? `
-      <div class="grid cols-4" style="margin-bottom:14px">
+      <div class="grid cols-3" style="margin-bottom:14px">
         ${stat({ label: 'People', value: people })}
         ${stat({ label: 'Hours', value: hours.toFixed(1), note: 'punch to punch' })}
         ${stat({ label: 'Still open', value: open, tone: open ? 'warn' : '', note: 'no check-out yet' })}
-        ${stat({ label: 'Late arrivals', value: late, tone: late ? 'warn' : '' })}
       </div>
       <div class="card">
         <h2>Shifts <span class="hint">${rows.length}${n ? ` matching “${esc(needle.trim())}”` : ''}${
@@ -121,7 +119,6 @@ export async function renderAttendance(mount, route) {
 
 function flags(record) {
   const out = [];
-  if (record.is_late) out.push(`<span class="pill warn">late ${record.late_minutes}m</span>`);
   if (record.is_auto_closed) out.push('<span class="pill warn">auto-closed</span>');
   if (record.is_orphan_out) out.push('<span class="pill bad">orphan out</span>');
   return out.join(' ') || '<span class="pill ok">clean</span>';
