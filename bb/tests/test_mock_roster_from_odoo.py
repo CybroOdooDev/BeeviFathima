@@ -94,3 +94,29 @@ def test_without_odoo_the_old_fixtures_still_work(monkeypatch, tmp_path):
     assert mock_roster.load_roster(args, 2).emp_codes == ["2001", "2002", "2003"]
     with pytest.raises(SystemExit, match="Connect Odoo"):
         mock_roster.load_roster(args, 9)
+
+
+def test_a_cached_roster_is_not_served_for_a_different_odoo(odoo, tmp_path, monkeypatch):
+    """The cache is per company id, and ids repeat across Odoo servers — company
+    1 is everyone's first company. Reading another database's employees from it
+    is how a mock ended up serving people who did not exist in the Odoo it was
+    pointed at."""
+    def args(url, db):
+        return type("A", (), {"refresh_roster": False, "odoo_url": url, "odoo_db": db,
+                              "odoo_user": "u", "odoo_key": "k"})()
+
+    first = mock_roster.load_roster(args("https://one.example.com/", "db_one"), 7)
+    assert first.source == "odoo"
+    # Same server again (trailing slash and case do not matter): the cache is used.
+    monkeypatch.setattr(mock_roster, "odoo_client", lambda *a: pytest.fail("cache should be used"))
+    assert mock_roster.load_roster(args("https://ONE.example.com", "db_one"), 7).source == "cache"
+    # A different server: the cache is ignored and the roster read afresh.
+    monkeypatch.setattr(mock_roster, "odoo_client", lambda *a: odoo)
+    second = mock_roster.load_roster(args("https://two.example.com", "db_two"), 7)
+    assert second.source == "odoo"
+    assert json.loads((tmp_path / "roster_company7.json").read_text())["odoo"] == {
+        "url": "https://two.example.com", "db": "db_two"}
+    # An old cache that never recorded its server is not trusted when a login is given.
+    cache = tmp_path / "roster_company7.json"
+    data = json.loads(cache.read_text()); data.pop("odoo"); cache.write_text(json.dumps(data))
+    assert mock_roster.load_roster(args("https://two.example.com", "db_two"), 7).source == "odoo"

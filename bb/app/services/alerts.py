@@ -63,7 +63,7 @@ def tenant_alerts(db: Session, tenant: Tenant, *, now: datetime | None = None) -
         out.append(_alert(
             "account-stopped", BAD, "Syncing is stopped for this account",
             "New punches are not being collected. Your records are unchanged.",
-            "#/settings/plan", "See plan"))
+            "#/settings/billing", "See plan"))
 
     warning = renewal_warning(tenant, now=now) if tenant.syncable else None
     trial = tenant.status == "trialing"
@@ -75,7 +75,7 @@ def tenant_alerts(db: Session, tenant: Tenant, *, now: datetime | None = None) -
             f"Your {subject} ends today" if days <= 0 else f"Your {subject} ends in {_plural(days, 'day', 'days')}",
             "Syncing stops automatically when it does. Nothing already recorded is affected — only the "
             "collection of new punches would stop. " + ("Choose a plan to continue." if trial else "Contact support to renew."),
-            "#/settings/plan" if trial else None, "Choose a plan" if trial else None))
+            "#/settings/billing" if trial else None, "Choose a plan" if trial else None))
 
     odoo = db.scalars(select(OdooConnection).where(
         OdooConnection.tenant_id == tenant.id, OdooConnection.is_active.is_(True)).limit(1)).first()
@@ -142,7 +142,7 @@ def tenant_alerts(db: Session, tenant: Tenant, *, now: datetime | None = None) -
         out.append(_alert(
             "punch-held", WARN, f"{_plural(held, 'punch is', 'punches are')} waiting on your plan",
             "They come from a terminal beyond your plan's device limit and go to Odoo once your plan covers it.",
-            "#/settings/plan/choose", "Upgrade plan"))
+            "#/settings/billing/choose", "Upgrade plan"))
     unmapped = db.scalar(select(func.count()).select_from(EmployeeMapping).where(
         EmployeeMapping.tenant_id == tenant.id,
         EmployeeMapping.status.in_([MappingStatus.unmapped.value, MappingStatus.ambiguous.value]))) or 0

@@ -5,25 +5,33 @@
   "employees": [
     {
       "id": 2,
-      "emp_code": "0042",
-      "first_name": "Sara",
-      "last_name": "Tanaka",
+      "emp_code": "EMP20001",
+      "first_name": "EMP1",
+      "last_name": "",
       "department": null,
       "enable_attendance": true
     },
     {
       "id": 3,
-      "emp_code": "1001",
-      "first_name": "Ahmed",
-      "last_name": "Sharma",
+      "emp_code": "EMP20002",
+      "first_name": "EMP2",
+      "last_name": "",
       "department": null,
       "enable_attendance": true
     },
     {
       "id": 4,
-      "emp_code": "A7",
-      "first_name": "Jane",
-      "last_name": "Haddad",
+      "emp_code": "EMP20003",
+      "first_name": "EMP3",
+      "last_name": "",
+      "department": null,
+      "enable_attendance": true
+    },
+    {
+      "id": 5,
+      "emp_code": "EMP20004",
+      "first_name": "EMP4",
+      "last_name": "",
       "department": null,
       "enable_attendance": true
     }
@@ -44,5 +52,9 @@
   ],
   "skipped": [
     "Administrator"
-  ]
+  ],
+  "odoo": {
+    "url": "https://bio-bridge-02.easyinstance.com",
+    "db": "bio_bridge_02"
+  }
 }

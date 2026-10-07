@@ -304,6 +304,15 @@ const limitsOf = (p) => [
   p.min_sync_interval_minutes ? `Syncs as often as every ${p.min_sync_interval_minutes} min` : 'Syncs as often as you like',
 ];
 
+// Yearly billing: what paying once a year saves against twelve monthly payments.
+const savingPct = (p) => (p && p.yearly_price_cents != null && p.monthly_price_cents
+  ? Math.round((1 - p.yearly_price_cents / (12 * p.monthly_price_cents)) * 100) : 0);
+const saveLabel = (list) => {
+  const best = Math.max(0, ...list.map(savingPct));
+  return best > 0 ? `Save ${best}%` : '';
+};
+const startInterval = new URLSearchParams(window.location.search).get('billing') === 'year' ? 'year' : 'month';
+
 // Plans come from the app when it's reachable; the prices written into the
 // HTML are the fallback, so a page never shows nothing.
 let plansPromise = null;
@@ -313,24 +322,79 @@ function livePlans() {
 }
 
 // Pricing and home: fill prices and limits in, and hide "buy now" for any
-// plan that can't be bought online yet.
+// plan that can't be bought online yet. The Monthly / Yearly switch repaints
+// the prices and the sign-up links; the prices written into the page are the
+// fallback when the app can't be reached.
 if (document.querySelector('[data-plan], .mini-plan')) {
+  let interval = startInterval;
+  let byName = null;   // live plans, once the app has answered
+
+  const planFor = (card) => {
+    const live = byName && byName[card.dataset.plan];
+    if (live) return live;
+    // Fallback: what the HTML itself says.
+    return {
+      monthly_price_cents: Number(card.dataset.monthCents) || null,
+      yearly_price_cents: Number(card.dataset.yearCents) || null,
+      can_buy_online: true, can_buy_yearly: true, fallback: true,
+    };
+  };
+
+  const paintPlans = () => {
+    const all = [...document.querySelectorAll('[data-plan]')].map(planFor);
+    document.querySelectorAll('[data-save]').forEach((el) => {
+      el.textContent = byName ? saveLabel(all) : '2 months free';
+    });
+    document.querySelectorAll('[data-interval]').forEach((btn) => {
+      const on = btn.dataset.interval === interval;
+      btn.classList.toggle('on', on);
+      btn.setAttribute('aria-pressed', String(on));
+    });
+    document.querySelectorAll('[data-plan]').forEach((card) => {
+      const p = planFor(card);
+      // A plan with no yearly price stays monthly even on the yearly view.
+      const yearly = interval === 'year' && p.yearly_price_cents != null;
+      const price = card.querySelector('.price');
+      const note = card.querySelector('[data-note]');
+      if (price && (!p.fallback || p.monthly_price_cents)) {
+        price.innerHTML = yearly
+          ? `${money(p.yearly_price_cents)}<small> / year</small>`
+          : `${money(p.monthly_price_cents)}<small> / month</small>`;
+      }
+      if (note) {
+        const pct = savingPct(p);
+        note.hidden = interval !== 'year';
+        note.textContent = !yearly ? 'Monthly billing only'
+          : `$${(p.yearly_price_cents / 1200).toFixed(2)} / month, billed yearly${pct > 0 ? ` · save ${pct}%` : ''}`;
+      }
+      const billing = yearly ? 'year' : 'month';
+      card.querySelectorAll('a[href^="signup.html"]').forEach((a) => {
+        const url = new URL(a.getAttribute('href'), window.location.href);
+        url.searchParams.set('billing', billing);
+        a.setAttribute('href', `signup.html${url.search}`);
+      });
+      const buy = card.querySelector('[data-buy]');
+      if (buy) buy.hidden = !(yearly ? p.can_buy_yearly : p.can_buy_online);
+      if (byName && byName[card.dataset.plan]) {
+        const items = card.querySelectorAll('.ticks li span');
+        const [emp, dev, sync] = limitsOf(p);
+        if (items[0]) items[0].textContent = emp;
+        if (items[1]) items[1].textContent = sync;
+        if (items[2]) items[2].textContent = dev;
+      }
+    });
+  };
+
+  document.querySelectorAll('[data-interval]').forEach((btn) => btn.addEventListener('click', () => {
+    interval = btn.dataset.interval;
+    paintPlans();
+  }));
+  paintPlans();
+
   livePlans().then((plans) => {
     if (!plans) return;
-    const byName = Object.fromEntries(plans.map((p) => [p.name, p]));
-    document.querySelectorAll('[data-plan]').forEach((card) => {
-      const p = byName[card.dataset.plan];
-      if (!p) return;
-      const price = card.querySelector('.price');
-      if (price) price.innerHTML = `${money(p.monthly_price_cents)}<small> / month</small>`;
-      const items = card.querySelectorAll('.ticks li span');
-      const [emp, dev, sync] = limitsOf(p);
-      if (items[0]) items[0].textContent = emp;
-      if (items[1]) items[1].textContent = sync;
-      if (items[2]) items[2].textContent = dev;
-      const buy = card.querySelector('[data-buy]');
-      if (buy) buy.hidden = !p.can_buy_online;
-    });
+    byName = Object.fromEntries(plans.map((p) => [p.name, p]));
+    paintPlans();
     document.querySelectorAll('.mini-plan').forEach((card) => {
       const p = byName[card.querySelector('.name')?.textContent.trim()];
       if (!p) return;
@@ -374,22 +438,50 @@ if (signupForm) {
     i === 0 && here !== 'UTC' ? `${z} (default)` : z}</option>`).join('');
 
   const mode = () => signupForm.querySelector('[name=mode]:checked').value;
+  const billingSelect = signupForm.querySelector('#billingSelect');
+  const billing = () => billingSelect.value;
+  const yearlyOption = billingSelect.querySelector('[value=year]');
+  const billingNote = signupForm.querySelector('#billingNote');
   const current = () => plans && plans.find((p) => p.name === planSelect.value);
+  // What the visitor asked for, kept apart from what the chosen plan allows:
+  // flicking through a monthly-only plan must not lose their yearly choice.
+  let wantYear = params.get('billing') === 'year';
+  billingSelect.addEventListener('change', () => { wantYear = billing() === 'year'; });
 
   const paint = () => {
     const p = current();
     const buying = mode() === 'buy';
+    // Yearly needs a yearly price on the plan — and, to pay for it now, a
+    // yearly Stripe price too. Otherwise the choice is withheld, not failed.
+    const yearlyOk = !p || (p.yearly_price_cents != null && (!buying || p.can_buy_yearly));
+    yearlyOption.disabled = !yearlyOk;
+    billingSelect.value = wantYear && yearlyOk ? 'year' : 'month';
+    const yearly = billing() === 'year';
+    yearlyOption.textContent = p && p.yearly_price_cents != null && savingPct(p) > 0
+      ? `Pay yearly — save ${savingPct(p)}%` : 'Pay yearly';
+    billingNote.textContent = '';
     go.textContent = buying ? 'Continue to payment' : 'Start 10-day free trial';
     note.textContent = '';
-    if (buying && p && !p.can_buy_online) {
+    if (p && !yearlyOk && p.yearly_price_cents == null) {
+      billingNote.textContent = `${p.name} is monthly only.`;
+    } else if (p && !yearlyOk) {
+      billingNote.textContent = `${p.name} can't be paid for yearly online yet — pay monthly, or start a free trial.`;
+    }
+    const canBuy = yearly ? p?.can_buy_yearly : p?.can_buy_online;
+    if (buying && p && !canBuy) {
       note.textContent = `${p.name} can't be bought online yet — start a free trial, or contact us.`;
     }
-    go.disabled = Boolean(buying && p && !p.can_buy_online);
+    go.disabled = Boolean(buying && p && !canBuy);
     if (p && summary) {
       summary.hidden = false;
+      const price = yearly && yearlyOk
+        ? `${money(p.yearly_price_cents)}<small> / year${buying ? '' : ' after the trial'}</small>`
+        : `${money(p.monthly_price_cents)}<small> / month${buying ? '' : ' after the trial'}</small>`;
+      const sub = yearly && yearlyOk
+        ? `<span style="font-size:14px;color:var(--muted)">$${(p.yearly_price_cents / 1200).toFixed(2)} / month, billed yearly</span>` : '';
       summary.innerHTML = `<span class="eyebrow">${buying ? 'You are buying' : 'Your trial plan'}</span>
         <span class="name">${p.name}</span>
-        <span class="price">${money(p.monthly_price_cents)}<small> / month${buying ? '' : ' after the trial'}</small></span>
+        <span class="price">${price}</span>${sub}
         <ul>${limitsOf(p).map((l) => `<li>${l}</li>`).join('')}</ul>`;
     }
   };

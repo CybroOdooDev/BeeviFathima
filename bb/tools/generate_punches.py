@@ -104,6 +104,7 @@ def build(
     skip_weekends: bool,
     seed: int | None,
     terminals: list[str] | None = None,
+    first_id: int = 1,
 ) -> tuple[list[dict], list[str]]:
     """Return (rows, still_clocked_in_codes).
 
@@ -136,7 +137,7 @@ def build(
 
     rows: list[dict] = []
     still_in: list[str] = []
-    next_id = 1
+    next_id = first_id
 
     for day_offset in range(days - 1, -1, -1):
         day = (now - timedelta(days=day_offset)).date()
@@ -227,6 +228,17 @@ def main() -> int:
     )
 
     tz = _resolve_tz(args.tz)
+    # Continue the ids of the file being replaced. BioBridge remembers every
+    # (connection, id) it has stored and skips a repeat as a duplicate, so a
+    # regenerated file that restarts at 1 is invisible to a sync that already
+    # saw ids 1..N.
+    first_id = 1
+    if os.path.exists(out):
+        try:
+            with open(out) as handle:
+                first_id = max([int(r["id"]) for r in json.load(handle)] + [0]) + 1
+        except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+            first_id = 1
     rows, still_in = build(
         emp_codes=emp_codes,
         days=args.days,
@@ -237,6 +249,7 @@ def main() -> int:
         skip_weekends=not args.include_weekends,
         seed=args.seed,
         terminals=roster.serials,
+        first_id=first_id,
     )
 
     if not rows:

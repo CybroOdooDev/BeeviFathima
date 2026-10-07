@@ -55,6 +55,7 @@ class SubscriptionPlanOut(ORMModel):
     is_active: bool
     is_default: bool
     monthly_price_cents: int | None = None
+    yearly_price_cents: int | None = None
     max_employees: int | None = None
     min_sync_interval_minutes: int | None = None
     max_devices: int | None = None
@@ -68,6 +69,7 @@ class SubscriptionPlanAdminOut(SubscriptionPlanOut):
     """
 
     stripe_price_id: str | None = None
+    stripe_yearly_price_id: str | None = None
     #: Accounts assigned this plan now (queued switches not counted).
     tenants: int = 0
 
@@ -84,10 +86,12 @@ class SubscriptionPlanIn(BaseModel):
     is_active: bool | None = None
     is_default: bool | None = None
     monthly_price_cents: int | None = Field(default=None, ge=0)
+    yearly_price_cents: int | None = Field(default=None, ge=0)
     max_employees: int | None = Field(default=None, ge=1)
     max_devices: int | None = Field(default=None, ge=1)
     min_sync_interval_minutes: int | None = Field(default=None, ge=1, le=1440)
     stripe_price_id: str | None = Field(default=None, max_length=80, pattern=r"^(price_\w+)?$")
+    stripe_yearly_price_id: str | None = Field(default=None, max_length=80, pattern=r"^(price_\w+)?$")
 
 
 class TenantUsageOut(BaseModel):
@@ -229,6 +233,8 @@ class RegisterIn(BaseModel):
     plan: str | None = Field(default=None, max_length=80)
     #: "trial" starts a free trial now; "buy" goes to Stripe Checkout first.
     mode: Literal["trial", "buy"] = "trial"
+    #: How they want to pay: every month, or once a year.
+    billing: Literal["month", "year"] = "month"
     #: Honeypot: a field people never see. Anything in it means a bot.
     website: str | None = None
 
@@ -295,6 +301,7 @@ class ContactRequestOut(ORMModel):
     timezone: str | None
     status: str
     stage_changed_at: datetime | None = None
+    demo_status: str | None = None
     lost_reason: str | None = None
     notes: str | None
     handled_by: str | None
@@ -302,7 +309,9 @@ class ContactRequestOut(ORMModel):
 
 class ContactRequestUpdate(BaseModel):
     #: The pipeline stage.
-    status: Literal["new", "contacted", "qualified", "demo", "won", "lost"] | None = None
+    status: Literal["new", "contacted", "qualified", "won", "lost"] | None = None
+    #: Demo sub-stage; send null to clear it.
+    demo_status: Literal["pending", "scheduled", "completed"] | None = None
     notes: str | None = Field(default=None, max_length=4000)
     lost_reason: str | None = Field(default=None, max_length=160)
 
@@ -330,6 +339,8 @@ class PublicPlanOut(SubscriptionPlanOut):
 
     #: Whether "Buy now" can take payment online for this plan right now.
     can_buy_online: bool = False
+    #: Same, for paying yearly.
+    can_buy_yearly: bool = False
 
 
 # --- platform staff ---------------------------------------------------------
@@ -526,6 +537,7 @@ class TenantOut(ORMModel):
     name: str
     slug: str
     status: str
+    billing_interval: str = "month"
     timezone: str
     sync_interval_minutes: int
     sync_enabled: bool

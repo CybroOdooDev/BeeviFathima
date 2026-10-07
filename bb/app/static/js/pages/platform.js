@@ -239,6 +239,15 @@ function backoffTag(t) {
       now ${esc(t.effective_interval_minutes)} min</span>`;
 }
 
+/* An account that has never synced because setup isn't finished (Odoo or the
+ * biometric side isn't connected) is not "due any moment" — nothing runs
+ * until it is. */
+function notConnected(t) {
+  if (t.last_run_at || !t.sync_enabled || !t.syncable) return '';
+  return !t.odoo_connected || !t.source_connected
+    ? '<span class="hint"><i>incomplete initial set up</i></span>' : '';
+}
+
 function rowFor(t) {
   return `
     <tr data-tenant="${esc(t.id)}">
@@ -254,11 +263,11 @@ function rowFor(t) {
         ${t.interval_widened ? backoffTag(t) : ''}
       </td>
       <td class="sync-cell">
-        <div>${t.next_run_at ? `next ${esc(fmtIn(t.next_run_at))}`
-              : '<span class="hint">not scheduled</span>'}</div>
-        <div class="hint">${t.last_run_at
-              ? `last ${pill(t.last_run_status)} ${esc(fmtAgo(t.last_run_at))}`
-              : 'never synced'}</div>
+        <div>${notConnected(t) || (t.next_run_at ? `next ${esc(fmtIn(t.next_run_at))}`
+              : '<span class="hint">not scheduled</span>')}</div>
+        <div class="hint"><i>${t.last_run_at
+              ? `(last sync ${esc(fmtAgo(t.last_run_at))})`
+              : '(never synced)'}</i></div>
       </td>
       <td>
         <select class="enabled" aria-label="Automatic sync">
@@ -418,8 +427,11 @@ function openConfigDialog(tenant, { plans, onChange }) {
                         value: t.min_punch_interval_seconds, required: true })}
               ${field({ name: 'max_shift_hours', label: 'Maximum Shift (Hours)',
                         type: 'number', value: t.max_shift_hours, required: true })}
+              <div id="dayBoundary" ${t.pairing_mode === 'first_last' ? '' : 'hidden'}>
               ${field({ name: 'day_boundary_hour', label: 'Shift Day Starts At (Hour)',
-                        type: 'number', value: t.day_boundary_hour, required: true })}
+                        type: 'number', value: t.day_boundary_hour, required: true,
+                        help: 'Only used by first/last mode.' })}
+              </div>
               ${field({ name: 'orphan_out_policy', label: 'Check-Out With No Check-In',
                         value: t.orphan_out_policy, required: true, options: ORPHAN })}
             </div>
@@ -474,6 +486,9 @@ function openConfigDialog(tenant, { plans, onChange }) {
     // The override boxes show what the plan gives, so picking a plan
     // previews its limits before anything is saved.
     const planSelect = $('#plan_id', dialog);
+    const modeSel = dialog.querySelector('[name=pairing_mode]');
+    const dayBox = dialog.querySelector('#dayBoundary');
+    modeSel?.addEventListener('change', () => { dayBox.hidden = modeSel.value !== 'first_last'; });
     planSelect?.addEventListener('change', () => {
       const plan = planById(planSelect.value);
       $('#limit_max_employees', dialog).placeholder = planLimitText(plan, 'max_employees', '');

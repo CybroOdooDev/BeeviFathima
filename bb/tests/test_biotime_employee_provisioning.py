@@ -159,3 +159,27 @@ def test_create_employee_is_idempotent_for_a_duplicate_code(biotime):
 
     assert second.external_id == first.external_id
     assert second.first_name == "Original", "the existing record wins, not the retry's data"
+
+
+def test_create_employee_sends_department_and_areas(monkeypatch):
+    """BioTime rejects a personnel row without department and area, so they
+    must be looked up and sent."""
+    provider = BioTimeProvider.__new__(BioTimeProvider)
+    sent = {}
+    pages = {
+        "/personnel/api/departments/": [
+            {"id": 7, "dept_code": "1", "dept_name": "Company"},
+            {"id": 9, "dept_code": "2", "dept_name": "Logistics"},
+        ],
+        "/personnel/api/areas/": [{"id": 1}, {"id": 2}],
+    }
+    monkeypatch.setattr(provider, "_paginate", lambda path, params=None: iter(pages[path]), raising=False)
+    monkeypatch.setattr(
+        provider, "_post",
+        lambda path, body: sent.update(body) or {"id": 1, "emp_code": body["emp_code"]},
+        raising=False,
+    )
+    provider.create_employee(EmployeeRecord(external_id=None, emp_code="10004", first_name="Sam", department="logistics"))
+    assert sent["department"] == 9 and sent["area"] == [1, 2]
+    provider.create_employee(EmployeeRecord(external_id=None, emp_code="10005", first_name="Al"))
+    assert sent["department"] == 7  # default when Odoo gives none

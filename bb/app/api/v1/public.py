@@ -36,8 +36,8 @@ def _ip(request: Request) -> str | None:
     return request.client.host if request.client else None
 
 
-def _can_buy(plan: SubscriptionPlan) -> bool:
-    return bool(billing.enabled() and plan.stripe_price_id)
+def _can_buy(plan: SubscriptionPlan, interval: str = "month") -> bool:
+    return bool(billing.enabled() and plan.price_id_for(interval))
 
 
 @router.get("/plans", response_model=list[PublicPlanOut])
@@ -53,6 +53,7 @@ def plans(db: Session = Depends(get_db)) -> list[PublicPlanOut]:
     for plan in rows:
         item = PublicPlanOut.model_validate(plan)
         item.can_buy_online = _can_buy(plan)
+        item.can_buy_yearly = _can_buy(plan, "year")
         out.append(item)
     return out
 
@@ -96,19 +97,22 @@ def register(payload: RegisterIn, request: Request, db: Session = Depends(get_db
     plan = _find_plan(db, payload.plan)
 
     if payload.mode == "buy":
-        if plan is None or not _can_buy(plan):
+        if plan is None or not _can_buy(plan, payload.billing):
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
+                ("That plan can't be paid for yearly online yet — choose monthly, "
+                 "start a free trial, or contact us.") if payload.billing == "year" else
                 "That plan can't be bought online yet — start a free trial, or contact us.",
             )
         pending = PendingSignup(
             company_name=payload.company_name.strip(), email=email,
             full_name=payload.full_name, timezone=payload.timezone, plan_id=plan.id,
+            billing_interval=payload.billing,
         )
         db.add(pending)
         db.flush()
         try:
-            url = billing.create_signup_checkout_session(pending.id, email, plan)
+            url = billing.create_signup_checkout_session(pending.id, email, plan, payload.billing)
         except billing.BillingError as exc:
             db.rollback()
             log.warning("Checkout for %s failed: %s", email, exc)
@@ -121,6 +125,7 @@ def register(payload: RegisterIn, request: Request, db: Session = Depends(get_db
     _tenant, user = onboarding.create_account(
         db, company_name=payload.company_name, email=email, full_name=payload.full_name,
         timezone_name=payload.timezone, plan=plan, paid=False,
+        billing_interval=payload.billing,
     )
     onboarding.start_verification(user)
     db.commit()

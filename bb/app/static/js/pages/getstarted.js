@@ -2,8 +2,9 @@
  *
  *   1 Connect Odoo            where attendance is written
  *   2 Add a biometric source  where punches come from
- *   3 Run the first sync      pulls punches, writes attendance
- *   4 Match unknown badges    anyone Odoo doesn't recognise yet (skippable)
+ *   3 Review pairing          how punches become check-ins and check-outs
+ *   4 Run the first sync      pulls punches, writes attendance
+ *   5 Match unknown badges    anyone Odoo doesn't recognise yet (skippable)
  *   ✓ Done
  *
  * Each step shows the same form the Settings pages use (rendered into this
@@ -18,6 +19,7 @@ import { api, auth } from '../api.js';
 import { $, banner, busy, esc, guard, loading, toast } from '../ui.js';
 import { needsMatch, unmappedCard, wireUnmapped } from './data.js';
 import { render as renderSettings } from './settings.js';
+import { markPairingReviewed, pairingReviewed } from '../setup-state.js';
 
 const STEPS = [
   {
@@ -37,6 +39,17 @@ const STEPS = [
     help: 'Not sure which to pick? If your staff punch on terminals managed by software on a PC or '
       + 'server, choose that software. If the terminal works on its own, choose the device.',
     done: (s) => s.source,
+  },
+  {
+    key: 'pairing', title: 'Pairing Rules', short: 'Pairing',
+    intro: 'Pairing decides how raw punches become shifts: which punch is a check-in and which a '
+      + 'check-out, how double-taps are handled and the longest shift to accept. The defaults suit most '
+      + 'sites — look them over, change anything that doesn’t fit, then continue.',
+    help: 'Alternating (in, out, in, out) suits most terminals, which have no IN/OUT keys. '
+      + 'You can change all of this later under <em>Settings → Pairing</em>.',
+    // Every account has working defaults, so "done" means someone has looked —
+    // or the account was already syncing before this step existed.
+    done: (s) => s.pairing || s.run,
   },
   {
     key: 'sync', title: 'Run the first sync', short: 'First sync',
@@ -81,14 +94,15 @@ export async function setupStatus() {
     source: ok(health.source),
     devices: devices.length,
     run: Boolean(dash.last_run),
+    pairing: pairingReviewed(),
     unmapped: dash.unmapped_employees || 0,
   };
 }
 
-/** True while the first three steps aren't all done (or skipped). */
+/** True while the required steps (everything but badge matching) aren't all done (or skipped). */
 export function setupIncomplete(status) {
   const skipped = skippedSet();
-  return STEPS.slice(0, 3).some((step) => !step.done(status) && !skipped.has(step.key));
+  return STEPS.filter((step) => !step.skippable).some((step) => !step.done(status) && !skipped.has(step.key));
 }
 
 function firstOpen(status) {
@@ -197,6 +211,27 @@ export async function render(mount, route) {
       await renderSettings(body, { path: '/settings/biometric', query: {} });
       // No connection yet: open the add-connection wizard straight away.
       if (step.key === 'biometric' && !status.source) $('#addConnection', body)?.click();
+    } else if (step.key === 'pairing') {
+      body.innerHTML = '<div id="pairForm"></div><div id="pairConfirm"></div>';
+      const formHost = $('#pairForm', body);
+      // Saving the form counts as having reviewed it. Delegated, because the
+      // form re-renders itself after every save.
+      formHost.addEventListener('submit', () => {
+        markPairingReviewed();
+        setTimeout(refreshStatus, 900);
+      });
+      await renderSettings(formHost, { path: '/settings/pairing', query: {} });
+      $('#pairConfirm', body).innerHTML = `
+        <div class="card" style="margin-top:14px">
+          <div class="row" style="justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+            <span class="hint">Happy with the defaults? You don’t have to change anything.</span>
+            <button type="button" id="pairKeep">${status.pairing || status.run ? 'Keep these settings' : 'Looks right — keep these settings'}</button>
+          </div>
+        </div>`;
+      $('#pairKeep', body).addEventListener('click', async () => {
+        markPairingReviewed();
+        await refreshStatus();
+      });
     } else if (step.key === 'sync') {
       body.innerHTML = `
         <div class="card">

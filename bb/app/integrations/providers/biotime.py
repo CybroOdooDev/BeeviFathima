@@ -443,6 +443,9 @@ class BioTimeProvider(AttendanceProvider):
             "last_name": record.last_name or "",
             "enable_attendance": record.is_active,
         }
+        # BioTime refuses a personnel row without a department and at least
+        # one area (both are ids). Fill them from what already exists there.
+        body.update(self._placement(record.department))
         try:
             row = self._post("/personnel/api/employees/", body)
         except BioTimeError as exc:
@@ -469,6 +472,37 @@ class BioTimeProvider(AttendanceProvider):
             is_active=bool(row.get("enable_attendance", True)),
             raw=row,
         )
+
+    def _placement(self, department_name: str | None) -> dict[str, Any]:
+        """``department`` / ``area`` ids a new personnel row must carry.
+
+        The department is the one matching the Odoo employee's department name
+        when there is one, else the first BioTime has (its built-in default).
+        ``area`` is a list in BioTime and every area is allowed, so a new person
+        can clock in at any terminal. A lookup that fails just leaves the field
+        out, so an older BioTime that does not need them is not made worse.
+        """
+        placement: dict[str, Any] = {}
+        try:
+            departments = list(self._paginate("/personnel/api/departments/"))
+            if departments:
+                wanted = (department_name or "").strip().lower()
+                chosen = next(
+                    (d for d in departments if str(d.get("dept_name") or "").strip().lower() == wanted),
+                    None,
+                ) if wanted else None
+                chosen = chosen or next((d for d in departments if str(d.get("dept_code")) == "1"), departments[0])
+                if chosen.get("id") is not None:
+                    placement["department"] = chosen["id"]
+        except BioTimeError as exc:
+            log.info("BioTime departments not readable (%s); creating without one", exc)
+        try:
+            areas = [a["id"] for a in self._paginate("/personnel/api/areas/") if a.get("id") is not None]
+            if areas:
+                placement["area"] = areas
+        except BioTimeError as exc:
+            log.info("BioTime areas not readable (%s); creating without one", exc)
+        return placement
 
     def fetch_terminals(self) -> Iterator[TerminalRecord]:
         for row in self._paginate("/iclock/api/terminals/"):

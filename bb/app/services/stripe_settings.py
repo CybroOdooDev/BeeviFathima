@@ -140,7 +140,9 @@ def public_view(db: Session) -> dict:
         "last_event_at": last_event.isoformat() if last_event else None,
         "plans": [{"id": p.id, "name": p.name, "is_active": p.is_active,
                    "monthly_price_cents": p.monthly_price_cents,
-                   "stripe_price_id": p.stripe_price_id} for p in plans],
+                   "stripe_price_id": p.stripe_price_id,
+                   "yearly_price_cents": p.yearly_price_cents,
+                   "stripe_yearly_price_id": p.stripe_yearly_price_id} for p in plans],
         "updated_by": row.updated_by if row else None,
         "updated_at": row.updated_at.isoformat() if row and row.updated_at else None,
     }

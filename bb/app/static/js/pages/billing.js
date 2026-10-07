@@ -52,7 +52,7 @@ export async function render(mount, route) {
   if (!data.has_customer) {
     mount.innerHTML = `<div class="card">
       ${empty('No subscription yet', 'Choose a plan and pay on Stripe — it then renews automatically every month.')}
-      ${readonly ? '' : '<div class="row" style="justify-content:center;margin-top:12px"><a class="btn primary-link" href="#/settings/plan/choose">Choose a plan</a></div>'}
+      ${readonly ? '' : '<div class="row" style="justify-content:center;margin-top:12px"><a class="btn primary-link" href="#/settings/billing/choose">Choose a plan</a></div>'}
     </div>`;
     return;
   }
@@ -85,7 +85,7 @@ export async function render(mount, route) {
           </tbody></table>
           ${sub.cancel_at_period_end ? `<div class="hint" style="margin-top:10px">Cancelled — the account keeps working until ${esc(day(sub.cancel_at || sub.current_period_end))}, then syncing stops.</div>` : ''}
           ${readonly ? '' : `<div class="row" style="margin-top:14px">
-            <a class="btn" href="#/settings/plan/choose">Change plan</a>
+            <a class="btn" href="#/settings/billing/choose">Change plan</a>
             ${sub.cancel_at_period_end
               ? '<button type="button" class="primary" id="resumeSub">Keep my subscription</button>'
               : '<button type="button" id="cancelSub">Cancel subscription</button>'}
@@ -94,12 +94,16 @@ export async function render(mount, route) {
             <strong>Cancel at the end of this period?</strong>
             Nothing more is charged. BioBridge keeps syncing until ${esc(day(sub.current_period_end))}, then stops. You can undo this until then.
             <div class="row" style="margin-top:10px">
-              <button type="button" class="primary sm" id="cancelYes">Yes, cancel</button>
+              <button type="button" class="primary sm" id="cancelYes">Yes, cancel at period end</button>
+              <button type="button" class="sm danger" id="cancelNowBtn">End it now instead</button>
               <button type="button" class="sm" id="cancelNo">Keep it</button>
+            </div>
+            <div class="hint" style="margin-top:8px">Ending it now stops syncing straight away and the rest of the paid period is not refunded.
+              Your account, connections and history are kept either way; delete the account from Settings → General if you want it gone.
             </div>
           </div>`}`
         : `<p class="hint">This account has no running subscription.</p>
-           ${readonly ? '' : '<div class="row" style="margin-top:12px"><a class="btn primary-link" href="#/settings/plan/choose">Resubscribe</a></div>'}`}
+           ${readonly ? '' : '<div class="row" style="margin-top:12px"><a class="btn primary-link" href="#/settings/billing/choose">Resubscribe</a></div>'}`}
       </div>
 
       <div class="card">
@@ -141,6 +145,10 @@ export async function render(mount, route) {
   $('#cancelNo', mount)?.addEventListener('click', () => { confirm.hidden = true; });
   $('#cancelYes', mount)?.addEventListener('click', (e) => busy(e.currentTarget, async () => {
     if (await guard(() => api.post('/billing/cancel'), 'Subscription cancelled — it won’t renew.')) render(mount);
+  }));
+  $('#cancelNowBtn', mount)?.addEventListener('click', (e) => busy(e.currentTarget, async () => {
+    if (await guard(() => api.post('/billing/cancel', { when: 'now' }),
+      'Subscription ended — syncing has stopped. Your account is kept.')) render(mount);
   }));
   $('#resumeSub', mount)?.addEventListener('click', (e) => busy(e.currentTarget, async () => {
     if (await guard(() => api.post('/billing/resume'), 'Subscription resumed — it renews as normal.')) render(mount);

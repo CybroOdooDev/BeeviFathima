@@ -76,3 +76,13 @@ class SubscriptionPlan(Base, UUIDPk, Timestamped):
     #: Set in the console (Platform → Plans), or by tools/seed_plans.py from
     #: STRIPE_PRICE_<PLAN NAME> env vars.
     stripe_price_id: Mapped[str | None] = mapped_column(String(80), index=True)
+
+    #: What a customer who pays once a year is charged, in cents, and the
+    #: Stripe Price (recurring, yearly) it is charged through. Both optional:
+    #: a plan with no yearly Stripe Price is monthly-only online.
+    yearly_price_cents: Mapped[int | None] = mapped_column(Integer)
+    stripe_yearly_price_id: Mapped[str | None] = mapped_column(String(80), index=True)
+
+    def price_id_for(self, interval: str | None) -> str | None:
+        """The Stripe Price to charge for ``interval`` ("month" or "year")."""
+        return self.stripe_yearly_price_id if interval == "year" else self.stripe_price_id

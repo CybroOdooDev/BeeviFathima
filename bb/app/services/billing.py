@@ -35,7 +35,7 @@ from urllib.parse import urlencode
 
 import httpx
 from fastapi import Depends
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -174,23 +174,24 @@ def create_customer(tenant: Tenant, email: str | None) -> str:
     return customer["id"]
 
 
-def create_checkout_session(tenant: Tenant, plan: SubscriptionPlan) -> str:
+def create_checkout_session(tenant: Tenant, plan: SubscriptionPlan, interval: str = "month") -> str:
     base = settings.public_base_url.rstrip("/")
     session = _request("POST", "checkout/sessions", {
         "mode": "subscription",
         "customer": tenant.stripe_customer_id,
         "client_reference_id": tenant.id,
-        "line_items": [{"price": plan.stripe_price_id, "quantity": 1}],
+        "line_items": [{"price": plan.price_id_for(interval), "quantity": 1}],
         "subscription_data": {"metadata": {"tenant_id": tenant.id, "plan_id": plan.id}},
         "metadata": {"tenant_id": tenant.id, "plan_id": plan.id},
         "allow_promotion_codes": True,
-        "success_url": f"{base}/app/#/settings/plan?checkout=success",
-        "cancel_url": f"{base}/app/#/settings/plan/choose?checkout=cancelled",
+        "success_url": f"{base}/app/#/settings/billing?checkout=success",
+        "cancel_url": f"{base}/app/#/settings/billing/choose?checkout=cancelled",
     })
     return session["url"]
 
 
-def create_signup_checkout_session(pending_id: str, email: str, plan: SubscriptionPlan) -> str:
+def create_signup_checkout_session(pending_id: str, email: str, plan: SubscriptionPlan,
+                                   interval: str = "month") -> str:
     """Checkout for a website registration that has no account yet.
 
     Stripe makes the customer from ``customer_email``; the webhook finds the
@@ -202,7 +203,7 @@ def create_signup_checkout_session(pending_id: str, email: str, plan: Subscripti
     site = (settings.site_url or f"{settings.public_base_url.rstrip('/')}/app/#").rstrip("/")
     if settings.site_url:
         success = f"{site}/check-email.html?paid=1&email={quote(email)}"
-        cancel = f"{site}/signup.html?plan={quote(plan.name)}&mode=buy&cancelled=1"
+        cancel = f"{site}/signup.html?plan={quote(plan.name)}&mode=buy&billing={interval}&cancelled=1"
     else:
         success = f"{site}/login?registered=1"
         cancel = f"{site}/login"
@@ -210,7 +211,7 @@ def create_signup_checkout_session(pending_id: str, email: str, plan: Subscripti
         "mode": "subscription",
         "customer_email": email,
         "client_reference_id": f"signup:{pending_id}",
-        "line_items": [{"price": plan.stripe_price_id, "quantity": 1}],
+        "line_items": [{"price": plan.price_id_for(interval), "quantity": 1}],
         "subscription_data": {"metadata": {"pending_signup_id": pending_id, "plan_id": plan.id}},
         "metadata": {"pending_signup_id": pending_id, "plan_id": plan.id},
         "allow_promotion_codes": True,
@@ -224,7 +225,7 @@ def create_portal_session(tenant: Tenant) -> str:
     base = settings.public_base_url.rstrip("/")
     session = _request("POST", "billing_portal/sessions", {
         "customer": tenant.stripe_customer_id,
-        "return_url": f"{base}/app/#/settings/plan",
+        "return_url": f"{base}/app/#/settings/billing",
     })
     return session["url"]
 
@@ -491,9 +492,12 @@ def apply_subscription(db: Session, tenant: Tenant, subscription: dict[str, Any]
         tenant.subscription_renews_at = period_end
 
     price_id = ((_items(subscription)[:1] or [{}])[0].get("price") or {}).get("id")
-    plan = db.scalar(select(SubscriptionPlan).where(SubscriptionPlan.stripe_price_id == price_id)) \
-        if price_id else None
+    plan = db.scalar(select(SubscriptionPlan).where(or_(
+        SubscriptionPlan.stripe_price_id == price_id,
+        SubscriptionPlan.stripe_yearly_price_id == price_id))) if price_id else None
     if plan is not None and not ended:
+        # The price in use says how they pay: monthly or yearly.
+        tenant.billing_interval = "year" if plan.stripe_yearly_price_id == price_id else "month"
         if first or renewed or tenant.plan_id is None:
             # The plan they just paid for is in force from now.
             tenant.plan_id = plan.id

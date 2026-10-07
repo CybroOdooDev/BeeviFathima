@@ -149,6 +149,10 @@ class Tenant(Base, UUIDPk, Timestamped):
     #: move it to past_due / active / cancelled, and the sweep leaves it alone.
     stripe_customer_id: Mapped[str | None] = mapped_column(String(64), index=True)
     stripe_subscription_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    #: How this account pays: "month" or "year". Chosen at signup (or read from
+    #: the Stripe price in use) and picks which of the plan's Stripe prices a
+    #: checkout or plan switch uses.
+    billing_interval: Mapped[str] = mapped_column(String(5), default="month", server_default="month")
 
     #: Per-account exceptions to the plan's limits, set by staff for a custom
     #: deal ("Growth, but with 8 devices") without inventing a plan for it.

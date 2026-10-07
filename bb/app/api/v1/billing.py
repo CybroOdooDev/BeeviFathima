@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
@@ -14,6 +15,7 @@ from app.api.deps import Principal, audit, get_principal, require_writer
 from app.core.config import settings
 from app.db.session import get_db
 from app.models import SubscriptionPlan
+from app.models.tenant import TenantStatus
 from app.services import billing
 
 log = logging.getLogger(__name__)
@@ -28,6 +30,14 @@ class BillingStatus(BaseModel):
 
 class CheckoutIn(BaseModel):
     plan_id: str
+    #: "month" or "year"; omitted = how this account already pays.
+    interval: str | None = None
+
+
+class CancelIn(BaseModel):
+    #: "period_end": stop renewing, keep working until the paid period is over.
+    #: "now": end the plan immediately — the account stays, but stops syncing.
+    when: Literal["period_end", "now"] = "period_end"
 
 
 class RedirectOut(BaseModel):
@@ -68,16 +78,18 @@ def start_checkout(
     plan = db.get(SubscriptionPlan, payload.plan_id)
     if plan is None or not plan.is_active:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "No such plan")
-    if not plan.stripe_price_id:
+    interval = payload.interval if payload.interval in ("month", "year") else (tenant.billing_interval or "month")
+    if not plan.price_id_for(interval):
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            f"{plan.name} can't be bought online yet. Contact support to subscribe.",
+            f"{plan.name} can't be {'paid for yearly' if interval == 'year' else 'bought'} online yet. "
+            "Contact support to subscribe.",
         )
     try:
         if not tenant.stripe_customer_id:
             tenant.stripe_customer_id = billing.create_customer(tenant, principal.user.email)
             db.commit()  # keep the customer even if the session call fails
-        url = billing.create_checkout_session(tenant, plan)
+        url = billing.create_checkout_session(tenant, plan, interval)
     except billing.BillingError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
     audit(db, principal, "billing.checkout", plan.id, plan.name, request)
@@ -162,10 +174,34 @@ def update_payment_method(principal: Principal = Depends(require_writer)) -> Red
 @router.post("/cancel")
 def cancel_subscription(
     request: Request,
+    payload: CancelIn | None = None,
     principal: Principal = Depends(require_writer),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Stop renewing. The account keeps working until the paid period ends."""
+    """Stop the plan. ``period_end`` (default): no more renewals, works until
+    the paid period ends. ``now``: ends immediately. Either way the account
+    itself stays — logins, connections and history are kept; it just stops
+    syncing — until the owner or staff deletes it."""
+    when = (payload.when if payload else "period_end")
+    tenant = principal.tenant
+    if when == "now":
+        if tenant.status == TenantStatus.cancelled.value:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "This plan has already ended.")
+        if tenant.stripe_subscription_id:
+            try:
+                billing.cancel_subscription_now(tenant.stripe_subscription_id)
+            except billing.BillingError as exc:
+                raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+        was = tenant.stripe_subscription_id or "no subscription"
+        tenant.stripe_subscription_id = None
+        tenant.pending_plan_id = None
+        # Staff's suspension is a stronger state; leave it alone.
+        if tenant.status != TenantStatus.suspended.value:
+            tenant.status = TenantStatus.cancelled.value
+        audit(db, principal, "billing.cancel", was, "now", request)
+        db.commit()
+        return {"cancelled": True, "status": tenant.status, "cancel_at_period_end": False}
+
     tenant = _subscribed(principal)
     try:
         sub = billing.set_cancel_at_period_end(tenant.stripe_subscription_id, True)

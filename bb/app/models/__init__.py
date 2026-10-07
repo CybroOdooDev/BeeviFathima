@@ -12,7 +12,7 @@ from app.models.attendance import (
 from app.models.adms import AdmsCommand, AdmsDevice
 from app.models.billing import PendingSignup, StripeEvent
 from app.models.contact import (
-    CONTACT_STATUSES, OPEN_STAGES, PIPELINE_STAGES, ContactEvent, ContactRequest,
+    CONTACT_STATUSES, DEMO_STATUSES, OPEN_STAGES, PIPELINE_STAGES, ContactEvent, ContactRequest,
 )
 from app.models.connection import ConnectionStatus, Device, DeviceSource, OdooConnection
 from app.models.platform import AccountClosure, PlatformSetting
@@ -32,6 +32,7 @@ __all__ = [
     "CONTACT_STATUSES",
     "ContactEvent",
     "ContactRequest",
+    "DEMO_STATUSES",
     "OPEN_STAGES",
     "PIPELINE_STAGES",
     "StripeEvent",

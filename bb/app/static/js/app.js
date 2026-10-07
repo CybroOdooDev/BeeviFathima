@@ -5,6 +5,8 @@
  * not control.
  */
 
+import { clearGuard, confirmLeave, dirtyGuard } from './nav-guard.js';
+import './password-toggle.js';
 import { api, auth, loadSession } from './api.js';
 import { $, esc, fmtAgo, toast, wireSearchSelects, wireTips } from './ui.js';
 import { renderLogin, renderPlans, renderSignup } from './pages/auth.js';
@@ -101,7 +103,6 @@ const NAV = [
         children: [
           { path: '/settings/general', title: 'General' },
           { path: '/settings/pairing', title: 'Pairing' },
-          { path: '/settings/plan', title: 'Plan' },
           { path: '/settings/billing', title: 'Billing' },
           { path: '/settings/odoo', title: 'Odoo connection' },
           { path: '/settings/biometric', title: 'Biometric connections' },
@@ -140,21 +141,24 @@ const REDIRECTS = {
   '/settings': '/settings/general',
   // Changing your password moved into Settings → General.
   '/settings/password': '/settings/general',
+  // Plan and Billing are one submenu now. Old links (Stripe returns, bookmarks,
+  // emails) land on it, keeping their ?query.
+  '/settings/plan': '/settings/billing',
+  '/settings/plan/choose': '/settings/billing/choose',
 };
 
 /* Each screen's title, and one line under it saying what the screen is for. */
 const ROUTES = {
-  '/': { title: 'Overview', sub: 'Is attendance flowing, and what needs you', render: renderOverview },
+  '/': { title: 'Overview', sub: 'Sync status and anything that needs your attention', render: renderOverview },
   '/attendance': { title: 'Attendance', sub: 'Shifts written to Odoo, in your timezone', render: renderAttendance },
   '/activity': { title: 'Activity', sub: 'Every punch pulled, and every sync run', render: renderActivity },
   '/employees': { title: 'Employees', sub: 'Badges matched to Odoo employees', render: renderEmployees },
   '/terminals': { title: 'Terminals', sub: 'Every device your biometric connections bring in', render: renderTerminals },
-  '/get-started': { title: 'Get set up', sub: 'Connect Odoo and your biometric system, one step at a time', render: renderGetStarted },
+  '/get-started': { title: 'Get set up', sub: 'Connect Odoo and your biometric system, set your pairing rules, one step at a time', render: renderGetStarted },
   '/settings/general': { title: 'General', sub: 'Company, timezone and sync schedule', render: renderSettings },
   '/settings/pairing': { title: 'Pairing', sub: 'How raw punches become shifts', render: renderSettings },
-  '/settings/plan': { title: 'Plan', sub: 'Your subscription plan', render: renderSettings },
-  '/settings/billing': { title: 'Billing', sub: 'Renewals, payment method and invoices', render: renderSettings },
-  '/settings/plan/choose': { title: 'Choose a plan', sub: 'Compare plans and switch', render: renderSettings },
+  '/settings/billing': { title: 'Billing', sub: 'Your plan, renewals, payment method and invoices', render: renderSettings },
+  '/settings/billing/choose': { title: 'Choose a plan', sub: 'Compare plans and switch', render: renderSettings },
   '/settings/odoo': { title: 'Odoo connection', sub: 'Odoo connection, and badges waiting for a match', render: renderSettings },
   '/settings/biometric': { title: 'Biometric connections', sub: 'Biometric connections — where punches come from', render: renderSettings },
   '/console': { title: 'Platform overview', sub: 'Every account at a glance — health, growth and what needs a person', render: renderConsoleOverview },
@@ -449,6 +453,8 @@ async function refreshBadges() {
   } catch { /* leave the previous value */ }
 }
 
+// The route on screen, so a refused navigation can put the address back.
+let shown = { hash: '#/', path: '/' };
 let running = false;
 // A navigation asked for while a page was still rendering — a hashchange, or
 // a session switch after an expiry — is run once that render finishes rather
@@ -519,7 +525,8 @@ async function resolve() {
     }
 
     if (REDIRECTS[route.path]) {
-      window.location.hash = `#${REDIRECTS[route.path]}`;
+      const qs = new URLSearchParams(route.query || {}).toString();
+      window.location.hash = `#${REDIRECTS[route.path]}${qs ? `?${qs}` : ''}`;
       return;
     }
 
@@ -536,8 +543,10 @@ async function resolve() {
       return;
     }
 
+    clearGuard();
     try {
       await entry.render(content, route);
+      shown = { hash: window.location.hash || '#/', path: route.path };
     } catch (error) {
       if (error.status === 401) return; // api.js already signalled sign-out
       content.innerHTML = `<div class="banner bad"><strong>Could not load this page</strong>${
@@ -572,6 +581,7 @@ window.addEventListener('bb:signed-in', async (event) => {
 });
 
 window.addEventListener('bb:signed-out', () => {
+  clearGuard();
   // Staff and customers never share a session, so there is nothing to fall
   // back to: clear it and send the person to the door they came in by.
   const wasStaff = auth.scope === 'staff';
@@ -583,7 +593,23 @@ window.addEventListener('bb:signed-out', () => {
 });
 
 window.addEventListener('bb:toast', (event) => toast(event.detail, 'ok'));
-window.addEventListener('hashchange', resolve);
+window.addEventListener('hashchange', async () => {
+  // Leaving a Settings page with edits that were not saved: ask first. The
+  // address is put back while the question is open, so Cancel leaves the
+  // page exactly as it was.
+  const guard = dirtyGuard();
+  if (guard && parseHash().path !== shown.path) {
+    const target = window.location.hash;
+    history.replaceState(null, '', shown.hash);
+    const choice = await confirmLeave();
+    if (choice === 'cancel') return;
+    if (choice === 'save' && !(await guard.save())) return;
+    clearGuard();
+    navigate(target);
+    return;
+  }
+  resolve();
+});
 wireTips();
 wireSearchSelects();
 

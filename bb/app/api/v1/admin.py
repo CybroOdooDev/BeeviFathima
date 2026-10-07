@@ -383,6 +383,7 @@ def platform_overview(
 def _plan_out(db: Session, plan: SubscriptionPlan) -> SubscriptionPlanAdminOut:
     out = SubscriptionPlanAdminOut.model_validate(plan)
     out.stripe_price_id = plan.stripe_price_id
+    out.stripe_yearly_price_id = plan.stripe_yearly_price_id
     out.tenants = db.scalar(select(func.count(Tenant.id)).where(Tenant.plan_id == plan.id)) or 0
     return out
 
@@ -413,8 +414,9 @@ def _apply_plan(db: Session, plan: SubscriptionPlan, data: dict) -> None:
         if clash:
             raise HTTPException(status.HTTP_409_CONFLICT, "A plan with that name already exists")
         data["name"] = data["name"].strip()
-    if data.get("stripe_price_id") == "":
-        data["stripe_price_id"] = None
+    for key in ("stripe_price_id", "stripe_yearly_price_id"):
+        if data.get(key) == "":
+            data[key] = None
     for key, value in data.items():
         setattr(plan, key, value)
     if plan.is_active is False:
@@ -1140,33 +1142,39 @@ def test_stripe(_: User = Depends(get_platform_admin), db: Session = Depends(get
     except billing.BillingError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
     results = []
-    for plan in plans:
-        row = {"plan": plan.name, "stripe_price_id": plan.stripe_price_id, "ok": False, "message": ""}
-        if not plan.stripe_price_id:
+
+    def check(label: str, price_id: str | None, interval: str, expected: int | None) -> None:
+        row = {"plan": label, "stripe_price_id": price_id, "ok": False, "message": ""}
+        results.append(row)
+        if not price_id:
             row["message"] = "No Stripe price — this plan can't be bought online."
-            results.append(row)
-            continue
+            return
         try:
-            price = billing._request("GET", f"prices/{plan.stripe_price_id}")
+            price = billing._request("GET", f"prices/{price_id}")
         except billing.BillingError as exc:
             row["message"] = (f"{exc}. A {mode or ''} key can only see {mode or 'its own'}-mode prices."
                               if "No such price" in str(exc) else str(exc))
-            results.append(row)
-            continue
+            return
         recurring = price.get("recurring") or {}
         problems = []
         if not price.get("active", True):
             problems.append("the price is archived in Stripe")
-        if recurring.get("interval") != "month":
-            problems.append("it isn't a monthly recurring price")
+        if recurring.get("interval") != interval:
+            problems.append(f"it isn't a {'yearly' if interval == 'year' else 'monthly'} recurring price")
         amount = price.get("unit_amount")
-        if plan.monthly_price_cents is not None and amount is not None and amount != plan.monthly_price_cents:
+        if expected is not None and amount is not None and amount != expected:
             problems.append(f"Stripe charges {amount / 100:.2f} {str(price.get('currency', '')).upper()} "
-                            f"but the plan says {plan.monthly_price_cents / 100:.2f}")
+                            f"but the plan says {expected / 100:.2f}")
         row["ok"] = not problems
         row["message"] = "; ".join(problems).capitalize() if problems else (
-            f"{(amount or 0) / 100:.2f} {str(price.get('currency', '')).upper()} / month")
-        results.append(row)
+            f"{(amount or 0) / 100:.2f} {str(price.get('currency', '')).upper()} / "
+            f"{'year' if interval == 'year' else 'month'}")
+
+    for plan in plans:
+        check(plan.name, plan.stripe_price_id, "month", plan.monthly_price_cents)
+        # A yearly price is optional: only checked when the plan has one.
+        if plan.stripe_yearly_price_id:
+            check(f"{plan.name} (yearly)", plan.stripe_yearly_price_id, "year", plan.yearly_price_cents)
     webhook = bool(billing.webhook_secret())
     return {
         "ok": all(r["ok"] for r in results) and webhook,
@@ -1333,6 +1341,19 @@ def update_contact_request(
         req.stage_changed_at = datetime.now(timezone.utc)
         if new_stage != "lost":
             req.lost_reason = None   # a reason belongs to a lost lead only
+    # A lead that asked for a demo gets a pending one the moment it is worked.
+    if (new_stage in ("contacted", "qualified") and req.demo_status is None and "demo_status" not in data
+            and (req.topic == "Demo" or req.preferred_date)):
+        data["demo_status"] = "pending"
+    if "demo_status" in data and data["demo_status"] != req.demo_status:
+        if data["demo_status"] is not None and req.status == "new":
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "Move the lead to Contacted before setting a demo status")
+        db.add(ContactEvent(
+            contact_id=req.id, kind="demo", from_stage=req.demo_status, to_stage=data["demo_status"],
+            actor=actor.email, created_at=datetime.now(timezone.utc),
+        ))
+        req.demo_status = data["demo_status"]
     if "notes" in data:
         req.notes = data["notes"]
     if "lost_reason" in data and req.status == "lost":

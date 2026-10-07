@@ -5,6 +5,14 @@ Mimics the parts the connector talks to: token auth, DRF-style pagination with
 an absolute ``next`` URL, and the three list endpoints. Punch data comes from a
 JSON file (tools/generate_punches.py) so the stream can change between syncs.
 
+Live punches — a simulator and a manual trigger, so a sync always has something
+fresh to fetch (stale files and reused ids are what make a sync "see nothing"):
+
+    python3 tools/mock_biotime.py --company 4 --port 8007 --tz Asia/Kolkata --simulate
+    curl -X POST localhost:8007/mock/punch -d '{"emp_code": "5"}'      # toggles in/out
+    curl -X POST localhost:8007/mock/punch -d '{"emp_code": "5", "state": "out"}'
+    curl localhost:8007/mock/state                                      # who is in
+
 Serve any company in your Odoo by its res.company id — its active employees
 become the BioTime personnel list, on two mock terminals of its own:
 
@@ -23,8 +31,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import socket
 import sys
+import threading
+import time
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -120,6 +132,7 @@ DATASETS: dict[int, dict] = {
 DEPARTMENTS = DATASETS[1]["departments"]
 EMPLOYEES = DATASETS[1]["employees"]
 TERMINALS = DATASETS[1]["terminals"]
+AREAS = [{"id": 1, "area_code": "1", "area_name": "Not Authorized"}, {"id": 2, "area_code": "2", "area_name": "Head Office"}]
 
 PUNCH_FILE: str | None = None
 
@@ -129,6 +142,100 @@ def _punches() -> list[dict]:
         with open(PUNCH_FILE) as handle:
             return json.load(handle)
     return []
+
+
+# --------------------------------------------------------------------------- #
+# Live punches: the simulator and the /mock/punch endpoint
+# --------------------------------------------------------------------------- #
+TIME_FMT = "%Y-%m-%d %H:%M:%S"
+SERVER_TZ = "Asia/Dubai"       # must match the BioBridge connection's Server Timezone
+_WRITE_LOCK = threading.Lock()
+
+
+def _now_local() -> datetime:
+    from zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo(SERVER_TZ)).replace(tzinfo=None)
+
+
+def _write_punches(rows: list[dict]) -> None:
+    tmp = f"{PUNCH_FILE}.tmp"
+    with open(tmp, "w") as handle:
+        json.dump(rows, handle, indent=2)
+        handle.write("\n")
+    os.replace(tmp, PUNCH_FILE)     # readers never see a half-written file
+
+
+def _last_state(rows: list[dict], emp_code: str) -> tuple[str | None, str | None]:
+    """(state, punch_time) of the employee's most recent punch, if any."""
+    mine = [r for r in rows if str(r.get("emp_code")) == str(emp_code)]
+    if not mine:
+        return None, None
+    last = max(mine, key=lambda r: (r["punch_time"], r["id"]))
+    return str(last["punch_state"]), last["punch_time"]
+
+
+def add_punch(emp_code: str, state: str | None = None, terminal: str | None = None,
+              at: str | None = None) -> dict:
+    """Append one punch to the punches file and return it.
+
+    The id always continues from the file's highest id, and never starts below
+    the current epoch second when the file is empty — so deleting or
+    regenerating the file cannot hand BioBridge an id it has already stored
+    (it would silently skip the punch as a duplicate). With no ``state`` the
+    punch toggles: check-in first, then check-out, then check-in again.
+    """
+    code = str(emp_code).strip()
+    if not code:
+        raise ValueError("emp_code is required")
+    if not PUNCH_FILE:
+        raise ValueError("this mock has no punches file")
+    with _WRITE_LOCK:
+        rows = _punches()
+        last_state, _ = _last_state(rows, code)
+        if state in (None, ""):
+            state = "1" if last_state == "0" else "0"
+        state = {"in": "0", "out": "1"}.get(str(state).lower(), str(state))
+        if state not in ("0", "1"):
+            raise ValueError("state must be 0/in (check in) or 1/out (check out)")
+        sns = [t["sn"] for t in TERMINALS] or ["MOCK-GATE-01"]
+        row = {
+            "id": max([int(r["id"]) for r in rows] + [int(time.time()) - 1]) + 1,
+            "emp_code": code,
+            "punch_time": at or _now_local().strftime(TIME_FMT),
+            "punch_state": state,
+            "verify_type": "15",
+            "terminal_sn": terminal or random.choice(sns),
+            "first_name": "",
+            "last_name": "",
+        }
+        rows.append(row)
+        _write_punches(rows)
+    return row
+
+
+def simulate(interval: float, stop: threading.Event, burst: int = 1) -> None:
+    """Every ``interval`` seconds, a random employee clocks in or out *now*.
+
+    Each person alternates in / out from wherever their last punch left them,
+    and never punches twice inside 30 seconds, so the stream is a plausible
+    attendance record that Odoo accepts: no overlaps, no check-out before a
+    check-in, nothing in the future.
+    """
+    while not stop.wait(interval):
+        for _ in range(burst):
+            people = [str(e["emp_code"]) for e in EMPLOYEES if e.get("enable_attendance", True)]
+            random.shuffle(people)
+            rows = _punches()
+            now = _now_local()
+            for code in people:
+                _, when = _last_state(rows, code)
+                if when and (now - datetime.strptime(when, TIME_FMT)).total_seconds() < 30:
+                    continue
+                row = add_punch(code)
+                kind = "check-in " if row["punch_state"] == "0" else "check-out"
+                print(f"  simulated  {kind}  badge {row['emp_code']:<6} {row['punch_time']}  "
+                      f"{row['terminal_sn']}  (id {row['id']})", flush=True)
+                break
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -192,7 +299,23 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"token": TOKEN})
         if path == "/personnel/api/employees/":
             return self._create_employee()
+        if path == "/mock/punch":
+            return self._mock_punch()
         self._json({"detail": "Not found."}, 404)
+
+    def _mock_punch(self):
+        """POST /mock/punch {"emp_code": "5", "state": "in"|"out"|"0"|"1"?,
+        "terminal": "SN"?, "at": "YYYY-MM-DD HH:MM:SS"?} — one punch, right now
+        unless ``at`` says otherwise. No token: this is a test control, not
+        part of BioTime's API."""
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(length) or b"{}")
+            row = add_punch(body.get("emp_code", ""), body.get("state"),
+                            body.get("terminal"), body.get("at"))
+        except (ValueError, json.JSONDecodeError) as exc:
+            return self._json({"detail": str(exc)}, 400)
+        self._json(row, 201)
 
     def _create_employee(self):
         """POST /personnel/api/employees/ — what BioBridge's "create the
@@ -212,26 +335,46 @@ class Handler(BaseHTTPRequestHandler):
         if any(str(e.get("emp_code")) == code for e in EMPLOYEES):
             # BioTime's own wording for a duplicate; BioBridge keys on it.
             return self._json({"emp_code": ["employee with this emp code already exists."]}, 400)
+        # Real BioTime rejects a personnel row with no department or area.
+        missing = {f: ["This field is required."] for f in ("department", "area") if not body.get(f)}
+        if missing:
+            return self._json(missing, 400)
+        dept = next((d for d in DEPARTMENTS if d.get("id") == body.get("department")), None)
+        if dept is None:
+            return self._json({"department": ["Invalid pk - object does not exist."]}, 400)
         row = _emp(
             max([int(e.get("id") or 0) for e in EMPLOYEES] + [0]) + 1,
             code,
             str(body.get("first_name") or code),
             str(body.get("last_name") or ""),
-            None,
+            dept,
         )
         row["enable_attendance"] = bool(body.get("enable_attendance", True))
         EMPLOYEES.append(row)
         self._json(row, 201)
 
     def do_GET(self):
+        parsed = urlparse(self.path)
+        path, query = parsed.path, parse_qs(parsed.query)
+        if path == "/mock/state":
+            rows = _punches()
+            people = {}
+            for e in EMPLOYEES:
+                state, when = _last_state(rows, e["emp_code"])
+                people[str(e["emp_code"])] = {
+                    "name": f"{e.get('first_name', '')} {e.get('last_name', '')}".strip(),
+                    "last_punch": when,
+                    "now": {None: "no punches", "0": "checked in", "1": "checked out"}.get(state, state),
+                }
+            return self._json({"punches": len(rows), "server_time": _now_local().strftime(TIME_FMT),
+                               "timezone": SERVER_TZ, "people": people})
         if not self._authorised():
             return
 
-        parsed = urlparse(self.path)
-        path, query = parsed.path, parse_qs(parsed.query)
-
         if path == "/personnel/api/departments/":
             return self._json(self._page(DEPARTMENTS, query, path))
+        if path == "/personnel/api/areas/":
+            return self._json(self._page(AREAS, query, path))
         if path == "/personnel/api/employees/":
             return self._json(self._page(EMPLOYEES, query, path))
         if path == "/iclock/api/terminals/":
@@ -281,6 +424,23 @@ def main():
              "a BioBridge on the same machine and invisible to one in a "
              "container or on another host — use 0.0.0.0 for those.",
     )
+    parser.add_argument(
+        "--simulate", action="store_true",
+        help="Live mode: every --interval seconds a random employee clocks in or "
+             "out right now, alternating in/out, appended to the punches file.",
+    )
+    parser.add_argument("--reset-punches", action="store_true",
+                        help="Empty the punches file before starting (ids restart from the "
+                             "clock, so BioBridge will not mistake them for old ones)")
+    parser.add_argument("--interval", type=float, default=20.0,
+                        help="Seconds between simulated punches (default: 20)")
+    parser.add_argument("--burst", type=int, default=1,
+                        help="Punches per tick (default: 1)")
+    parser.add_argument(
+        "--tz", default="Asia/Dubai",
+        help="Timezone of the punch times this server hands out — must match the "
+             "BioBridge connection's Server Timezone (default: Asia/Dubai)",
+    )
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from tools.mock_roster import add_odoo_arguments, describe, list_companies, load_roster
 
@@ -289,12 +449,24 @@ def main():
     if args.list_companies:
         return list_companies(args)
 
-    global PUNCH_FILE, DEPARTMENTS, EMPLOYEES, TERMINALS
+    global PUNCH_FILE, DEPARTMENTS, EMPLOYEES, TERMINALS, SERVER_TZ
+    SERVER_TZ = args.tz
     roster = load_roster(args, args.company)
     DEPARTMENTS = roster.departments
     EMPLOYEES = roster.employees
     TERMINALS = roster.terminals
     PUNCH_FILE = args.punches or ("punches.json" if args.company == 1 else f"punches_company{args.company}.json")
+    if args.reset_punches:
+        _write_punches([])
+        print(f"  emptied {PUNCH_FILE}", flush=True)
+    elif os.path.exists(PUNCH_FILE):
+        known = {str(e["emp_code"]) for e in EMPLOYEES}
+        strangers = sorted({str(r["emp_code"]) for r in _punches()} - known)
+        if strangers:
+            print(f"  WARNING: {PUNCH_FILE} holds punches for badges that are not in this roster "
+                  f"({', '.join(strangers[:6])}{' …' if len(strangers) > 6 else ''}) — probably left over "
+                  f"from another company or Odoo. They are still served. Start with --reset-punches, or "
+                  f"point --punches at a new file.", flush=True)
     if not os.path.exists(PUNCH_FILE):
         print(f"  no punches yet in {PUNCH_FILE} — run: python3 tools/generate_punches.py "
               f"--company {args.company}", flush=True)
@@ -313,6 +485,19 @@ def main():
     )
     print(f"  {describe(roster)}", flush=True)
     print(f"  punches from {PUNCH_FILE}", flush=True)
+    print(f"  punch times are in {SERVER_TZ} — set the connection's Server Timezone to match",
+          flush=True)
+    print("  add a punch by hand:  curl -X POST http://%s:%d/mock/punch -d '{\"emp_code\": \"5\"}'"
+          % (args.host, args.port), flush=True)
+    print("  who is in / out:      curl http://%s:%d/mock/state" % (args.host, args.port), flush=True)
+    if args.simulate:
+        if not PUNCH_FILE:
+            raise SystemExit("--simulate needs a punches file")
+        if not os.path.exists(PUNCH_FILE):
+            _write_punches([])
+        threading.Thread(target=simulate, args=(args.interval, threading.Event(), args.burst),
+                         daemon=True).start()
+        print(f"  SIMULATING: one punch every {args.interval:g}s, starting now", flush=True)
     if args.host == "127.0.0.1":
         print("  loopback only — pass --host 0.0.0.0 if BioBridge is not on this machine",
               flush=True)

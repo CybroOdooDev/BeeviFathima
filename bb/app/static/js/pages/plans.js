@@ -86,7 +86,8 @@ function rowFor(p) {
     <tr data-plan="${esc(p.id)}">
       <td><strong>${esc(p.name)}</strong>${p.is_default ? ' <span class="pill ok">default</span>' : ''}
         ${p.description ? `<div class="hint">${esc(p.description)}</div>` : ''}</td>
-      <td class="num">${money(p.monthly_price_cents)}</td>
+      <td class="num">${money(p.monthly_price_cents)}${p.yearly_price_cents != null
+        ? `<div class="hint">${money(p.yearly_price_cents)} / yr</div>` : ''}</td>
       <td class="num">${cap(p.max_employees, '')}</td>
       <td class="num">${cap(p.max_devices, '')}</td>
       <td class="num">${p.min_sync_interval_minutes ? `${esc(p.min_sync_interval_minutes)} min` : '<span class="hint">any</span>'}</td>
@@ -122,6 +123,10 @@ function openPlanDialog(plan, onSaved) {
                     help: 'What pricing pages show. Leave empty for "Custom". What a customer is '
                         + 'actually charged is the Stripe Price below — keep the two in step.' })}
         </div>
+        ${field({ name: 'yearly_price', label: 'Price Per Year (USD)', type: 'number',
+                  value: p.yearly_price_cents != null ? p.yearly_price_cents / 100 : '',
+                  help: 'Shown when a visitor switches the pricing page to yearly. Empty = no yearly option. '
+                      + 'Charged through the yearly Stripe Price below.' })}
         ${field({ name: 'description', label: 'Description', value: p.description || '',
                   placeholder: 'Growing teams on several devices.' })}
         <h3 style="margin:6px 0 10px;font-size:13px">Limits <span class="hint">empty = unlimited</span></h3>
@@ -137,6 +142,11 @@ function openPlanDialog(plan, onSaved) {
                         + 'raises a faster interval to this.' })}
         </div>
         <h3 style="margin:6px 0 10px;font-size:13px">Selling</h3>
+        <div class="grid cols-2">
+          ${field({ name: 'stripe_yearly_price_id', label: 'Stripe Yearly Price', value: p.stripe_yearly_price_id || '',
+                    placeholder: 'price_…',
+                    help: 'A recurring yearly Price. Empty = yearly payment cannot be bought online.' })}
+        </div>
         <div class="grid cols-3">
           ${field({ name: 'stripe_price_id', label: 'Stripe Price', value: p.stripe_price_id || '',
                     placeholder: 'price_…',
@@ -174,6 +184,8 @@ function openPlanDialog(plan, onSaved) {
       max_devices: v.max_devices || null,
       min_sync_interval_minutes: v.min_sync_interval_minutes || null,
       stripe_price_id: v.stripe_price_id.trim() || null,
+      yearly_price_cents: v.yearly_price == null ? null : Math.round(v.yearly_price * 100),
+      stripe_yearly_price_id: (v.stripe_yearly_price_id || '').trim() || null,
       is_active: v.is_active,
       is_default: v.is_default,
     };

@@ -172,6 +172,11 @@ def test_mock_biotime_can_create_an_employee_and_refuses_a_duplicate(monkeypatch
 
         assert httpx.post(url, json=body, timeout=5.0).status_code == 401  # needs the token
 
+        # Real BioTime wants a department and area on every new person.
+        bare = httpx.post(url, json=body, headers=headers, timeout=5.0)
+        assert bare.status_code == 400 and set(bare.json()) == {"department", "area"}
+
+        body = {**body, "department": 1, "area": [1]}
         created = httpx.post(url, json=body, headers=headers, timeout=5.0)
         assert created.status_code == 201
         assert created.json()["emp_code"] == "10004"

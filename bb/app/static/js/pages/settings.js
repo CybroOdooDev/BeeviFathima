@@ -15,6 +15,7 @@ import {
   $, $$, banner, busy, empty, esc, field as baseField, fmtAgo, fmtIn, guard, loading, pill, pricingCards, readForm,
   timezoneNames, toast, wirePricingCards,
 } from '../ui.js';
+import { setGuard } from '../nav-guard.js';
 
 /* Every settings form shows its field help as an (i) beside the label,
  * on hover / focus, rather than a paragraph under every box. */
@@ -28,9 +29,8 @@ const field = (options) => baseField({ tip: true, ...options });
 const RENDERERS = {
   general: renderGeneral,
   pairing: renderPairing,
-  plan: renderPlan,
-  'plan/choose': renderChoosePlan,
-  billing: renderBilling,
+  billing: renderBillingPage,
+  'billing/choose': renderChoosePlan,
   odoo: renderOdoo,
   biometric: renderBiometric,
 };
@@ -49,6 +49,16 @@ export async function render(mount, route) {
     return;
   }
   await renderSection(body, route);
+}
+
+/** Settings → Billing: the plan this account is on, then how it is paid for —
+ * renewals, card and invoices. One submenu; the two halves paint on their own. */
+async function renderBillingPage(mount, route) {
+  mount.innerHTML = '<div id="planPart"></div><div id="billPart" style="margin-top:14px"></div>';
+  await Promise.all([
+    renderPlan($('#planPart', mount), route),
+    renderBilling($('#billPart', mount), route),
+  ]);
 }
 
 /* ===========================================================================
@@ -124,9 +134,34 @@ function cardHead(title, hint, actions = '') {
 const saveButton = (readonly) =>
   readonly ? '' : '<button class="primary" id="save" type="submit">Save settings</button>';
 
+/** Tell the router this form has unsaved changes whenever it differs from
+ * what was on screen when it was drawn, so leaving the page can ask first.
+ * ``save`` persists the form and throws on failure; ``touched`` is for state
+ * the form's own fields do not carry. */
+function trackDirty(form, save, touched = () => false) {
+  if (!auth.canWrite || !form) return;
+  const baseline = JSON.stringify(readForm(form));
+  setGuard({
+    isDirty: () => form.isConnected && (JSON.stringify(readForm(form)) !== baseline || touched()),
+    save: async () => {
+      if (!form.reportValidity()) return false;
+      try {
+        await save();
+        toast('Settings saved', 'ok');
+        return true;
+      } catch (error) {
+        if (error.status !== 401) toast(error.message || 'Could not save', 'bad');
+        return false;
+      }
+    },
+  });
+}
+
 function saveTenantForm(mount, formId, buttonId, reRender) {
   if (!auth.canWrite) return;
-  $(`#${formId}`, mount).addEventListener('submit', (event) => {
+  const form = $(`#${formId}`, mount);
+  trackDirty(form, () => api.patch('/tenant', readForm(form)));
+  form.addEventListener('submit', (event) => {
     event.preventDefault();
     const values = readForm(event.target);
     busy($(`#${buttonId}`, mount), () =>
@@ -224,11 +259,13 @@ async function renderPairing(mount) {
           value: tenant.max_shift_hours, required: true,
           help: 'Anything longer is capped and flagged, so one forgotten badge-out cannot write a 300-hour attendance.',
         })}
+        <div id="dayBoundary" ${tenant.pairing_mode === 'first_last' ? '' : 'hidden'}>
         ${field({
           name: 'day_boundary_hour', label: 'Shift Day Starts At (Hour)', type: 'number',
           value: tenant.day_boundary_hour, required: true,
-          help: 'Only used by first/last mode. A night-shift site sets this after the shift ends — 12 for noon, not the small hours.',
+          help: 'Decides which calendar day a punch belongs to. A night-shift site sets this after the shift ends — 12 for noon, not the small hours.',
         })}
+        </div>
         ${field({
           name: 'orphan_out_policy', label: 'Check-Out With No Check-In',
           value: tenant.orphan_out_policy, required: true,
@@ -241,6 +278,11 @@ async function renderPairing(mount) {
       </div>
     </form>`;
 
+  // Only first/last mode groups punches by day, so only it needs a day boundary.
+  const modeSel = mount.querySelector('[name=pairing_mode]');
+  const dayBox = mount.querySelector('#dayBoundary');
+  modeSel?.addEventListener('change', () => { dayBox.hidden = modeSel.value !== 'first_last'; });
+
   saveTenantForm(mount, 'form', 'save', renderPairing);
 }
 
@@ -252,7 +294,7 @@ async function renderPlan(mount, route) {
   // webhook, usually within seconds of this redirect — so wait for it here
   // rather than show the old plan as if nothing happened.
   const justPaid = route?.query?.checkout === 'success';
-  if (justPaid) history.replaceState(null, '', '#/settings/plan');
+  if (justPaid) history.replaceState(null, '', '#/settings/billing');
 
   // A plan retired since this account chose it is no longer offered, but it is
   // still what they are on — say so rather than showing no card as current.
@@ -262,16 +304,14 @@ async function renderPlan(mount, route) {
     ${topBanners(ctx)}
     <div class="card">
       ${cardHead('Plan', 'what this account is billed and limited by',
-        `${billing?.enabled && billing.has_customer
-          ? '<a class="btn sm" href="#/settings/billing">Billing &amp; invoices</a>' : ''}
-        ${activePlans.length && !readonly
-          ? `<a class="btn primary-link" href="#/settings/plan/choose">${tenant.plan_id && !ctx.paysAtCheckout ? 'Change plan' : 'Choose a plan'}</a>`
+        `${activePlans.length && !readonly
+          ? `<a class="btn primary-link" href="#/settings/billing/choose">${tenant.plan_id && !ctx.paysAtCheckout ? 'Change plan' : 'Choose a plan'}</a>`
           : ''}`)}
       ${justPaid && !tenant.billed_by_stripe ? banner(
         'Payment received — activating your plan',
         'Stripe is confirming the payment with BioBridge. This page updates on its own in a few seconds.',
         '') : ''}
-      ${tenant.billed_by_stripe ? '<div class="hint" style="margin-bottom:12px">Renews automatically every month through Stripe. Card, invoices, overdue payments and cancellation are under <a href="#/settings/billing">Billing</a>.</div>' : ''}
+      ${tenant.billed_by_stripe ? '<div class="hint" style="margin-bottom:12px">Renews automatically every month through Stripe. Card, invoices, overdue payments and cancellation are just below.</div>' : ''}
       <div class="hint" style="margin-bottom:12px">
         ${tenant.plan_name ? `Currently <strong>${esc(tenant.plan_name)}</strong>` : 'No plan assigned — nothing is limited.'}
         ${tenant.plan_max_employees != null ? ` · up to ${esc(tenant.plan_max_employees)} employees` : ''}
@@ -284,7 +324,7 @@ async function renderPlan(mount, route) {
         `Takes effect once the current plan's period ends (renews `
           + `${fmtIn(tenant.subscription_renews_at)}) — choose `
           + `${tenant.plan_name} again to cancel it.`,
-        '', !readonly ? { href: '#/settings/plan/choose', label: 'Change' } : null) : ''}
+        '', !readonly ? { href: '#/settings/billing/choose', label: 'Change' } : null) : ''}
       ${renewalWarning && (tenant.status === 'trialing' || tenant.plan_id) ? banner(
         tenant.status === 'trialing'
           ? (renewalWarning.days_left <= 0 ? 'Trial ends today'
@@ -300,10 +340,36 @@ async function renderPlan(mount, route) {
       ${retired ? banner(
         `${tenant.plan_name || 'Your plan'} is no longer offered`,
         'You stay on it until you choose another.',
-        'warn', !readonly ? { href: '#/settings/plan/choose', label: 'Choose a plan' } : null) : ''}
+        'warn', !readonly ? { href: '#/settings/billing/choose', label: 'Choose a plan' } : null) : ''}
       ${!activePlans.length ? empty('No plans available', '') : ''}
       ${readonly ? '<div class="hint">Your role cannot change the plan.</div>' : ''}
+      ${tenant.status === 'cancelled' ? banner(
+        'This plan has ended',
+        'Your account, connections and history are kept, but nothing syncs. Choose a plan to start again, '
+        + 'or delete the account under General if you are finished with BioBridge.',
+        'warn') : ''}
+      ${!readonly && !tenant.billed_by_stripe && ['trialing', 'active', 'past_due'].includes(tenant.status) ? `
+        <div class="row" style="margin-top:14px">
+          <button type="button" id="discontinuePlan">Discontinue plan</button>
+        </div>
+        <div id="discontinueConfirm" hidden class="banner warn" style="margin-top:12px">
+          <strong>Discontinue this plan?</strong>
+          Syncing stops right away. Your account, connections and history are kept; you can choose a plan again
+          later, and the account is only removed if you or BioBridge staff delete it.
+          <div class="row" style="margin-top:10px">
+            <button type="button" class="primary sm" id="discontinueYes">Yes, discontinue</button>
+            <button type="button" class="sm" id="discontinueNo">Keep it</button>
+          </div>
+        </div>` : ''}
     </div>`;
+
+  const dConfirm = mount.querySelector('#discontinueConfirm');
+  mount.querySelector('#discontinuePlan')?.addEventListener('click', () => { dConfirm.hidden = false; });
+  mount.querySelector('#discontinueNo')?.addEventListener('click', () => { dConfirm.hidden = true; });
+  mount.querySelector('#discontinueYes')?.addEventListener('click', (e) => busy(e.currentTarget, async () => {
+    if (await guard(() => api.post('/billing/cancel', { when: 'now' }),
+      'Plan discontinued — syncing has stopped. Your account is kept.')) renderPlan(mount);
+  }));
 
 
   if (justPaid && !tenant.billed_by_stripe) {
@@ -333,7 +399,7 @@ async function renderChoosePlan(mount, route) {
   const ctx = await tenantContext();
   const { tenant, activePlans, willDefer, readonly, paysAtCheckout } = ctx;
   if (route?.query?.checkout === 'cancelled') {
-    history.replaceState(null, '', '#/settings/plan/choose');
+    history.replaceState(null, '', '#/settings/billing/choose');
     toast('Checkout cancelled — nothing was charged.', '');
   }
 
@@ -341,7 +407,7 @@ async function renderChoosePlan(mount, route) {
     mount.innerHTML = `
       ${topBanners(ctx)}
       <div class="card">
-        ${cardHead('Choose a plan', '', '<a class="btn" href="#/settings/plan">&larr; Plan</a>')}
+        ${cardHead('Choose a plan', '', '<a class="btn" href="#/settings/billing">&larr; Billing</a>')}
         <div class="hint">Your role cannot change the plan.</div>
       </div>`;
     return;
@@ -361,7 +427,7 @@ async function renderChoosePlan(mount, route) {
   mount.innerHTML = `
     ${topBanners(ctx)}
     <div class="card">
-      ${cardHead('Choose a plan', '', '<a class="btn" href="#/settings/plan">&larr; Plan</a>')}
+      ${cardHead('Choose a plan', '', '<a class="btn" href="#/settings/billing">&larr; Billing</a>')}
       <p class="hint" style="margin:-4px 0 16px">${paysAtCheckout
         ? 'Pick a plan to pay for it securely on Stripe. It starts as soon as the payment goes through, and renews monthly — cancel any time from Manage billing.'
         : tenant.billed_by_stripe && willDefer
@@ -400,7 +466,7 @@ async function renderChoosePlan(mount, route) {
     busy(button, () =>
       guard(async () => {
         await api.patch('/tenant', { plan_id: planId });
-        window.location.hash = '#/settings/plan';
+        window.location.hash = '#/settings/billing';
       }, message)
     );
   });
@@ -453,7 +519,7 @@ async function renderOdoo(mount, route) {
       ${cardHead('Odoo', 'where attendance is written', actions)}
       ${!odoo && !readonly ? testFirstHint('Connect Odoo') : ''}
       <div id="odooTestResult"></div>
-      ${odoo ? statusRow(odoo) : ''}
+      <div id="odooStatus">${odoo ? statusRow(odoo) : ''}</div>
       <div id="odooStatusExtras">${trackingExtrasHtml(odoo, odooLastCompanies?.companies)}</div>
       <form id="odooForm" ${readonly ? 'inert' : ''}>
         ${field({
@@ -605,6 +671,26 @@ async function renderOdoo(mount, route) {
           result.message += '. Device tracking could not be kept up to date just now.';
         }
       }
+      // A test that passes on the connection exactly as saved is also the
+      // connection's own check: record it, so a "Degraded" or "Error" pill
+      // goes back to "Connected" now, not only after Save. Edited values are
+      // a different connection — the saved one's status is not theirs to set.
+      const v = odooValues();
+      const asSaved = odoo && !v.api_key && v.url === odoo.url
+        && v.db_name === odoo.db_name && v.username === odoo.username;
+      if (result.ok && asSaved) {
+        try {
+          const saved = await api.post(`/odoo-connections/${odoo.id}/test`);
+          if (saved.ok) {
+            const fresh = (await api.get('/odoo-connections')).find((c) => c.id === odoo.id);
+            if (fresh) {
+              Object.assign(odoo, fresh);
+              const box = $('#odooStatus', mount);
+              if (box) box.innerHTML = statusRow(odoo);
+            }
+          }
+        } catch { /* the test itself passed; the pill catches up on the next load */ }
+      }
       return result;
     },
     after: (result) => {
@@ -623,25 +709,36 @@ async function renderOdoo(mount, route) {
     },
   });
 
+  // Shared by the Save button and by "Save" in the leave-this-page prompt.
+  const persistOdoo = async () => {
+    const values = odooValues();
+    if (odoo) {
+      await api.patch(`/odoo-connections/${odoo.id}`, values);
+      // Saving an edit used to leave the connection "unverified" until
+      // someone remembered to press Test. Check it straight away instead,
+      // so the status on screen is about the values just saved.
+      const result = await api.post(`/odoo-connections/${odoo.id}/test`);
+      toast(result.message, result.ok ? 'ok' : 'bad');
+      odooLastCompanies = result.detail?.companies
+        ? { connId: odoo.id, companies: result.detail.companies }
+        : null;
+    } else {
+      await api.post('/odoo-connections', values);
+      toast('Odoo connected', 'ok');
+    }
+  };
+
+  let companiesTouched = false;
+  $('#companyField', mount)?.addEventListener('change', () => { companiesTouched = true; });
+  trackDirty(form, async () => {
+    await persistOdoo();
+  }, () => companiesTouched);
+
   form.addEventListener('submit', (event) => {
     event.preventDefault();
-    const values = odooValues();
     busy($('#saveOdoo', mount), () =>
       guard(async () => {
-        if (odoo) {
-          await api.patch(`/odoo-connections/${odoo.id}`, values);
-          // Saving an edit used to leave the connection "unverified" until
-          // someone remembered to press Test. Check it straight away instead,
-          // so the status on screen is about the values just saved.
-          const result = await api.post(`/odoo-connections/${odoo.id}/test`);
-          toast(result.message, result.ok ? 'ok' : 'bad');
-          odooLastCompanies = result.detail?.companies
-            ? { connId: odoo.id, companies: result.detail.companies }
-            : null;
-        } else {
-          await api.post('/odoo-connections', values);
-          toast('Odoo connected', 'ok');
-        }
+        await persistOdoo();
         odooConfirmDelete = false;
         await renderOdoo(mount);
       })
@@ -974,7 +1071,7 @@ async function renderBiometric(mount, route) {
       ) : ''}
     </div>`;
 
-  wireBiometric(mount, providersFor, canProvision);
+  wireBiometric(mount, canProvision, sources, providersFor);
 
   // #/settings/biometric?add=1 — the Overview's setup checklist links here
   // to open the wizard straight away. Dropped from the address afterwards so
@@ -1241,6 +1338,137 @@ function openAddWizard({ providersFor, onDone, canProvision = new Set() }) {
   return dialog;
 }
 
+
+/* ========================================================================
+ * Edit connection wizard
+ *
+ * One screen on the same modal chrome as the add wizard: the connection's
+ * fields, a result banner, and Test connection / Save. Test only reports
+ * (nothing is saved); Save writes the changes, re-tests the saved connection
+ * and, for providers that can, adds any Odoo employees the device is missing.
+ * ======================================================================== */
+
+function openEditWizard({ source, onDone, canProvision = new Set() }) {
+  document.querySelector('dialog.wizard')?.remove();
+  const dialog = document.createElement('dialog');
+  dialog.className = 'wizard';
+  dialog.setAttribute('aria-labelledby', 'wizTitle');
+  document.body.append(dialog);
+
+  const provider = source.provider;
+  const kind = source.connection_kind;
+
+  dialog.innerHTML = `
+    <div class="wiz-head">
+      <strong id="wizTitle">Edit ${esc(source.name)}</strong>
+      <button type="button" class="link wiz-x" data-wiz="cancel" aria-label="Close">&times;</button>
+    </div>
+    <div class="wiz-body">
+      <div id="wizResult"></div>
+      <form id="wizForm" novalidate>${sourceFieldsHtml(source, kind, [], provider)}</form>
+      <p class="err" id="wizError"></p>
+    </div>
+    <div class="wiz-foot">
+      <button type="button" class="link" data-wiz="cancel">Cancel</button>
+      <div class="actions">
+        <button type="button" data-wiz="test">Test connection</button>
+        <button type="button" class="primary" data-wiz="save">Save</button>
+      </div>
+    </div>`;
+
+  const form = $('#wizForm', dialog);
+  const result = $('#wizResult', dialog);
+  const error = $('#wizError', dialog);
+
+  /** The form's values shaped the way the API takes them. A blank password
+   * means "keep the saved one", so it is left out. */
+  const payload = () => {
+    const values = readForm(form);
+    if (!values.password) delete values.password;
+    if (provider === 'zk_device' && values.base_url && !/^zk:\/\//i.test(values.base_url)) {
+      values.base_url = `zk://${values.base_url}`;
+    }
+    if (provider === 'zk_adms' && values.base_url && !/^adms:\/\//i.test(values.base_url)) {
+      values.base_url = `adms://${values.base_url.trim().toUpperCase()}`;
+    }
+    if (['hik_isapi', 'dahua', 'cosec', 'cosec_centra'].includes(provider) && values.base_url && !/^https?:\/\//i.test(values.base_url)) {
+      values.base_url = `http://${values.base_url.trim()}`;
+    }
+    return values;
+  };
+
+  function close() {
+    dialog.close();
+    dialog.remove();
+  }
+
+  // A result describes the values that were tested; once a field changes the
+  // banner goes, rather than vouching for something that was never checked.
+  let testedFor = null;
+  const clearStale = () => {
+    if (testedFor !== null && testedFor !== JSON.stringify(payload())) {
+      result.innerHTML = '';
+      testedFor = null;
+    }
+  };
+  form.addEventListener('input', clearStale);
+  form.addEventListener('change', clearStale);
+
+  dialog.querySelectorAll('[data-wiz=cancel]').forEach((b) => b.addEventListener('click', close));
+
+  dialog.querySelector('[data-wiz=test]').addEventListener('click', (event) => {
+    if (!form.reportValidity()) return;
+    error.textContent = '';
+    const values = payload();
+    busy(event.target, async () => {
+      result.innerHTML = '<div class="test-result pending"><strong>Testing the connection\u2026</strong><span>Nothing is saved yet.</span></div>';
+      const { name: _n, connection_kind: _k, auto_provision_employees: _p, ...probe } = values;
+      let outcome;
+      try {
+        outcome = await api.post('/sources/test', { ...probe, source_id: source.id });
+      } catch (e) {
+        if (e.status === 401) return;
+        outcome = { ok: false, message: e.message || 'The test could not run.' };
+      }
+      testedFor = JSON.stringify(values);
+      result.innerHTML = testResultHtml(outcome, false);
+      result.scrollIntoView({ block: 'nearest' });
+    });
+  });
+
+  dialog.querySelector('[data-wiz=save]').addEventListener('click', (event) => {
+    if (!form.reportValidity()) return;
+    error.textContent = '';
+    busy(event.target, async () => {
+      try {
+        await api.patch(`/sources/${source.id}`, payload());
+        // Re-check at once, so the status shown is about the values just
+        // saved rather than "unverified".
+        const outcome = await api.post(`/sources/${source.id}/test`);
+        close();
+        toast(outcome.message, outcome.ok ? 'ok' : 'bad');
+        if (outcome.ok && canProvision.has(provider)) await provisionAfterTest(source.id);
+      } catch (e) {
+        if (e.status !== 401) error.textContent = e.message || 'Could not save';
+        return;
+      }
+      await onDone();
+    });
+  });
+
+  dialog.addEventListener('cancel', (event) => {
+    event.preventDefault();
+    close();
+  });
+  dialog.addEventListener('click', (event) => {
+    if (event.target === dialog) close();
+  });
+
+  dialog.showModal();
+  (form.querySelector('input:not([type=hidden])') || dialog).focus();
+  return dialog;
+}
+
 const KIND_ICON = {
   // A server stack, and a single terminal — drawn inline, no assets.
   platform: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="4" y="3.5" width="16" height="7" rx="1.5"/><rect x="4" y="13.5" width="16" height="7" rx="1.5"/><path d="M8 7h.01M8 17h.01M12 7h4M12 17h4"/></svg>`,
@@ -1331,7 +1559,6 @@ function sourceCard(source, devices, readonly, canProvision = false, canImport =
   const kindLabel = source.provider === 'zk_adms' ? 'Cloud push device'
     : source.connection_kind === 'device' ? 'Standalone device' : 'Platform server';
   const providerLabel = PROVIDER_LABEL[source.provider];
-  const isEditing = editingSourceId === source.id;
   const isConfirming = confirmDeleteId === source.id;
 
   return `
@@ -1354,7 +1581,7 @@ function sourceCard(source, devices, readonly, canProvision = false, canImport =
         ${!readonly ? `
           <div class="actions">
             ${!isConfirming ? `<button type="button" class="sm link" data-remove="${esc(source.id)}">Remove</button>` : ''}
-            <button type="button" class="sm" data-edit="${esc(source.id)}">${isEditing ? 'Close' : 'Edit'}</button>
+            <button type="button" class="sm" data-edit="${esc(source.id)}">Edit</button>
             <button type="button" class="sm" data-test="${esc(source.id)}"
                     ${canProvision ? 'data-provision="1" title="Also creates Odoo employees who have a Badge ID or PIN and aren\'t on the device yet."' : ''}>Test connection</button>
             ${source.connection_kind === 'device' || !canImport ? ''
@@ -1374,7 +1601,6 @@ function sourceCard(source, devices, readonly, canProvision = false, canImport =
           <button type="button" class="sm link" data-remove-cancel="${esc(source.id)}">Cancel</button>
         </div>` : ''}
       ${source.status_message ? banner('Last error', source.status_message, 'bad') : ''}
-      ${!readonly && isEditing ? sourceFormHtml(source, source.connection_kind, [], undefined, canProvision) : ''}
 
       ${devices.length ? `
         <div class="scroll" style="margin-top:12px">
@@ -1813,23 +2039,15 @@ function statusRow(connection) {
       ? banner('Last error', connection.status_message, 'bad') : ''}`;
 }
 
-function wireBiometric(mount, providersFor, canProvision = new Set()) {
+function wireBiometric(mount, canProvision = new Set(), sources = [], providersFor) {
   $('#addConnection', mount)?.addEventListener('click', () => {
     openAddWizard({ providersFor, canProvision, onDone: () => renderBiometric(mount) });
   });
 
   mount.querySelectorAll('[data-edit]').forEach((button) => {
     button.addEventListener('click', () => {
-      const id = button.dataset.edit;
-      editingSourceId = editingSourceId === id ? null : id;
-      renderBiometric(mount);
-    });
-  });
-
-  mount.querySelectorAll('[data-cancel-form]').forEach((button) => {
-    button.addEventListener('click', () => {
-      editingSourceId = null;
-      renderBiometric(mount);
+      const source = sources.find((x) => x.id === button.dataset.edit);
+      if (source) openEditWizard({ source, canProvision, onDone: () => renderBiometric(mount) });
     });
   });
 

@@ -34,6 +34,7 @@ PLANS = [
         name="Starter",
         description="Small teams getting started: one device, hourly-or-slower sync.",
         monthly_price_cents=4900,
+        yearly_price_cents=49000,   # two months free
         max_employees=25,
         max_devices=1,
         min_sync_interval_minutes=60,
@@ -43,6 +44,7 @@ PLANS = [
         name="Growth",
         description="Growing teams on up to 5 devices, sync as often as every 15 minutes.",
         monthly_price_cents=14900,
+        yearly_price_cents=149000,
         max_employees=150,
         max_devices=5,
         min_sync_interval_minutes=15,
@@ -52,6 +54,7 @@ PLANS = [
         name="Scale",
         description="Large or multi-site operations: no employee or device cap, sync as often as every 5 minutes.",
         monthly_price_cents=39900,
+        yearly_price_cents=399000,
         max_employees=None,
         max_devices=None,
         min_sync_interval_minutes=5,
@@ -91,6 +94,10 @@ def main(argv: list[str] | None = None) -> int:
             price = os.environ.get(f"STRIPE_PRICE_{spec['name'].upper().replace(' ', '_')}")
             if price:
                 plan.stripe_price_id = price.strip()
+            # The yearly one: STRIPE_YEARLY_PRICE_STARTER=price_…
+            yearly = os.environ.get(f"STRIPE_YEARLY_PRICE_{spec['name'].upper().replace(' ', '_')}")
+            if yearly:
+                plan.stripe_yearly_price_id = yearly.strip()
         db.flush()
 
         # On --reset, PLANS is the source of truth for "which one is default";

@@ -123,12 +123,12 @@ def test_every_move_between_stages_is_recorded_in_order(client):  # noqa: F811
     staff = _staff(client)
     lead = _lead(client, staff)
     url = f"/api/v1/admin/contact-requests/{lead['id']}"
-    for stage in ("contacted", "qualified", "demo"):
+    for stage in ("contacted", "qualified", "won"):
         assert client.patch(url, headers=staff, json={"status": stage}).json()["status"] == stage
-    client.patch(url, headers=staff, json={"status": "demo", "notes": "same stage, new note"})
+    client.patch(url, headers=staff, json={"status": "won", "notes": "same stage, new note"})
     events = client.get(url + "/events", headers=staff).json()
     moves = [(e["from_stage"], e["to_stage"]) for e in reversed(events) if e["kind"] == "stage"]
-    assert moves == [(None, "new"), ("new", "contacted"), ("contacted", "qualified"), ("qualified", "demo")], \
+    assert moves == [(None, "new"), ("new", "contacted"), ("contacted", "qualified"), ("qualified", "won")], \
         "saving without changing the stage adds nothing to the history"
 
 
@@ -167,11 +167,11 @@ def test_the_pipeline_summary_counts_stages_and_conversion(client):  # noqa: F81
     rows = client.get("/api/v1/admin/contact-requests", headers=staff).json()
     ids = [r["id"] for r in rows]
     patch = lambda i, st: client.patch(f"/api/v1/admin/contact-requests/{ids[i]}", headers=staff, json={"status": st})  # noqa: E731
-    patch(0, "won"); patch(1, "lost"); patch(2, "demo")
+    patch(0, "won"); patch(1, "lost"); patch(2, "contacted")
     summary = client.get("/api/v1/admin/contact-requests/pipeline", headers=staff).json()
     by = {s["stage"]: s["count"] for s in summary["stages"]}
-    assert [s["stage"] for s in summary["stages"]] == ["new", "contacted", "demo", "qualified", "won", "lost"]
-    assert by == {"new": 1, "contacted": 0, "qualified": 0, "demo": 1, "won": 1, "lost": 1}
+    assert [s["stage"] for s in summary["stages"]] == ["new", "contacted", "qualified", "won", "lost"]
+    assert by == {"new": 1, "contacted": 1, "qualified": 0, "won": 1, "lost": 1}
     assert summary["open"] == 2 and summary["won"] == 1 and summary["lost"] == 1
     assert summary["conversion"] == 0.5, "won / (won + lost); leads still open do not count against it"
     assert summary["avg_days_to_win"] is not None
@@ -181,6 +181,39 @@ def test_the_old_status_names_are_refused(client):  # noqa: F811
     _signup(client)
     staff = _staff(client)
     lead = _lead(client, staff)
-    for old in ("demo_booked", "closed"):
+    for old in ("demo_booked", "closed", "demo"):
         assert client.patch(f"/api/v1/admin/contact-requests/{lead['id']}", headers=staff,
                             json={"status": old}).status_code == 422
+
+
+def test_a_demo_lead_gets_a_pending_demo_when_contacted_and_staff_move_it_on(client):  # noqa: F811
+    _signup(client)
+    staff = _staff(client)
+    lead = _lead(client, staff)                      # topic Demo
+    url = f"/api/v1/admin/contact-requests/{lead['id']}"
+    assert lead["demo_status"] is None
+    assert client.patch(url, headers=staff, json={"demo_status": "scheduled"}).status_code == 422, \
+        "no demo status before the lead has been contacted"
+    out = client.patch(url, headers=staff, json={"status": "contacted"}).json()
+    assert out["demo_status"] == "pending"
+    for st in ("scheduled", "completed"):
+        assert client.patch(url, headers=staff, json={"demo_status": st}).json()["demo_status"] == st
+    assert client.patch(url, headers=staff, json={"demo_status": "bogus"}).status_code == 422
+    out = client.patch(url, headers=staff, json={"status": "qualified"}).json()
+    assert out["demo_status"] == "completed", "the demo outcome stays on the lead after it moves on"
+    events = client.get(url + "/events", headers=staff).json()
+    demo = [(e["from_stage"], e["to_stage"]) for e in reversed(events) if e["kind"] == "demo"]
+    assert demo == [(None, "pending"), ("pending", "scheduled"), ("scheduled", "completed")]
+    out = client.patch(url, headers=staff, json={"demo_status": None}).json()
+    assert out["demo_status"] is None, "null clears it"
+
+
+def test_a_sales_question_gets_no_demo_unless_staff_add_one(client):  # noqa: F811
+    _signup(client)
+    staff = _staff(client)
+    lead = _lead(client, staff, topic="Sales question", preferred_date=None, preferred_window=None)
+    url = f"/api/v1/admin/contact-requests/{lead['id']}"
+    out = client.patch(url, headers=staff, json={"status": "contacted"}).json()
+    assert out["demo_status"] is None
+    out = client.patch(url, headers=staff, json={"demo_status": "scheduled"}).json()
+    assert out["demo_status"] == "scheduled"

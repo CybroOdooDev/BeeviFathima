@@ -863,7 +863,7 @@ a.stat-link:hover .stat-go { color: var(--accent); }
 .progress span { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
 .steps-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
 .steps-list li {
-  display: grid; grid-template-columns: 30px 1fr auto; gap: 12px; align-items: center;
+  display: grid; grid-template-columns: 30px 1fr; gap: 12px; align-items: center;
   padding: 10px 12px; border-radius: var(--radius);
 }
 .steps-list li.next { background: var(--accent-soft); }
@@ -877,6 +877,20 @@ a.stat-link:hover .stat-go { color: var(--accent); }
 .step-text strong { font-size: 13.5px; }
 .step-text span { font-size: 12.5px; color: var(--muted); }
 .steps-list li.done .step-text strong { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--faint); }
+/* The one way in: a pointer under "Start guided setup". */
+.setup-start { position: relative; }
+.setup-pointer {
+  position: absolute; z-index: 2; top: calc(100% + 12px); right: 0; width: max-content; max-width: 240px;
+  padding: 8px 12px; border-radius: var(--radius); background: var(--accent); color: var(--accent-ink);
+  font-size: 12.5px; font-weight: 550; line-height: 1.35; box-shadow: var(--shadow, 0 4px 14px rgba(0,0,0,.15));
+  animation: setup-nudge 1.8s ease-in-out infinite;
+}
+.setup-pointer-arrow {
+  position: absolute; top: -6px; right: 28px; width: 12px; height: 12px; background: var(--accent); transform: rotate(45deg);
+}
+@keyframes setup-nudge { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(4px); } }
+@media (prefers-reduced-motion: reduce) { .setup-pointer { animation: none; } }
+.steps-list li { cursor: default; }
 a.btn.primary-link { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 550; }
 @media (max-width: 560px) {
   .steps-list li { grid-template-columns: 26px 1fr; }
@@ -1396,5 +1410,45 @@ button.icon-btn:hover, button.icon-btn:focus-visible {
 .board-col { flex: 1 1 210px; min-width: 210px; }
 .wiz-step.sub { font-size: 12px; padding: 4px 8px; }
 .wiz-step.sub .wdot { width: 14px; height: 14px; border-width: 1.5px; font-size: 9px; }
-.bc-demo-badge { background: rgba(224, 144, 43, .16); color: #a8610c; font-weight: 600; }
 .board-col .board-drop { flex: 1; }
+
+/* Demo sub-stage: pills on cards, and the picker in the wizard. */
+.demo-pill { font-weight: 600; white-space: nowrap; }
+.demo-pill.pending { background: rgba(224, 144, 43, .16); color: #a8610c; }
+.demo-pill.scheduled { background: rgba(44, 155, 214, .16); color: #17709f; }
+.demo-pill.completed { background: rgba(31, 157, 107, .16); color: #137650; }
+.wiz-demo { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 20px; border-bottom: 1px solid var(--line, #e3e5ef); }
+.wiz-demo:empty { display: none; }
+.wiz-demo-label { font-weight: 600; font-size: 13px; }
+.seg { display: inline-flex; border: 1px solid var(--line, #d9dbe8); border-radius: 999px; overflow: hidden; }
+.seg-btn { border: 0; background: transparent; padding: 6px 14px; font: inherit; font-size: 13px; cursor: pointer; color: var(--muted); }
+.seg-btn + .seg-btn { border-left: 1px solid var(--line, #d9dbe8); }
+.seg-btn:hover { background: rgba(80, 70, 230, .08); }
+.seg-btn.on { color: #fff; font-weight: 600; }
+.seg-btn.pending.on { background: #e0902b; }
+.seg-btn.scheduled.on { background: #2c9bd6; }
+.seg-btn.completed.on { background: #1f9d6b; }
+
+/* List filters: a funnel button with a menu. */
+.flt-wrap { position: relative; margin-left: 8px; }
+.flt-btn { display: inline-flex; align-items: center; gap: 6px; }
+.flt-btn.on { border-color: var(--accent, #5046e5); color: var(--accent, #5046e5); }
+.flt-count { min-width: 18px; padding: 0 5px; border-radius: 999px; background: var(--accent, #5046e5); color: #fff; font-size: 11.5px; font-weight: 600; text-align: center; }
+.flt-menu { position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; width: 260px; padding: 14px; background: var(--card, #fff); border: 1px solid var(--line, #e3e5ef); border-radius: 12px; box-shadow: 0 12px 32px rgba(15, 15, 40, .18); }
+.flt-group { border: 0; margin: 0 0 12px; padding: 0; }
+.flt-group legend { font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 0; margin-bottom: 6px; }
+.flt-opt { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13.5px; cursor: pointer; }
+.flt-foot { border-top: 1px solid var(--line, #e3e5ef); padding-top: 10px; }
+.flt-menu .flt-opt { display: flex; flex-direction: row; justify-content: flex-start; align-items: center; gap: 10px; margin: 0; font-weight: 400; text-align: left; }
+.flt-menu .flt-opt input { width: auto; flex: 0 0 auto; margin: 0; }
+.flt-menu .flt-opt span { font-weight: 400; }
+.card.lead { cursor: pointer; transition: box-shadow .12s, border-color .12s; }
+.card.lead:hover, .card.lead:focus-visible { box-shadow: 0 6px 16px rgba(20, 20, 50, .10); outline: none; }
+
+/* Show / hide icon inside password fields (js/password-toggle.js). */
+.pw-wrap { position: relative; display: block; width: 100%; }
+.pw-wrap > input { width: 100%; padding-right: 44px; }
+.pw-toggle { position: absolute; top: 50%; right: 6px; transform: translateY(-50%); width: 32px; height: 32px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; box-shadow: none; }
+.pw-toggle:hover { color: var(--text, inherit); background: rgba(120, 120, 160, .12); }
+.pw-toggle:focus-visible { outline: 2px solid var(--accent, #5046e5); outline-offset: 1px; }
+.pw-toggle[aria-pressed="true"] { color: var(--accent, #5046e5); }

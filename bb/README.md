@@ -1241,6 +1241,34 @@ python3 tools/mock_biotime.py --port 8090 --punches punches.json
 python3 tools/mock_biotime.py --host 0.0.0.0 --port 8090   # BioBridge elsewhere
 ```
 
+#### Live punches (simulation)
+
+A generated file is a snapshot: once a sync has passed it, re-running the
+generator produces punches **older than the sync's cursor** and ids BioBridge
+has **already stored**, and both are skipped without a word. For a stream that
+always has something new, let the mock produce punches itself:
+
+```bash
+python3 tools/mock_biotime.py --company 4 --port 8007 --tz Asia/Kolkata --simulate --interval 20
+curl -X POST localhost:8007/mock/punch -d '{"emp_code": "5"}'                 # toggles in / out
+curl -X POST localhost:8007/mock/punch -d '{"emp_code": "5", "state": "out"}'
+curl localhost:8007/mock/state                                                # who is in / out
+```
+
+`--simulate` makes a random employee clock in or out *now* every `--interval`
+seconds (`--burst N` for more per tick), alternating in / out per person. Ids
+continue from the file's highest, starting from the current epoch second for an
+empty file, so deleting or regenerating the file never reuses one.
+`generate_punches.py` likewise continues the ids of the file it replaces.
+The roster is cached per company id in `roster_company<id>.json`, tagged with the
+Odoo server it came from; pointing the tools at a different Odoo (`--odoo-url`/
+`--odoo-db`, or a different saved connection) reads the roster afresh instead of
+serving the old one. `punches.json` is separate — start with `--reset-punches` (or a
+new `--punches` file) after switching Odoo, or the old people's punches are still
+served. `--tz` must match the connection's Server Timezone. Overlaps are still Odoo's to
+refuse: a simulated stream never overlaps itself, but it can collide with
+attendance records already in Odoo for the same time.
+
 It runs in the foreground and dies with its terminal. If a sync that was working
 starts refusing connections after you close a shell or reboot, that is why —
 `nohup`, `tmux`, or a systemd unit alongside `deploy/biobridge.service`.
@@ -1755,8 +1783,9 @@ use a simulated service. **Not yet run against a live CrossChex Cloud account.**
 ## Lead pipeline
 
 Website enquiries (`contact_request`) are worked as a pipeline in the staff
-console (Platform → Leads): **New → Contacted → Qualified → Demo → Won / Lost**.
-A board (drag a card to a column) and a list share one API.
+console (Platform → Leads): **New → Contacted → Qualified → Won / Lost**.
+A board (drag a card to a column) and a list (with a filter menu: stage, demo
+status, clear all) share one API. Clicking a lead opens a wizard with a status bar.
 
 - `contact_request.status` holds the stage (`PIPELINE_STAGES` in
   `app/models/contact.py`); `stage_changed_at` says how long a lead has sat
@@ -1768,7 +1797,17 @@ A board (drag a card to a column) and a list share one API.
 - API (all staff-only): `GET /admin/contact-requests[?status=open|<stage>]`,
   `GET /admin/contact-requests/pipeline` (count per stage, open, won, lost,
   conversion = won ÷ (won + lost), average days new → won),
-  `PATCH /admin/contact-requests/{id}` (`status`, `notes`, `lost_reason`),
+  `PATCH /admin/contact-requests/{id}` (`status`, `demo_status`, `notes`, `lost_reason`),
   `GET|POST /admin/contact-requests/{id}/events`.
 - Migration `0004` renames the old statuses (`demo_booked` → `demo`,
   `closed` → `lost`) and gives every existing lead an opening history entry.
+- **Demo is a sub-stage of Contacted**, not a stage: `contact_request.demo_status`
+  is `pending`, `scheduled` or `completed` (or null). A lead that asked for a
+  demo (topic Demo, or a preferred date) gets `pending` automatically when it
+  is first moved to Contacted; staff change it in the wizard (click the active
+  choice to clear it). It cannot be set while the lead is still New, and it
+  stays on the lead after it moves on. Each change is a `demo` entry in the
+  history. It shows as a pill on board cards and in the list.
+- Migration `0006` gives already-contacted/qualified demo leads a `pending` demo.
+- Migration `0005` adds `demo_status` and turns leads that sat in the old
+  `demo` stage into Contacted with `demo_status = scheduled`.

@@ -63,6 +63,13 @@
       </select>
       <span class="field-note" id="planNote"></span>
     </label>
+    <label class="field">Billing
+      <select name="billing" id="billingSelect">
+        <option value="month" selected>Pay monthly</option>
+        <option value="year">Pay yearly</option>
+      </select>
+      <span class="field-note" id="billingNote"></span>
+    </label>
     <div class="grid cols-2" style="gap:16px">
       <label class="field">Company Name<input type="text" name="company_name" autocomplete="organization" required minlength="2"></label>
       <label class="field">Your Name<input type="text" name="full_name" autocomplete="name"></label>

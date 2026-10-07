@@ -76,7 +76,8 @@ def _sync_stripe_price(db: Session, tenant: Tenant, plan_id: str | None) -> None
     if not (billing.enabled() and tenant.stripe_subscription_id and plan_id):
         return
     plan = db.get(SubscriptionPlan, plan_id)
-    if plan is None or not plan.stripe_price_id:
+    price_id = plan.price_id_for(tenant.billing_interval) if plan else None
+    if plan is None or not price_id:
         db.rollback()
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
@@ -84,7 +85,7 @@ def _sync_stripe_price(db: Session, tenant: Tenant, plan_id: str | None) -> None
         )
     try:
         billing.set_subscription_price(
-            billing.retrieve_subscription(tenant.stripe_subscription_id), plan.stripe_price_id
+            billing.retrieve_subscription(tenant.stripe_subscription_id), price_id
         )
     except billing.BillingError as exc:
         db.rollback()

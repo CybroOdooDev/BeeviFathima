@@ -46,6 +46,7 @@ class PendingSignup(Base, UUIDPk, Timestamped):
     full_name: Mapped[str | None] = mapped_column(String(120))
     timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="UTC")
     plan_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    billing_interval: Mapped[str] = mapped_column(String(5), default="month", server_default="month")
     #: Set when the webhook made the account, so a replayed event is a no-op.
     tenant_id: Mapped[str | None] = mapped_column(String(32))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

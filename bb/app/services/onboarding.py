@@ -109,12 +109,13 @@ def create_account(
     timezone_name: str,
     plan: SubscriptionPlan | None,
     paid: bool,
+    billing_interval: str = "month",
 ) -> tuple[Tenant, User]:
     """A tenant and its owner, the owner with no usable password yet."""
     interval = settings.default_sync_interval_minutes
     if plan and plan.min_sync_interval_minutes:
         interval = max(interval, plan.min_sync_interval_minutes)
-    days = settings.billing_period_days if paid else settings.trial_days
+    days = (365 if billing_interval == "year" else settings.billing_period_days) if paid else settings.trial_days
     tenant = Tenant(
         name=company_name.strip(),
         slug=_unique_slug(db, _slugify(company_name)),
@@ -122,6 +123,7 @@ def create_account(
         timezone=timezone_name,
         sync_interval_minutes=interval,
         plan_id=plan.id if plan else None,
+        billing_interval=billing_interval,
         subscription_renews_at=datetime.now(timezone.utc) + timedelta(days=days),
     )
     db.add(tenant)
@@ -226,7 +228,7 @@ def complete_paid_signup(db: Session, pending_id: str, session: dict[str, Any]) 
         tenant, user = create_account(
             db, company_name=pending.company_name, email=pending.email,
             full_name=pending.full_name, timezone_name=pending.timezone,
-            plan=plan, paid=True,
+            plan=plan, paid=True, billing_interval=pending.billing_interval or "month",
         )
         # Issued now, mailed only once the webhook's transaction has
         # committed (see after_commit_mail): if anything after this point

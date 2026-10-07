@@ -119,3 +119,20 @@ def test_a_staff_created_account_starts_inside_its_plan(api):
     }, headers=head(staff))
     assert made.status_code in (200, 201), made.text
     assert made.json()["tenant"]["sync_interval_minutes"] == 60
+
+
+def test_staff_can_set_a_yearly_price_and_its_stripe_link(api):
+    customer, staff = a_customer_and_staff(api)
+    made = api.post(PLANS, json={"name": "Yr", "monthly_price_cents": 1000, "yearly_price_cents": 10000,
+                                 "stripe_yearly_price_id": "price_yr"}, headers=head(staff))
+    assert made.status_code == 201, made.text
+    plan = made.json()
+    assert plan["yearly_price_cents"] == 10000 and plan["stripe_yearly_price_id"] == "price_yr"
+    public = [p for p in api.get("/api/v1/auth/plans").json() if p["id"] == plan["id"]]
+    assert public[0]["yearly_price_cents"] == 10000
+    assert "stripe_yearly_price_id" not in public[0], "customers never see the Stripe link"
+
+    cleared = api.patch(f"{PLANS}/{plan['id']}", json={"stripe_yearly_price_id": ""}, headers=head(staff))
+    assert cleared.json()["stripe_yearly_price_id"] is None
+    assert api.post(PLANS, json={"name": "Bad", "stripe_yearly_price_id": "prod_1"},
+                    headers=head(staff)).status_code == 422

@@ -47,6 +47,9 @@ class RichStripe(FakeStripe):
             sub = self.subscriptions[path.split("/", 1)[1]]
             sub["cancel_at_period_end"] = data["cancel_at_period_end"]
             return sub
+        if method == "DELETE" and path.startswith("subscriptions/"):
+            self.calls.append((method, path, data or {}))
+            return {"id": path.split("/", 1)[1], "status": "canceled"}
         if path == "prices" or path.startswith("prices/"):
             self.calls.append((method, path, data or {}))
             if path == "prices":
@@ -217,3 +220,28 @@ def test_requests_reach_stripe_form_encoded(monkeypatch):
     assert post.content == b"line_items%5B0%5D%5Bprice%5D=price_1&line_items%5B0%5D%5Bquantity%5D=1&allow_promotion_codes=true"
     billing._request("GET", "invoices", {"customer": "cus_1", "expand": ["data.x"]})
     assert seen[-1].url.params["customer"] == "cus_1" and seen[-1].url.params["expand[0]"] == "data.x"
+
+
+def test_cancel_now_ends_the_plan_but_keeps_the_account(client, rich):
+    headers = _subscribed(client, rich)
+    r = client.post("/api/v1/billing/cancel", json={"when": "now"}, headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "cancelled"
+    assert ("DELETE", "subscriptions/sub_1", {}) in rich.calls
+    tenant = _tenant(client)
+    assert tenant.status == "cancelled" and tenant.stripe_subscription_id is None
+    # The account and its login are still there.
+    assert client.get("/api/v1/tenant", headers=headers).status_code == 200
+    # Ending it twice is refused rather than silently repeated.
+    assert client.post("/api/v1/billing/cancel", json={"when": "now"}, headers=headers).status_code == 400
+
+
+def test_a_trial_without_stripe_can_be_discontinued(client, rich):
+    headers = _signup(client)
+    assert _tenant(client).stripe_subscription_id is None
+    r = client.post("/api/v1/billing/cancel", json={"when": "now"}, headers=headers)
+    assert r.status_code == 200, r.text
+    assert _tenant(client).status == "cancelled"
+    assert not [c for c in rich.calls if c[0] == "DELETE"]   # nothing to cancel at Stripe
+    # Cancelling at the period end still needs a subscription.
+    assert client.post("/api/v1/billing/cancel", headers=headers).status_code == 400

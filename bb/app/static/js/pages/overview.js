@@ -1,6 +1,7 @@
 /* Overview: is it working, what needs attention, and the Sync now button. */
 
 import { api, auth } from '../api.js';
+import { pairingReviewed } from '../setup-state.js';
 import {
   $, banner, busy, empty, esc, fmtAgo, fmtIn, guard, loading, pill, stat, fmtUtc,
 } from '../ui.js';
@@ -73,9 +74,9 @@ function scheduleCard(schedule, needsSetup) {
     </div>`;
 }
 
-/* Getting started: the four things between signing up and attendance
- * arriving in Odoo, in order, each with the button that does it. Shown until
- * the first three are done — the fourth (matching badges) keeps coming back as
+/* Getting started: the five things between signing up and attendance
+ * arriving in Odoo, in order, each done from the guided setup (the one button above). Shown until
+ * the first four are done — the fifth (matching badges) keeps coming back as
  * new people punch, and has its own banner for that. */
 function setupChecklist({ health, devices, run, unmapped }) {
   const connected = (state) => state && state !== 'missing';
@@ -84,28 +85,30 @@ function setupChecklist({ health, devices, run, unmapped }) {
       done: connected(health.odoo),
       title: 'Connect Odoo',
       body: 'Where attendance is written. You need the server URL, database, login and an API key.',
-      action: { href: '#/get-started?step=1', label: 'Connect Odoo' },
     },
     {
       done: connected(health.source),
       title: 'Add a biometric connection',
       body: 'A BioTime server, or a device by its IP address.',
-      action: { href: '#/get-started?step=2', label: 'Add connection' },
+    },
+    {
+      // Every account has working defaults; "done" = someone looked, or it was already syncing.
+      done: pairingReviewed() || Boolean(run),
+      title: 'Pairing Rules',
+      body: 'How punches become check-ins and check-outs. The defaults suit most sites.',
     },
     {
       done: Boolean(run),
       title: 'Run the first sync',
       body: 'Pulls punches and writes attendance. After this it runs on its own schedule.',
-      action: { href: '#/get-started?step=3', label: 'Run first sync' },
     },
     {
       done: Boolean(run) && unmapped === 0,
       title: 'Match any unknown badges',
       body: 'Badges no Odoo employee carries yet are held until they are matched.',
-      action: { href: '#/get-started?step=4', label: 'Match badges' },
     },
   ];
-  if (steps.slice(0, 3).every((s) => s.done)) return '';
+  if (steps.slice(0, 4).every((s) => s.done)) return '';
   const next = steps.findIndex((s) => !s.done);
   const doneCount = steps.filter((s) => s.done).length;
   return `
@@ -113,8 +116,12 @@ function setupChecklist({ health, devices, run, unmapped }) {
       <div class="card-head">
         <h2>Get set up <span class="hint">${doneCount} of ${steps.length} done</span></h2>
         <div class="row" style="gap:12px;flex-wrap:nowrap">
-          <div class="progress" aria-hidden="true"><span style="width:${(doneCount / steps.length) * 100}%"></span></div>
-          ${auth.canWrite ? `<a class="btn primary-link sm" href="#/get-started">${doneCount ? 'Continue guided setup' : 'Start guided setup'}</a>` : ''}
+          ${doneCount ? `<div class="progress" aria-hidden="true"><span style="width:${(doneCount / steps.length) * 100}%"></span></div>` : ''}
+          ${auth.canWrite ? `<div class="setup-start">
+            <a class="btn primary-link sm" href="#/get-started">${doneCount ? 'Continue guided setup' : 'Start guided setup'}</a>
+            <div class="setup-pointer" role="note"><span class="setup-pointer-arrow" aria-hidden="true"></span>${
+              doneCount ? 'Continue setup' : 'Start here'}</div>
+          </div>` : ''}
         </div>
       </div>
       <ol class="steps-list">
@@ -122,10 +129,6 @@ function setupChecklist({ health, devices, run, unmapped }) {
           <li class="${s.done ? 'done' : i === next ? 'next' : ''}">
             <span class="step-mark">${s.done ? '✓' : i + 1}</span>
             <div class="step-text"><strong>${esc(s.title)}</strong><span>${esc(s.body)}</span></div>
-            ${!s.done && auth.canWrite ? (s.action.sync
-              ? `<button class="${i === next ? 'primary' : ''} sm" data-checklist-sync="1" ${
-                  !connected(health.odoo) || !connected(health.source) ? 'disabled' : ''}>${esc(s.action.label)}</button>`
-              : `<a class="btn sm${i === next ? ' primary-link' : ''}" href="${esc(s.action.href)}">${esc(s.action.label)}</a>`) : ''}
           </li>`).join('')}
       </ol>
     </div>`;
@@ -233,7 +236,6 @@ export async function render(mount) {
   `;
 
   // The checklist's "Sync now" is the top bar's, pressed from here.
-  mount.querySelector('[data-checklist-sync]')?.addEventListener('click', () => $('#topSync')?.click());
 
   const button = $('#syncNow', mount);
   if (button) {

@@ -44,6 +44,15 @@ assets/
    if the app can't be reached. "Buy now" appears only for plans with a
    Stripe Price set (Platform → Plans in the staff console).
 
+## Monthly and yearly billing
+
+The pricing page has a Monthly / Yearly switch, and the sign-up form has a
+**Pay Monthly / Pay Yearly** choice (`?billing=year` preselects it). Yearly
+prices come from the app's plans (`yearly_price_cents`); a plan with no yearly
+price stays monthly-only, and Yearly "buy now" appears only once the plan also
+has a yearly Stripe Price. Set both in the staff console under Platform → Plans.
+A free trial remembers the choice and bills that way when the account buys.
+
 ## How registration works
 
 - **Free trial** — the form creates the account (no card) and sends a

@@ -50,6 +50,9 @@ class Roster:
     employees: list[dict] = field(default_factory=list)
     terminals: list[dict] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)  # names with no badge/PIN
+    #: The Odoo server this roster was read from: {"url": ..., "db": ...}. Kept so
+    #: a cached roster is never served for a different Odoo.
+    odoo: dict | None = None
 
     @property
     def emp_codes(self) -> list[str]:
@@ -62,7 +65,7 @@ class Roster:
     def to_json(self) -> dict:
         return {"company_id": self.company_id, "company_name": self.company_name,
                 "departments": self.departments, "employees": self.employees,
-                "terminals": self.terminals, "skipped": self.skipped}
+                "terminals": self.terminals, "skipped": self.skipped, "odoo": self.odoo}
 
 
 def add_odoo_arguments(parser) -> None:
@@ -129,16 +132,24 @@ def _saved_connection(tenant_slug: str | None):
         return None
 
 
-def odoo_client(args, company_id: int | None):
-    """An OdooClient scoped to ``company_id``, or None when no login is known."""
-    creds = None
-    if args.odoo_url and args.odoo_db and args.odoo_user and args.odoo_key:
-        creds = (args.odoo_url, args.odoo_db, args.odoo_user, args.odoo_key)
-    elif any((args.odoo_url, args.odoo_db, args.odoo_user, args.odoo_key)):
+def odoo_login(args):
+    """(url, db, user, key) from the flags / environment / saved connection, or None."""
+    given = tuple(getattr(args, name, None) for name in ("odoo_url", "odoo_db", "odoo_user", "odoo_key"))
+    if all(given):
+        return given
+    if any(given):
         raise SystemExit("Pass all four of --odoo-url, --odoo-db, --odoo-user and --odoo-key "
                          "(or the ODOO_* environment variables), or none of them.")
-    else:
-        creds = _saved_connection(getattr(args, "tenant", None))
+    return _saved_connection(getattr(args, "tenant", None))
+
+
+def _server_of(creds) -> dict:
+    return {"url": str(creds[0]).rstrip("/").lower(), "db": str(creds[1])}
+
+
+def odoo_client(args, company_id: int | None):
+    """An OdooClient scoped to ``company_id``, or None when no login is known."""
+    creds = odoo_login(args)
     if creds is None:
         return None
     from app.integrations.odoo import OdooClient, OdooCredentials
@@ -208,14 +219,26 @@ def _from_fixture(company_id: int) -> Roster | None:
 def load_roster(args, company_id: int, *, directory: Path | None = None) -> Roster:
     """``company_id``'s roster: the cache, else Odoo (then cached), else a fixture."""
     path = roster_path(company_id, directory)
+    login = odoo_login(args)
     if path.exists() and not getattr(args, "refresh_roster", False):
         data = json.loads(path.read_text())
-        return Roster(data["company_id"], data.get("company_name", ""), "cache", data.get("departments", []),
-                      data["employees"], data.get("terminals") or terminals_for(company_id),
-                      data.get("skipped", []))
+        cached_for = data.get("odoo")
+        if login is not None and cached_for != _server_of(login):
+            # The cache is keyed by company id alone, and ids repeat across Odoo
+            # servers (company 1 is everyone's first company). Serving it for a
+            # different Odoo would hand out another database's employees.
+            before = f"{cached_for['url']} / {cached_for['db']}" if cached_for else "an unrecorded Odoo"
+            print(f"  ignoring {path.name}: it was read from {before}, not "
+                  f"{_server_of(login)['url']} / {_server_of(login)['db']} — reading the roster again",
+                  file=sys.stderr)
+        else:
+            return Roster(data["company_id"], data.get("company_name", ""), "cache", data.get("departments", []),
+                          data["employees"], data.get("terminals") or terminals_for(company_id),
+                          data.get("skipped", []), cached_for)
     client = odoo_client(args, company_id)
     if client is not None:
         roster = _from_odoo(client, company_id)
+        roster.odoo = _server_of(login) if login else None
         if not roster.employees:
             raise SystemExit(
                 f"Company {company_id} ({roster.company_name}) has no active employee with a Badge ID, "

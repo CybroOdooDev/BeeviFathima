@@ -13,8 +13,11 @@ from app.db.base import Base, Timestamped, UUIDPk
 #: "lost" are the two ways out. Moving between stages is free in either
 #: direction (a lead that goes quiet can be moved back) — every move is
 #: recorded in ContactEvent, which is what makes the history trustworthy.
-PIPELINE_STAGES = ("new", "contacted", "demo", "qualified", "won", "lost")
-OPEN_STAGES = ("new", "contacted", "demo", "qualified")
+PIPELINE_STAGES = ("new", "contacted", "qualified", "won", "lost")
+OPEN_STAGES = ("new", "contacted", "qualified")
+#: Demo is not a stage but a sub-stage of "contacted": where a demo the lead
+#: asked for has got to. It is only meaningful once the lead has been contacted.
+DEMO_STATUSES = ("pending", "scheduled", "completed")
 CONTACT_STATUSES = PIPELINE_STAGES
 
 
@@ -51,6 +54,8 @@ class ContactRequest(Base, UUIDPk, Timestamped):
     status: Mapped[str] = mapped_column(String(20), default="new", server_default="new", nullable=False)
     #: When the lead last changed stage — how long it has sat where it is.
     stage_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: Demo sub-stage (see DEMO_STATUSES); null when no demo is in play.
+    demo_status: Mapped[str | None] = mapped_column(String(12))
     #: Why a lead was lost ("too expensive", "chose a competitor"), when known.
     lost_reason: Mapped[str | None] = mapped_column(String(160))
     #: Staff's own notes — "called Tuesday, wants Hikvision support".
@@ -67,7 +72,7 @@ class ContactEvent(Base, UUIDPk, Timestamped):
     contact_id: Mapped[str] = mapped_column(
         ForeignKey("contact_request.id", ondelete="CASCADE"), nullable=False
     )
-    #: "stage" (moved between stages) or "note".
+    #: "stage" (moved between stages), "demo" (demo sub-stage changed) or "note".
     kind: Mapped[str] = mapped_column(String(10), nullable=False)
     from_stage: Mapped[str | None] = mapped_column(String(20))
     to_stage: Mapped[str | None] = mapped_column(String(20))
