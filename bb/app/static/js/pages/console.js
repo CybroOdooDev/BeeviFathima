@@ -6,15 +6,15 @@
  * Configure row (#/platform?open=<id>). */
 
 import { api } from '../api.js';
-import { banner, empty, esc, fmtAgo, fmtIn, loading, pill, stat } from '../ui.js';
+import { banner, empty, esc, fmtAgo, fmtIn, loading, pill, stat, triggerLabel } from '../ui.js';
 
 const money = (cents) => `$${Math.round((cents || 0) / 100).toLocaleString()}`;
 const n = (value) => Number(value || 0).toLocaleString();
 
 const STATUS_ORDER = [
-  { key: 'active', label: 'Active (paying)', tone: 'ok' },
+  { key: 'active', label: 'Active (Paying)', tone: 'ok' },
   { key: 'trialing', label: 'Trialing', tone: 'accent' },
-  { key: 'past_due', label: 'Past due', tone: 'warn' },
+  { key: 'past_due', label: 'Past Due', tone: 'warn' },
   { key: 'suspended', label: 'Suspended', tone: 'bad' },
   { key: 'cancelled', label: 'Cancelled', tone: 'mute' },
 ];
@@ -73,7 +73,7 @@ function punchChart(series) {
       ${xLabels}
     </svg>
     <details class="table-view">
-      <summary>Show as a table</summary>
+      <summary>Show As A Table</summary>
       <table><thead><tr><th>Day</th><th class="num">Punches</th></tr></thead><tbody>
         ${series.map((d) => `<tr><td>${esc(label(d.day))}</td><td class="num">${esc(n(d.punches))}</td></tr>`).join('')}
       </tbody></table>
@@ -104,8 +104,8 @@ export async function renderConsoleOverview(mount) {
 
   mount.innerHTML = `
     ${o.scheduler.running ? '' : banner(
-      'The scheduler is not running',
-      'No account is syncing automatically right now'
+      'The Scheduler Is Not Running',
+      'No Account Is Syncing Automatically Right Now'
         + (o.scheduler.last_tick_at ? ` — the last tick was ${fmtAgo(o.scheduler.last_tick_at)}.` : '.')
         + ' Customers can still press Sync now.',
       'bad')}
@@ -115,30 +115,30 @@ export async function renderConsoleOverview(mount) {
       ${stat({ label: 'Paying', value: n(o.revenue.paying), note: `${money(o.revenue.mrr_cents)} a month`, href: '#/platform' })}
       ${stat({ label: 'Trialing', value: n(trialing), note: `${n(o.renewals.length)} renew in the next 14 days`, href: '#/platform' })}
       ${stat({
-        label: 'Need attention', value: n(o.attention_total),
+        label: 'Need Attention', value: n(o.attention_total),
         tone: o.attention.some((x) => x.severity >= 3) ? 'bad' : o.attention_total ? 'warn' : '',
         note: o.attention_total ? 'see the list below' : 'nothing waiting', href: '#/console#attention',
       })}
     </div>
 
     <div class="grid cols-4" style="margin-bottom:18px">
-      ${stat({ label: 'Punches today', value: n(o.activity.punches_today), note: `${n(o.activity.punches_period)} in ${o.punches_by_day.length} days` })}
+      ${stat({ label: 'Punches Today', value: n(o.activity.punches_today), note: `${n(o.activity.punches_period)} in ${o.punches_by_day.length} days` })}
       ${stat({
         label: 'Syncs, last 24 h', value: n(runs.success + runs.partial + runs.failed),
         tone: runs.failed ? 'warn' : '',
         note: runs.failed ? `${n(runs.failed)} failed · ${n(runs.success)} succeeded` : `${n(runs.success)} succeeded`,
       })}
-      ${stat({ label: 'Punches stuck in error', value: n(o.activity.error_punches), tone: o.activity.error_punches ? 'bad' : '' })}
-      ${stat({ label: 'Badges not matched', value: n(o.activity.unmatched_badges), tone: o.activity.unmatched_badges ? 'warn' : '' })}
+      ${stat({ label: 'Punches Stuck In Error', value: n(o.activity.error_punches), tone: o.activity.error_punches ? 'bad' : '' })}
+      ${stat({ label: 'Badges Not Matched', value: n(o.activity.unmatched_badges), tone: o.activity.unmatched_badges ? 'warn' : '' })}
     </div>
 
     <div class="grid console-grid" style="margin-bottom:18px">
       <div class="card">
-        <h2>Punches per day <span class="hint">every account, last ${o.punches_by_day.length} days (UTC)</span></h2>
+        <h2>Punches Per Day <span class="hint">every account, last ${o.punches_by_day.length} days (UTC)</span></h2>
         ${punchChart(o.punches_by_day)}
       </div>
       <div class="card">
-        <h2>Accounts by status <span class="hint">${n(a.total)} total</span></h2>
+        <h2>Accounts By Status <span class="hint">${n(a.total)} total</span></h2>
         ${statusBar(a.by_status, a.total)}
         <h3 class="sub-h">Set-up</h3>
         <ul class="legend">
@@ -146,7 +146,7 @@ export async function renderConsoleOverview(mount) {
           <li><span class="swatch warn"></span>Half connected<b>${n(o.setup.partial)}</b></li>
           <li><span class="swatch mute"></span>Nothing connected<b>${n(o.setup.none)}</b></li>
         </ul>
-        <h3 class="sub-h">Sync health</h3>
+        <h3 class="sub-h">Sync Health</h3>
         <ul class="legend">
           <li><span class="swatch bad"></span>Last sync failed<b>${n(o.health.failing)}</b></li>
           <li><span class="swatch warn"></span>Backed off<b>${n(o.health.backed_off)}</b></li>
@@ -157,7 +157,7 @@ export async function renderConsoleOverview(mount) {
 
     <div class="grid cols-2" style="margin-bottom:18px">
       <div class="card" id="attention">
-        <h2>Needs attention <span class="hint">${o.attention_total > o.attention.length
+        <h2>Needs Attention <span class="hint">${o.attention_total > o.attention.length
           ? `the ${o.attention.length} most urgent of ${n(o.attention_total)}` : n(o.attention_total)}</span></h2>
         ${o.attention.length ? `
           <ul class="item-list">
@@ -169,11 +169,11 @@ export async function renderConsoleOverview(mount) {
                 </div>
                 <a class="btn sm" href="#/platform?open=${esc(x.id)}">Open</a>
               </li>`).join('')}
-          </ul>` : empty('Nothing needs attention', 'Every account is connected, syncing, and paid up.')}
+          </ul>` : empty('Nothing Needs Attention', 'Every account is connected, syncing, and paid up.')}
       </div>
 
       <div class="card">
-        <h2>Renewing in the next 14 days <span class="hint">${n(o.renewals.length)}</span></h2>
+        <h2>Renewing In The Next 14 Days <span class="hint">${n(o.renewals.length)}</span></h2>
         ${o.renewals.length ? `
           <ul class="item-list">
             ${o.renewals.map((r) => `
@@ -184,7 +184,7 @@ export async function renderConsoleOverview(mount) {
                 </div>
                 <a class="btn sm" href="#/platform?open=${esc(r.id)}">Open</a>
               </li>`).join('')}
-          </ul>` : empty('No renewals coming up', 'Nothing renews in the next two weeks.')}
+          </ul>` : empty('No Renewals Coming Up', 'Nothing renews in the next two weeks.')}
       </div>
     </div>
 
@@ -209,18 +209,18 @@ export async function renderConsoleOverview(mount) {
       </div>
 
       <div class="card">
-        <h2>Recent failed syncs <span class="hint">employee names removed</span></h2>
+        <h2>Recent Failed Syncs <span class="hint">Employee Names Removed</span></h2>
         ${o.failed_runs.length ? `
           <ul class="item-list">
             ${o.failed_runs.map((r) => `
               <li>
                 <div class="item-main">
-                  <strong>${esc(r.tenant_name)}</strong> <span class="hint">${esc(fmtAgo(r.started_at))} · ${esc(r.triggered_by)}</span>
+                  <strong>${esc(r.tenant_name)}</strong> <span class="hint">${esc(fmtAgo(r.started_at))} · ${esc(triggerLabel(r.triggered_by))}</span>
                   <div class="hint clamp">${esc(r.message || 'No message recorded.')}</div>
                 </div>
                 <a class="btn sm" href="#/platform?open=${esc(r.tenant_id)}">Open</a>
               </li>`).join('')}
-          </ul>` : empty('No failed syncs', 'Nothing has failed recently.')}
+          </ul>` : empty('No Failed Syncs', 'Nothing has failed recently.')}
       </div>
     </div>`;
 

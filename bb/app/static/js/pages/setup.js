@@ -22,7 +22,7 @@ export async function render(mount) {
     ${readonly ? banner('Read-only', 'Your role cannot change connections.', 'warn') : ''}
 
     <div class="card" style="margin-bottom:14px">
-      <h2>Odoo <span class="hint">where attendance is written</span></h2>
+      <h2>Odoo <span class="hint">Where Attendance Is Written</span></h2>
       ${odoo ? statusRow(odoo) : ''}
       <form id="odooForm" ${readonly ? 'inert' : ''}>
         ${field({
@@ -45,14 +45,14 @@ export async function render(mount) {
             : 'Odoo → Preferences → Account Security → New API Key.',
         })}
         <div class="row">
-          <button class="primary" id="saveOdoo">${odoo ? 'Save changes' : 'Connect Odoo'}</button>
-          ${odoo ? '<button type="button" id="testOdoo">Test connection</button>' : ''}
+          <button class="primary" id="saveOdoo">${odoo ? 'Save Changes' : 'Connect Odoo'}</button>
+          ${odoo ? '<button type="button" id="testOdoo">Test Connection</button>' : ''}
         </div>
       </form>
     </div>
 
     <div class="card" style="margin-bottom:14px">
-      <h2>Device platform <span class="hint">where punches come from</span></h2>
+      <h2>Device Platform <span class="hint">Where Punches Come From</span></h2>
       ${source ? statusRow(source) : ''}
       <form id="sourceForm" ${readonly ? 'inert' : ''}>
         ${providers.length > 1 && !source ? field({
@@ -81,8 +81,8 @@ export async function render(mount) {
           help: 'BioTime 8.5+ usually needs jwt; older builds use token.',
         })}
         <div class="row">
-          <button class="primary" id="saveSource">${source ? 'Save changes' : 'Connect platform'}</button>
-          ${source ? '<button type="button" id="testSource">Test connection</button>' : ''}
+          <button class="primary" id="saveSource">${source ? 'Save Changes' : 'Connect Platform'}</button>
+          ${source ? '<button type="button" id="testSource">Test Connection</button>' : ''}
         </div>
       </form>
     </div>
@@ -92,7 +92,7 @@ export async function render(mount) {
       ${devices.length ? `
         <div class="scroll">
           <table>
-            <thead><tr><th>Device</th><th>Serial</th><th>IP</th><th class="num">Punches</th><th>Last seen</th><th>Pairing</th><th></th></tr></thead>
+            <thead><tr><th>Device</th><th>Serial</th><th>IP</th><th class="num">Punches</th><th>Last Seen</th><th>Pairing</th><th></th></tr></thead>
             <tbody>
               ${devices.map((d) => `
                 <tr data-device="${esc(d.id)}">
@@ -109,10 +109,10 @@ export async function render(mount) {
                 </tr>`).join('')}
             </tbody>
           </table>
-        </div>` : empty('No terminals yet', 'Import them from the platform once it is connected.')}
+        </div>` : empty('No Terminals Yet', 'Import them from the platform once it is connected.')}
       ${source && auth.canWrite ? `
         <div class="row" style="margin-top:14px">
-          <button id="discover">Import terminals</button>
+          <button id="discover">Import Terminals</button>
         </div>` : ''}
     </div>`;
 
@@ -128,7 +128,7 @@ export async function render(mount) {
         if (odoo) await api.patch(`/odoo-connections/${odoo.id}`, values);
         else await api.post('/odoo-connections', values);
         await render(mount);
-      }, 'Odoo connection saved')
+      }, 'Odoo Connection Saved')
     );
   });
 
@@ -152,7 +152,7 @@ export async function render(mount) {
         if (source) await api.patch(`/sources/${source.id}`, values);
         else await api.post('/sources', values);
         await render(mount);
-      }, 'Device platform saved')
+      }, 'Device Platform Saved')
     );
   });
 
@@ -172,7 +172,7 @@ export async function render(mount) {
         const found = await api.post(`/sources/${source.id}/discover-devices`);
         await render(mount);
         return found;
-      }, 'Terminals imported')
+      }, 'Terminals Imported')
     )
   );
 
@@ -199,5 +199,5 @@ function statusRow(connection) {
       </span>
     </div>
     ${connection.status_message
-      ? banner('Last error', connection.status_message, 'bad') : ''}`;
+      ? banner('Last Error', connection.status_message, 'bad') : ''}`;
 }

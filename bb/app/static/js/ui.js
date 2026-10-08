@@ -27,15 +27,22 @@ export function fmtLocal(value) {
   return String(value).replace('T', ' ').slice(0, 16);
 }
 
+/** What started a sync run, for display: Scheduler (the timer or the
+ * maintenance pass) or Manual (someone pressed a button). */
+export const triggerLabel = (value) =>
+  (value === 'schedule' || value === 'maintenance') ? 'Scheduler' : 'Manual';
+
+const plural = (n, unit) => `${n} ${unit}${n === 1 ? '' : 's'}`;
+
 export function fmtAgo(value) {
   if (!value) return 'never';
   const then = new Date(/Z|[+-]\d\d:?\d\d$/.test(value) ? value : value + 'Z');
   const seconds = Math.round((Date.now() - then.getTime()) / 1000);
   if (Number.isNaN(seconds)) return '—';
   if (seconds < 60) return 'just now';
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)} h ago`;
-  return `${Math.floor(seconds / 86400)} d ago`;
+  if (seconds < 3600) return `${plural(Math.floor(seconds / 60), 'minute')} ago`;
+  if (seconds < 86400) return `${plural(Math.floor(seconds / 3600), 'hour')} ago`;
+  return `${plural(Math.floor(seconds / 86400), 'day')} ago`;
 }
 
 /** The mirror of fmtAgo, for a time in the future: "in 7 min". */
@@ -48,9 +55,9 @@ export function fmtIn(value) {
   // the schedule being a tick behind is normal.
   if (seconds <= 30) return 'any moment';
   if (seconds < 90) return 'in about a minute';
-  if (seconds < 3600) return `in ${Math.round(seconds / 60)} min`;
-  if (seconds < 86400) return `in ${Math.round(seconds / 3600)} h`;
-  return `in ${Math.round(seconds / 86400)} d`;
+  if (seconds < 3600) return `in ${plural(Math.round(seconds / 60), 'minute')}`;
+  if (seconds < 86400) return `in ${plural(Math.round(seconds / 3600), 'hour')}`;
+  return `in ${plural(Math.round(seconds / 86400), 'day')}`;
 }
 
 export function fmtHours(value) {
@@ -116,7 +123,7 @@ const INFO_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="
  * stay as they are. */
 export const titleCase = (text) => String(text ?? '').replace(/(^|[\s/(])([a-z])/g, (_m, lead, ch) => lead + ch.toUpperCase());
 
-export function field({ name, label, type = 'text', value = '', help, required, placeholder, options, strongHelp, boolean, datalist, tip }) {
+export function field({ name, label, type = 'text', value = '', help, required, placeholder, options, strongHelp, boolean, datalist, tip, items, emptyNote, noRequiredAttr }) {
   // A select always yields a string, so a "false" option would PATCH the string
   // "false" — truthy everywhere on the server. data-bool tells readForm to
   // convert it. Explicit rather than sniffing the value, so a genuinely
@@ -129,6 +136,19 @@ export function field({ name, label, type = 'text', value = '', help, required, 
           return `<option value="${esc(v)}"${v === value ? ' selected' : ''}>${esc(l)}</option>`;
         })
         .join('')}</select>`
+    : items && items.length
+    // A searchable dropdown over {value, label, hint} items — the visible box
+    // shows the label, the paired hidden input carries the value.
+    ? `<div class="picker search-select" data-search-select data-items="${esc(JSON.stringify(items))}"
+            ${emptyNote ? `data-empty="${esc(emptyNote)}"` : ''}>
+         <input type="text" id="${esc(name)}" class="ss-input" autocomplete="off" spellcheck="false"
+                role="combobox" aria-expanded="false" aria-autocomplete="list"
+                value="${esc(items.find((i) => i.value === value)?.label || '')}"
+                ${placeholder ? `placeholder="${esc(placeholder)}"` : ''}>
+         <span class="ss-caret" aria-hidden="true"></span>
+         <input type="hidden" name="${esc(name)}" value="${esc(value)}">
+         <ul class="picker-list hidden" role="listbox"></ul>
+       </div>`
     : datalist && datalist.length
     // A searchable dropdown, not a plain <input list>/<datalist> (browsers
     // render that inconsistently, and it never really reads as "a dropdown").
@@ -143,7 +163,7 @@ export function field({ name, label, type = 'text', value = '', help, required, 
          <ul class="picker-list hidden" role="listbox"></ul>
        </div>`
     : `<input type="${esc(type)}" name="${esc(name)}" id="${esc(name)}"
-         value="${esc(value)}" ${required ? 'required' : ''}
+         value="${esc(value)}" ${required && !noRequiredAttr ? 'required' : ''}
          ${placeholder ? `placeholder="${esc(placeholder)}"` : ''}>`;
   return `
     <div class="field">
@@ -193,15 +213,27 @@ export function wireSearchSelects() {
   const boxOf = (event) => event.target.closest?.('[data-search-select]');
   const listOf = (box) => box.querySelector('.picker-list');
   const hiddenOf = (box) => box.querySelector('input[type=hidden]');
+  // Timezones by default; a box with data-items searches its own list instead.
+  const itemsOf = (box) => {
+    if (box.dataset.items) {
+      if (!box._items) {
+        try { box._items = JSON.parse(box.dataset.items); } catch { box._items = []; }
+      }
+      return box._items;
+    }
+    return timezoneNames().map((z) => ({ value: z, label: z }));
+  };
+  const labelFor = (box, value) => itemsOf(box).find((i) => i.value === value)?.label ?? value;
 
   const open = (box, query) => {
     const q = query.trim().toLowerCase();
-    const all = timezoneNames();
-    const matches = (q ? all.filter((z) => z.toLowerCase().includes(q)) : all).slice(0, 200);
+    const all = itemsOf(box);
+    const matches = (q ? all.filter((i) => `${i.label} ${i.hint || ''} ${i.value}`.toLowerCase().includes(q)) : all).slice(0, 200);
     const list = listOf(box);
     list.innerHTML = matches.length
-      ? matches.map((z) => `<li role="option" data-value="${esc(z)}">${esc(z)}</li>`).join('')
-      : `<li class="picker-note">No matching timezone</li>`;
+      ? matches.map((i) => `<li role="option" data-value="${esc(i.value)}">${esc(i.label)}${
+          i.hint ? `<span class="picker-hint">${esc(i.hint)}</span>` : ''}</li>`).join('')
+      : `<li class="picker-note">${esc(box.dataset.empty || 'No Matching Timezone')}</li>`;
     list.classList.remove('hidden');
     box.querySelector('.ss-input').setAttribute('aria-expanded', 'true');
   };
@@ -223,7 +255,7 @@ export function wireSearchSelects() {
   const commit = (box, value) => {
     const input = box.querySelector('.ss-input');
     const hidden = hiddenOf(box);
-    input.value = value;
+    input.value = labelFor(box, value);
     if (hidden.value !== value) {
       hidden.value = value;
       hidden.dispatchEvent(new Event('change', { bubbles: true }));
@@ -254,12 +286,10 @@ export function wireSearchSelects() {
       if (box.contains(document.activeElement)) return;
       const input = box.querySelector('.ss-input');
       const hidden = hiddenOf(box);
-      const all = timezoneNames();
-      const exact = all.includes(input.value)
-        ? input.value
-        : all.find((z) => z.toLowerCase() === input.value.trim().toLowerCase());
-      if (exact) commit(box, exact);
-      else { input.value = hidden.value; close(box); }
+      const typed = input.value.trim().toLowerCase();
+      const exact = itemsOf(box).find((i) => i.label.toLowerCase() === typed || i.value.toLowerCase() === typed);
+      if (exact) commit(box, exact.value);
+      else { input.value = hidden.value ? labelFor(box, hidden.value) : ''; close(box); }
     }, 150);
   });
   document.addEventListener('keydown', (event) => {
@@ -267,7 +297,9 @@ export function wireSearchSelects() {
     const box = boxOf(event);
     const list = listOf(box);
     if (event.key === 'Escape') {
-      event.target.value = hiddenOf(box).value;
+      // Closing the list is all Esc should do here — not also a dialog behind it.
+      if (!list.classList.contains('hidden')) { event.preventDefault(); event.stopPropagation(); }
+      event.target.value = hiddenOf(box).value ? labelFor(box, hiddenOf(box).value) : '';
       close(box);
     } else if (event.key === 'Enter') {
       event.preventDefault();
@@ -305,16 +337,16 @@ export function planCards({
   const cards = plans.map((p) => {
     const price = p.monthly_price_cents != null
       ? `$${(p.monthly_price_cents / 100).toFixed(0)}/mo`
-      : 'Custom pricing';
+      : 'Custom Pricing';
     const employees = p.max_employees != null
       ? `Up to ${p.max_employees} employee${p.max_employees === 1 ? '' : 's'}`
-      : 'Unlimited employees';
+      : 'Unlimited Employees';
     const devices = p.max_devices != null
       ? `Up to ${p.max_devices} device${p.max_devices === 1 ? '' : 's'}`
-      : 'Unlimited devices';
+      : 'Unlimited Devices';
     const speed = p.min_sync_interval_minutes != null
       ? `Syncs as often as every ${p.min_sync_interval_minutes} min`
-      : 'No sync-speed limit';
+      : 'No Sync-Speed Limit';
     const checked = p.id === value;
     return `
       <label class="plan-card${checked ? ' selected' : ''}">
@@ -357,17 +389,17 @@ export function planCards({
  * back to signup; PATCH the tenant immediately), which only the caller
  * knows. wirePricingCards() below wires whichever one it is.
  */
-export function pricingCards({ plans, tags = {}, showRecommended = true, ctaLabel = 'Get started' }) {
+export function pricingCards({ plans, tags = {}, showRecommended = true, ctaLabel = 'Get Started' }) {
   const cards = plans.map((p) => {
     const employees = p.max_employees != null
       ? `Up to ${p.max_employees} employee${p.max_employees === 1 ? '' : 's'}`
-      : 'Unlimited employees';
+      : 'Unlimited Employees';
     const devices = p.max_devices != null
       ? `Up to ${p.max_devices} device${p.max_devices === 1 ? '' : 's'}`
-      : 'Unlimited devices';
+      : 'Unlimited Devices';
     const speed = p.min_sync_interval_minutes != null
       ? `Syncs as often as every ${p.min_sync_interval_minutes} min`
-      : 'No sync-speed limit';
+      : 'No Sync-Speed Limit';
     const tag = tags[p.id] || (showRecommended && p.is_default ? { label: 'Recommended', tone: 'ok' } : null);
     // 'current' (this plan, today) and 'warn' (a switch to it is already
     // queued) both default to locked — the button has nothing left to do —
@@ -383,7 +415,7 @@ export function pricingCards({ plans, tags = {}, showRecommended = true, ctaLabe
         <div class="pricing-card-name">${esc(p.name)}</div>
         <div class="pricing-card-price">${p.monthly_price_cents != null
           ? `<span class="amt">$${(p.monthly_price_cents / 100).toFixed(0)}</span><span class="per">/mo</span>`
-          : '<span class="amt custom">Custom pricing</span>'}</div>
+          : '<span class="amt custom">Custom Pricing</span>'}</div>
         <p class="pricing-card-desc">${esc(p.description || '')}</p>
         <button type="button" class="pricing-cta"${locked ? ' disabled' : ''} data-pick="${esc(p.id)}">
           ${esc(label)}
@@ -442,7 +474,7 @@ export async function guard(fn, successMessage) {
     if (successMessage) toast(successMessage, 'ok');
     return result;
   } catch (error) {
-    if (error.status !== 401) toast(error.message || 'Something went wrong', 'bad');
+    if (error.status !== 401) toast(error.message || 'Something Went Wrong', 'bad');
     return undefined;
   }
 }

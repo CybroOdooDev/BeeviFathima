@@ -26,16 +26,16 @@ const STEPS = [
     key: 'odoo', title: 'Connect Odoo', short: 'Odoo',
     intro: 'BioBridge writes attendance into your Odoo. Enter your Odoo address, database, '
       + 'the login of a user who can manage Attendances, and an API key for that user. '
-      + 'Click <strong>Test connection</strong>, then <strong>Connect Odoo</strong>.',
+      + 'Click <strong>Test Connection</strong>, then <strong>Connect Odoo</strong>.',
     help: 'Create the API key in Odoo: click your avatar → <em>My Profile</em> (or <em>Preferences</em>) → '
       + '<em>Account Security</em> → <em>New API Key</em>. Copy it straight away — Odoo shows it only once.',
     done: (s) => s.odoo,
   },
   {
-    key: 'biometric', title: 'Connect your biometric system', short: 'Biometric',
+    key: 'biometric', title: 'Connect Your Biometric System', short: 'Biometric',
     intro: 'Tell BioBridge where punches come from: a server such as ZKTeco BioTime, HikCentral or '
       + 'BioStar 2, or a terminal directly by its IP address or serial number. '
-      + 'Click <strong>+ Add connection</strong> and follow the three short steps.',
+      + 'Click <strong>+ Add connection</strong>, pick your protocol and follow the two short steps.',
     help: 'Not sure which to pick? If your staff punch on terminals managed by software on a PC or '
       + 'server, choose that software. If the terminal works on its own, choose the device.',
     done: (s) => s.source,
@@ -52,14 +52,14 @@ const STEPS = [
     done: (s) => s.pairing || s.run,
   },
   {
-    key: 'sync', title: 'Run the first sync', short: 'First sync',
+    key: 'sync', title: 'Run The First Sync', short: 'First Sync',
     intro: 'Pull the punches recorded so far and write them to Odoo as attendance. '
       + 'After this, BioBridge syncs on its own every few minutes.',
     help: 'The first sync reads up to the last few weeks of punches, so it can take a minute.',
     done: (s) => s.run,
   },
   {
-    key: 'badges', title: 'Match unknown badges', short: 'Badges', skippable: true,
+    key: 'badges', title: 'Match Unknown Badges', short: 'Badges', skippable: true,
     intro: 'Punches from badges that no Odoo employee carries are held here until you say who they belong to. '
       + 'Search for the employee and click <strong>Match</strong> — or <strong>Ignore</strong> a badge you don’t need.',
     help: 'Tip: put each person’s device user ID in their <em>Badge ID</em> field in Odoo '
@@ -123,7 +123,7 @@ export async function render(mount, route) {
   const run = Symbol('setup');
   mount.setupRun = run;
   if (!auth.canWrite) {
-    mount.innerHTML = banner('Setup needs an admin',
+    mount.innerHTML = banner('Setup Needs An Admin',
       'Ask the account owner or an admin to connect Odoo and your biometric system.', 'warn');
     return;
   }
@@ -135,7 +135,7 @@ export async function render(mount, route) {
   let poll = null;
 
   const stop = () => { if (poll) { clearInterval(poll); poll = null; } };
-  stopPrevious = () => { stop(); if (mount.setupRun === run) mount.setupRun = null; };
+  stopPrevious = () => { stop(); unobserve(); if (mount.setupRun === run) mount.setupRun = null; };
   // The page's mount stays in the document across routes, so "still here"
   // means the address still points at this page *and* this is the newest
   // render of it — never an older one painting over it.
@@ -160,35 +160,65 @@ export async function render(mount, route) {
       </ol>`;
   }
 
-  function footer() {
+  /* Continue (and Skip) live in the action bar of the form being shown —
+   * beside Test connection on the Odoo step — instead of a bar of their own.
+   * The forms are Settings pages that redraw themselves after a test or a
+   * save, which drops anything added to them, so an observer puts the button
+   * back; it is idempotent, so it never loops on its own insertion. */
+  function placeAdvance() {
+    const body = $('#setupBody', mount);
+    if (!body || index >= STEPS.length) return;
     const step = STEPS[index];
     const done = step.done(status);
     const last = index === STEPS.length - 1;
-    return `
-      <div class="setup-foot">
-        <div>${index > 0 ? '<button type="button" id="setupBack">← Back</button>' : ''}</div>
-        <div class="setup-foot-status">${done
-          ? `<span class="pill ok">Done</span> ${esc(step.short)} is set up.`
-          : '<span class="hint">Finish this step to continue.</span>'}</div>
-        <div class="row">
-          ${step.skippable && !done ? '<button type="button" class="link" id="setupSkip">Skip this step</button>' : ''}
-          <button type="button" class="primary" id="setupNext" ${done ? '' : 'disabled'}>${last ? 'Finish' : 'Continue →'}</button>
-        </div>
-      </div>`;
-  }
-
-  function paintChrome() {
-    $('#setupStepper', mount).innerHTML = stepper();
-    $('#setupFoot', mount).innerHTML = index < STEPS.length ? footer() : '';
-    mount.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => go(Number(b.dataset.go))));
-    $('#setupBack', mount)?.addEventListener('click', () => go(index - 1));
-    $('#setupNext', mount)?.addEventListener('click', () => go(index + 1));
-    $('#setupSkip', mount)?.addEventListener('click', () => {
+    let bar = body.querySelector('.setup-foot') || body.querySelector('.card-head .actions');
+    if (!bar) {
+      const head = body.querySelector('.card-head');
+      if (head) {
+        bar = document.createElement('div');
+        bar.className = 'actions';
+        head.appendChild(bar);
+      }
+    }
+    bar = bar || $('#setupHeadActions', mount);
+    if (!bar) return;
+    const sig = `${index}|${done}|${Boolean(step.skippable)}`;
+    let wrap = $('#setupAdvance', mount);
+    if (wrap && wrap.parentElement === bar && wrap.dataset.sig === sig) return;
+    wrap?.remove();
+    wrap = document.createElement('span');
+    wrap.id = 'setupAdvance';
+    wrap.className = 'setup-advance';
+    wrap.dataset.sig = sig;
+    wrap.innerHTML = `
+      ${step.skippable && !done ? '<button type="button" class="link" id="setupSkip">Skip This Step</button>' : ''}
+      <button type="button" class="primary" id="setupNext" ${done ? '' : 'disabled title="Finish this step to continue"'}>${
+        last ? 'Finish' : 'Continue →'}</button>`;
+    bar.appendChild(wrap);
+    $('#setupNext', wrap).addEventListener('click', () => go(index + 1));
+    $('#setupSkip', wrap)?.addEventListener('click', () => {
       const skipped = skippedSet();
       skipped.add(STEPS[index].key);
       saveSkipped(skipped);
       go(index + 1);
     });
+  }
+
+  let observer = null;
+  const unobserve = () => { observer?.disconnect(); observer = null; };
+  const observe = () => {
+    unobserve();
+    const body = $('#setupBody', mount);
+    if (!body) return;
+    observer = new MutationObserver(() => placeAdvance());
+    observer.observe(body, { childList: true, subtree: true });
+  };
+
+  function paintChrome() {
+    $('#setupStepper', mount).innerHTML = stepper();
+    mount.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => go(Number(b.dataset.go))));
+    $('#setupBack', mount)?.addEventListener('click', () => go(index - 1));
+    placeAdvance();
   }
 
   async function refreshStatus() {
@@ -209,8 +239,6 @@ export async function render(mount, route) {
       await renderSettings(body, { path: '/settings/odoo', query: {} });
     } else if (step.key === 'biometric') {
       await renderSettings(body, { path: '/settings/biometric', query: {} });
-      // No connection yet: open the add-connection wizard straight away.
-      if (step.key === 'biometric' && !status.source) $('#addConnection', body)?.click();
     } else if (step.key === 'pairing') {
       body.innerHTML = '<div id="pairForm"></div><div id="pairConfirm"></div>';
       const formHost = $('#pairForm', body);
@@ -225,7 +253,7 @@ export async function render(mount, route) {
         <div class="card" style="margin-top:14px">
           <div class="row" style="justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
             <span class="hint">Happy with the defaults? You don’t have to change anything.</span>
-            <button type="button" id="pairKeep">${status.pairing || status.run ? 'Keep these settings' : 'Looks right — keep these settings'}</button>
+            <button type="button" id="pairKeep">${status.pairing || status.run ? 'Keep These Settings' : 'Looks Right — Keep These Settings'}</button>
           </div>
         </div>`;
       $('#pairKeep', body).addEventListener('click', async () => {
@@ -235,16 +263,16 @@ export async function render(mount, route) {
     } else if (step.key === 'sync') {
       body.innerHTML = `
         <div class="card">
-          <div class="card-head"><h2>First sync</h2></div>
+          <div class="card-head"><h2>First Sync</h2></div>
           ${status.run ? '<p>A sync has already run. Run another any time from the top bar.</p>' : ''}
-          <div class="row"><button type="button" class="primary" id="setupSync">${status.run ? 'Run again' : 'Run the first sync'}</button></div>
+          <div class="row"><button type="button" class="primary" id="setupSync">${status.run ? 'Run Again' : 'Run The First Sync'}</button></div>
           <div id="setupSyncResult" style="margin-top:12px"></div>
         </div>`;
       const button = $('#setupSync', body);
       button.addEventListener('click', () => busy(button, () => guard(async () => {
         const run = await api.post('/sync/run-inline');
         $('#setupSyncResult', body).innerHTML = banner(
-          run.status === 'success' ? 'Sync finished' : `Sync ${run.status}`,
+          run.status === 'success' ? 'Sync Finished' : `Sync ${run.status}`,
           `${run.punches_new} new punch(es) read, ${run.attendances_created} attendance record(s) created, `
             + `${run.attendances_closed} closed.${run.error_message ? ` ${run.error_message}` : ''}`,
           run.status === 'success' ? '' : 'warn');
@@ -259,16 +287,17 @@ export async function render(mount, route) {
 
   async function paint() {
     stop();
+    unobserve();
     if (index >= STEPS.length) {
       mount.innerHTML = `
         <div class="card setup-done">
           <div class="notice-icon" aria-hidden="true">✓</div>
-          <h2>You're all set</h2>
+          <h2>You're All Set</h2>
           <p class="hint">Attendance now flows from your biometric system into Odoo every few minutes.
             New badges that Odoo doesn't recognise will show up on the Overview for you to match.</p>
           <div class="row" style="justify-content:center;margin-top:8px">
-            <a class="btn primary-link" href="#/">Go to Overview</a>
-            <a class="btn" href="#/attendance">See attendance</a>
+            <a class="btn primary-link" href="#/">Go To Overview</a>
+            <a class="btn" href="#/attendance">See Attendance</a>
           </div>
         </div>`;
       return;
@@ -276,21 +305,27 @@ export async function render(mount, route) {
     const step = STEPS[index];
     mount.innerHTML = `
       <div class="setup-wizard">
-        <div class="card setup-head">
+        <div class="card setup-sticky">
           <div class="setup-head-top">
             <div><span class="hint">Step ${index + 1} of ${STEPS.length}</span><h2>${esc(step.title)}</h2></div>
-            <a class="btn sm" href="#/" title="You can come back to this any time from the Overview">Exit setup</a>
+            <div class="row" id="setupHeadActions">
+              ${index > 0 ? '<button type="button" class="sm" id="setupBack">← Back</button>' : ''}
+              <a class="btn sm" href="#/" title="You can come back to this any time from the Overview">Exit Setup</a>
+            </div>
           </div>
           <div id="setupStepper"></div>
+        </div>
+        <div class="card setup-head">
           <p class="setup-intro">${step.intro}</p>
           <p class="hint setup-help">${step.help}</p>
         </div>
         <div id="setupBody" class="setup-body">${loading()}</div>
-        <div id="setupFoot" class="card"></div>
       </div>`;
     paintChrome();
+    observe();
     await paintBody($('#setupBody', mount));
     if (!here()) return;
+    placeAdvance();
     stop();
     poll = setInterval(refreshStatus, 4000);
   }

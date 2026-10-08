@@ -32,7 +32,7 @@ async function submit(button, fn) {
   try {
     await fn();
   } catch (exc) {
-    error.textContent = exc.message || 'Something went wrong';
+    error.textContent = exc.message || 'Something Went Wrong';
   } finally {
     button.disabled = false;
   }
@@ -57,7 +57,7 @@ async function credentials(path, values) {
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
     throw new ApiError(
-      (payload && typeof payload.detail === 'string') ? payload.detail : 'Sign-in failed',
+      (payload && typeof payload.detail === 'string') ? payload.detail : 'Sign-In Failed',
       response.status, payload,
     );
   }
@@ -91,9 +91,9 @@ export function renderLogin(route = {}) {
   const admin = route.path === '/staff/login' && !reauth;
   const foot = reauth ? '' : admin
     ? '<a href="#/login">&larr; Back to customer sign-in</a>'
-    : '<a href="#/staff/login">Log in as admin</a>';
+    : '<a href="#/staff/login">Log In As Admin</a>';
   const root = shell(`
-    <h1>${reauth ? 'Confirm it’s you' : admin ? 'Admin sign in' : 'Sign in'}</h1>
+    <h1>${reauth ? 'Confirm It’s You' : admin ? 'Admin Sign In' : 'Sign In'}</h1>
     <p class="sub">${reauth
       ? `Your ${target === 'staff' ? 'staff console' : 'workspace'} session has ended. Enter your password to reopen it.`
       : admin
@@ -102,12 +102,12 @@ export function renderLogin(route = {}) {
     <form id="form">
       ${field({ name: 'email', label: 'Email', type: 'email', required: true, value: reauth })}
       ${field({ name: 'password', label: 'Password', type: 'password', required: true })}
-      ${reauth ? '' : '<p class="auth-alt" style="text-align:right;margin:-4px 0 12px"><a href="#/forgot-password">Forgot password?</a></p>'}
-      <button class="primary" style="width:100%" id="go">${reauth ? 'Continue' : admin ? 'Sign in to console' : 'Sign in'}</button>
+      ${reauth ? '' : '<p class="auth-alt" style="text-align:right;margin:-4px 0 12px"><a href="#/forgot-password">Forgot Password?</a></p>'}
+      <button class="primary" style="width:100%" id="go">${reauth ? 'Continue' : admin ? 'Sign In To Console' : 'Sign In'}</button>
     </form>
     ${reauth ? '<p class="auth-alt"><a href="#/">Cancel</a></p>'
       : admin ? ''
-      : '<p class="auth-alt">No account yet? <a href="#/signup">Create one</a></p>'}`,
+      : '<p class="auth-alt">No account yet? <a href="#/signup">Create One</a></p>'}`,
     { staff: admin, foot });
 
   if (reauth) {
@@ -160,7 +160,7 @@ export async function renderSignup(route = {}) {
   const modeField = plans.length ? field({
     name: 'start_mode', label: 'Getting Started', value: 'trial',
     options: [
-      { value: 'trial', label: 'Start a free trial' },
+      { value: 'trial', label: 'Start A Free Trial' },
       { value: 'plan', label: 'Choose a plan now — no trial' },
     ],
     help: 'Either way, the plan below is what you start on — a trial just '
@@ -180,15 +180,15 @@ export async function renderSignup(route = {}) {
           <strong>${esc(chosenPlan?.name || 'Plan')}</strong>
           <span class="hint">${chosenPlan?.monthly_price_cents != null
             ? `$${(chosenPlan.monthly_price_cents / 100).toFixed(0)}/mo`
-            : 'Custom pricing'}</span>
+            : 'Custom Pricing'}</span>
         </div>
-        <a href="#/plans">Explore plans</a>
+        <a href="#/plans">Explore Plans</a>
       </div>
       <input type="hidden" name="plan_id" value="${esc(chosenId)}">
     </div>` : '';
 
   const root = shell(`
-    <h1>Create your account</h1>
+    <h1>Create Your Account</h1>
     <p class="sub">The first user becomes the owner of the workspace.</p>
     <form id="form">
       ${field({ name: 'company_name', label: 'Company', required: true })}
@@ -205,9 +205,9 @@ export async function renderSignup(route = {}) {
       })}
       ${modeField}
       ${planField}
-      <button class="primary" style="width:100%" id="go">Create account</button>
+      <button class="primary" style="width:100%" id="go">Create Account</button>
     </form>
-    <p class="auth-alt">Already have one? <a href="#/login">Sign in</a></p>`);
+    <p class="auth-alt">Already have one? <a href="#/login">Sign In</a></p>`);
 
   $('#form', root).addEventListener('submit', (event) => {
     event.preventDefault();
@@ -243,16 +243,16 @@ export async function renderPlans() {
             <span class="brand-mark">B</span>
             <span class="brand-word"><b>Bio</b><span>Bridge</span></span>
           </div>
-          <a class="link" href="#/signup">&larr; Back to sign up</a>
+          <a class="link" href="#/signup">&larr; Back To Sign Up</a>
         </div>
         <div class="pricing-header">
-          <h1>Plans built around your headcount and sync speed</h1>
+          <h1>Plans Built Around Your Headcount And Sync Speed</h1>
           <p class="sub">Every plan syncs the same attendance features into Odoo — the
             difference is how many employees and how often. Every plan starts with a
             free trial, whichever one you pick below.</p>
         </div>
-        ${active.length ? pricingCards({ plans: active, ctaLabel: 'Get started' })
-          : empty('No plans available', 'Check back shortly, or contact us directly.')}
+        ${active.length ? pricingCards({ plans: active, ctaLabel: 'Get Started' })
+          : empty('No Plans Available', 'Check back shortly, or contact us directly.')}
       </div>
     </div>`;
 

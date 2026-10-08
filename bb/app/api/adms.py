@@ -89,7 +89,15 @@ async def upload(request: Request, db: Session = Depends(get_db)) -> PlainTextRe
             device.attlog_stamp = stamp
         log.info("ADMS %s: %d punch line(s), %d new", serial, lines, created)
     elif table in ("OPERLOG", "USERINFO", "USER"):
+        before = set(device.users or {})
         adms.remember_users(device, adms.parse_users(body))
+        if set(device.users or {}) - before:
+            # New users on the device: link any that match an Odoo employee
+            # now, rather than waiting for their first punch or the next sync.
+            from app.services.roster_import import auto_import
+
+            db.flush()
+            auto_import(db, owner[0])
         if stamp and table == "OPERLOG":
             device.operlog_stamp = stamp
     # Anything else (ATTPHOTO, BIODATA, options…) is acknowledged and ignored.

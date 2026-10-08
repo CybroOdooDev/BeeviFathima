@@ -11,7 +11,7 @@ setup.html      public setup guide
 contact.html    demo / sales request form
 signup.html     registration: free trial, or buy a plan (Stripe Checkout)
 check-email.html  "check your inbox" (after registering or paying), with resend
-verified.html   where the confirmation link lands; releases the login details
+verified.html   where the confirmation link lands; the visitor chooses their password here
 assets/
   styles.css    all styling (light + dark, responsive)
   site.js       app links, menu, contact form, live plans, registration
@@ -44,15 +44,6 @@ assets/
    if the app can't be reached. "Buy now" appears only for plans with a
    Stripe Price set (Platform → Plans in the staff console).
 
-## Monthly and yearly billing
-
-The pricing page has a Monthly / Yearly switch, and the sign-up form has a
-**Pay Monthly / Pay Yearly** choice (`?billing=year` preselects it). Yearly
-prices come from the app's plans (`yearly_price_cents`); a plan with no yearly
-price stays monthly-only, and Yearly "buy now" appears only once the plan also
-has a yearly Stripe Price. Set both in the staff console under Platform → Plans.
-A free trial remembers the choice and bills that way when the account buys.
-
 ## How registration works
 
 - **Free trial** — the form creates the account (no card) and sends a
@@ -60,9 +51,11 @@ A free trial remembers the choice and bills that way when the account buys.
 - **Buy now** — the form sends the visitor to Stripe Checkout; the account is
   created only when Stripe confirms the payment, then the confirmation link
   is sent.
-- Clicking the link (`verified.html`) confirms the address, and the app emails
-  the login details: the email address and a generated password. The first
-  sign-in asks them to choose their own password.
+- Clicking the link (`verified.html`) confirms the address and asks the
+  visitor to choose their password. Once set, the page's **Sign in** button
+  opens the dashboard directly (a one-time code the app exchanges for a
+  session), and the app emails a note that the login is their email address
+  plus the password they chose. No password is ever emailed.
 
 ## Preview locally
 

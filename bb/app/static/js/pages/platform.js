@@ -14,23 +14,23 @@ import {
 } from '../ui.js';
 
 const STATUSES = [
-  { value: 'trialing', label: 'trialing' },
-  { value: 'active', label: 'active' },
-  { value: 'past_due', label: 'past due' },
-  { value: 'suspended', label: 'suspended — stops syncing' },
-  { value: 'cancelled', label: 'cancelled — stops syncing' },
+  { value: 'trialing', label: 'Trialing' },
+  { value: 'active', label: 'Active' },
+  { value: 'past_due', label: 'Past Due' },
+  { value: 'suspended', label: 'Suspended — Stops Syncing' },
+  { value: 'cancelled', label: 'Cancelled — Stops Syncing' },
 ];
 
 const PAIRING = [
-  { value: 'alternating', label: 'Alternating — in, out, in, out' },
+  { value: 'alternating', label: 'Alternating — In, Out, In, Out' },
   { value: 'state_based', label: 'State based — trust the device keys' },
-  { value: 'first_last', label: 'First / last of the day' },
+  { value: 'first_last', label: 'First / Last Of The Day' },
 ];
 
 const ORPHAN = [
-  { value: 'flag', label: 'Flag — zero-length record for review' },
+  { value: 'flag', label: 'Flag — Zero-Length Record For Review' },
   { value: 'create', label: 'Create — open a shift at that time' },
-  { value: 'ignore', label: 'Ignore — drop it' },
+  { value: 'ignore', label: 'Ignore — Drop It' },
 ];
 
 const TRASH_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
@@ -48,7 +48,7 @@ const DELETABLE = ['suspended', 'cancelled', 'past_due'];
  */
 function planOptions(plans) {
   return [
-    { value: '', label: 'No plan — nothing enforced' },
+    { value: '', label: 'No Plan — Nothing Enforced' },
     ...plans.map((p) => ({
       value: p.id,
       label: `${p.name}${p.is_active ? '' : ' (retired)'}`,
@@ -72,7 +72,7 @@ function usageTile(used, limit, label) {
 }
 
 function usageHtml(u) {
-  if (!u) return '<div class="usage-strip"><div class="u"><span>Loading usage…</span></div></div>';
+  if (!u) return '<div class="usage-strip"><div class="u"><span>Loading Usage…</span></div></div>';
   return `<div class="usage-strip">
     ${usageTile(u.employees_mapped, u.max_employees, 'employees matched')}
     ${usageTile(u.devices, u.max_devices, 'devices')}
@@ -91,7 +91,7 @@ function toDateInput(value) {
 export async function render(mount, route) {
   if (!auth.isPlatformAdmin) {
     mount.innerHTML = banner(
-      'Not available',
+      'Not Available',
       'This section is for platform staff. Your account does not have that access.',
       'warn'
     );
@@ -132,7 +132,7 @@ export async function render(mount, route) {
 
   mount.innerHTML = `
     ${schedulerDown ? banner(
-      'The scheduler is not running',
+      'The Scheduler Is Not Running',
       'No customer is syncing automatically right now, whatever their interval '
       + 'says. Changing a setting here will not start anything until it is back.',
       'bad') : ''}
@@ -149,7 +149,7 @@ export async function render(mount, route) {
                      health.running ? 'running' : 'not running')}</td></tr>
             <tr><td>Mode</td><td style="text-align:right">${esc(health.mode || '—')}</td></tr>
             <tr><td>Host</td><td style="text-align:right" class="mono">${esc(health.owner || '—')}</td></tr>
-            <tr><td>Last tick</td><td style="text-align:right">${esc(fmtAgo(health.last_tick_at))}</td></tr>
+            <tr><td>Last Tick</td><td style="text-align:right">${esc(fmtAgo(health.last_tick_at))}</td></tr>
           </tbody>
         </table>` : '<div class="hint">Could not read the scheduler state.</div>'}
     </div>
@@ -157,7 +157,7 @@ export async function render(mount, route) {
     <div class="card">
       <div class="card-head" style="position:static">
         <h2>Accounts <span class="hint">${esc(tenants.length)} total</span></h2>
-        <div class="actions"><button class="primary sm" id="addAccount">Add account</button></div>
+        <div class="actions"><button class="primary sm" id="addAccount">Add Account</button></div>
       </div>
       <form id="search" class="row" style="gap:10px;margin-bottom:12px">
         <input type="text" name="q" id="q" value="${esc(query)}"
@@ -185,7 +185,7 @@ export async function render(mount, route) {
           already relying on one. Every change here is written into that customer's
           own audit trail under your name.
         </div>
-      ` : empty('No accounts match', query ? 'Try a different search.' : '')}
+      ` : empty('No Accounts Match', query ? 'Try a different search.' : '')}
     </div>`;
 
   wire(mount, route, tenants, plans, linkFor);
@@ -221,7 +221,7 @@ function gateConfirm() {
   return `
     <input class="gate-reason" maxlength="200" placeholder="Reason (optional)"
            aria-label="Why this account is being stopped">
-    <button class="sm danger gate-commit">Stop syncing</button>
+    <button class="sm danger gate-commit">Stop Syncing</button>
     <button class="link sm gate-cancel" type="button">Cancel</button>`;
 }
 
@@ -245,7 +245,7 @@ function backoffTag(t) {
 function notConnected(t) {
   if (t.last_run_at || !t.sync_enabled || !t.syncable) return '';
   return !t.odoo_connected || !t.source_connected
-    ? '<span class="hint"><i>incomplete initial set up</i></span>' : '';
+    ? '<span class="hint">Incomplete Initial Set Up</span>' : '';
 }
 
 function rowFor(t) {
@@ -264,15 +264,15 @@ function rowFor(t) {
       </td>
       <td class="sync-cell">
         <div>${notConnected(t) || (t.next_run_at ? `next ${esc(fmtIn(t.next_run_at))}`
-              : '<span class="hint">not scheduled</span>')}</div>
-        <div class="hint"><i>${t.last_run_at
-              ? `(last sync ${esc(fmtAgo(t.last_run_at))})`
-              : '(never synced)'}</i></div>
+              : '<span class="hint">Not Scheduled</span>')}</div>
+        <div class="hint">${t.last_run_at
+              ? `last ${pill(t.last_run_status)} ${esc(fmtAgo(t.last_run_at))}`
+              : 'never synced'}</div>
       </td>
       <td>
         <select class="enabled" aria-label="Automatic sync">
-          <option value="true"${t.sync_enabled ? ' selected' : ''}>on</option>
-          <option value="false"${t.sync_enabled ? '' : ' selected'}>off</option>
+          <option value="true"${t.sync_enabled ? ' selected' : ''}>On</option>
+          <option value="false"${t.sync_enabled ? '' : ' selected'}>Off</option>
         </select>
       </td>
       <td class="actions-cell">
@@ -291,21 +291,21 @@ function rowFor(t) {
  * under each name in the account list. Label / value pairs, with anything
  * that needs a person (stopped, renewing soon, nothing connected) tinted. */
 function accountInfoHtml(t) {
-  const setup = t.odoo_connected && t.source_connected ? 'Odoo and a biometric connection'
-    : !t.odoo_connected && !t.source_connected ? 'Nothing connected'
-      : !t.odoo_connected ? 'No Odoo connection' : 'No biometric connection';
+  const setup = t.odoo_connected && t.source_connected ? 'Odoo And A Biometric Connection'
+    : !t.odoo_connected && !t.source_connected ? 'Nothing Connected'
+      : !t.odoo_connected ? 'No Odoo Connection' : 'No Biometric Connection';
   const custom = [t.limit_max_employees, t.limit_max_devices, t.limit_min_sync_interval_minutes]
     .some((v) => v != null);
   const items = [
     ['Slug', `<span class="mono">${esc(t.slug)}</span>`],
     ['Timezone', esc(t.timezone)],
     ['Users', esc(t.users)],
-    ['Plan', `${t.plan_name ? esc(t.plan_name) : 'No plan'}${custom ? ' · custom limits' : ''}${
+    ['Plan', `${t.plan_name ? esc(t.plan_name) : 'No Plan'}${custom ? ' · custom limits' : ''}${
       t.pending_plan_name ? ` → ${esc(t.pending_plan_name)} queued` : ''}`],
     ['Renews', t.subscription_renews_at
       ? `${esc(fmtIn(t.subscription_renews_at))}${t.renewal_warning
         ? ` <span class="pill warn">${t.renewal_warning.urgent ? 'very soon' : 'soon'}</span>` : ''}`
-      : 'No renewal date', ],
+      : 'No Renewal Date', ],
     ['Setup', setup, !(t.odoo_connected && t.source_connected)],
   ];
   if (t.syncable === false) {
@@ -321,7 +321,7 @@ function diagnosticsHtml(d) {
     && !d.unmapped_badges;
   if (nothing) {
     return `<div class="banner" style="margin:12px 0 0">
-      <strong>Nothing is stuck</strong>
+      <strong>Nothing Is Stuck</strong>
       No punches are pending, unmapped or in error for ${esc(d.name)}.</div>`;
   }
   return `
@@ -331,18 +331,18 @@ function diagnosticsHtml(d) {
       <table>
         <tbody>
           <tr><td>Pending</td><td class="num" style="text-align:right">${esc(d.punches_pending)}</td></tr>
-          <tr><td>In error</td><td class="num" style="text-align:right">${esc(d.punches_error)}</td></tr>
+          <tr><td>In Error</td><td class="num" style="text-align:right">${esc(d.punches_error)}</td></tr>
           <tr><td>At the 5-attempt cap <span class="hint">never retried again
             until reset</span></td>
             <td class="num" style="text-align:right">${esc(d.punches_at_attempt_cap)}</td></tr>
-          <tr><td>Unmapped punches</td><td class="num" style="text-align:right">${esc(d.punches_unmapped)}</td></tr>
-          <tr><td>Badges with no Odoo employee</td><td class="num" style="text-align:right">${esc(d.unmapped_badges)}</td></tr>
+          <tr><td>Unmapped Punches</td><td class="num" style="text-align:right">${esc(d.punches_unmapped)}</td></tr>
+          <tr><td>Badges With No Odoo Employee</td><td class="num" style="text-align:right">${esc(d.unmapped_badges)}</td></tr>
         </tbody>
       </table>
       ${d.last_run_error ? `<div class="banner bad" style="margin-top:12px">
-        <strong>Last run failed</strong>${esc(d.last_run_error)}</div>` : ''}
+        <strong>Last Run Failed</strong>${esc(d.last_run_error)}</div>` : ''}
       ${d.errors.length ? `
-        <h3 style="margin:14px 0 6px;font-size:13px">Distinct errors</h3>
+        <h3 style="margin:14px 0 6px;font-size:13px">Distinct Errors</h3>
         ${d.errors.map((e) => `
           <div class="banner bad" style="margin-bottom:8px">
             <strong>${esc(e.count)} punch${e.count === 1 ? '' : 'es'}</strong>
@@ -450,7 +450,7 @@ function openConfigDialog(tenant, { plans, onChange }) {
                           + 'due and stops syncing — no grace period. Leave empty to '
                           + 'exempt this account from that automatic check entirely.' })}
           </div>
-          <h3 style="margin:6px 0 4px;font-size:13px">Limits for this account
+          <h3 style="margin:6px 0 4px;font-size:13px">Limits For This Account
             <span class="hint">empty = use the plan · 0 = no limit</span></h3>
           <div class="grid cols-3 limit-fields">
             ${field({ tip: true, name: 'limit_max_employees', label: 'Employees', type: 'number',
@@ -471,10 +471,10 @@ function openConfigDialog(tenant, { plans, onChange }) {
       <div class="wiz-foot">
         <button type="button" class="link" data-cfg="close">Close</button>
         <div class="actions">
-          <button type="button" class="diagnose">Why is it stuck?</button>
-          ${t.interval_widened ? '<button type="button" class="clear-failures">Clear failures</button>' : ''}
-          <button type="button" class="sync-now">Sync now</button>
-          <button type="submit" form="cfgForm" class="primary save-config">Save configuration</button>
+          <button type="button" class="diagnose">Why Is It Stuck?</button>
+          ${t.interval_widened ? '<button type="button" class="clear-failures">Clear Failures</button>' : ''}
+          <button type="button" class="sync-now">Sync Now</button>
+          <button type="submit" form="cfgForm" class="primary save-config">Save Configuration</button>
         </div>
       </div>`;
     wireInner();
@@ -588,7 +588,7 @@ function openNewAccountDialog(plans, onCreated) {
 
   dialog.innerHTML = `
     <div class="wiz-head">
-      <strong id="newAccountTitle">Add account</strong>
+      <strong id="newAccountTitle">Add Account</strong>
       <button type="button" class="link wiz-x" data-close aria-label="Close">&times;</button>
     </div>
     <div class="wiz-body">
@@ -615,7 +615,7 @@ function openNewAccountDialog(plans, onCreated) {
     <div class="wiz-foot">
       <button type="button" class="link" data-close>Cancel</button>
       <div class="actions">
-        <button type="submit" form="newTenant" class="primary" id="createTenant">Create account</button>
+        <button type="submit" form="newTenant" class="primary" id="createTenant">Create Account</button>
       </div>
     </div>`;
 
@@ -777,7 +777,7 @@ function openDeleteTenantDialog(t, onDone) {
       <button type="button" class="link wiz-x" data-close aria-label="Close">&times;</button></div>
     <form id="delTenantForm" style="display:contents" novalidate>
       <div class="wiz-body">
-        ${banner('This cannot be undone',
+        ${banner('This Cannot Be Undone',
           'Every connection, device, employee mapping, punch, attendance record, user and audit entry of this account is deleted. '
           + 'A running Stripe subscription is cancelled immediately. Only a closure record (name, owner, reason) is kept.', 'bad')}
         <div class="field"><label for="delReason">Reason <span class="opt">optional</span></label>
@@ -788,7 +788,7 @@ function openDeleteTenantDialog(t, onDone) {
       </div>
       <div class="wiz-foot">
         <button type="button" data-close>Cancel</button>
-        <button type="submit" class="danger" id="delGo" disabled>Delete account</button>
+        <button type="submit" class="danger" id="delGo" disabled>Delete Account</button>
       </div>
     </form>`;
   dialog.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', close));

@@ -12,16 +12,16 @@ import { $, banner, busy, esc, field as baseField, fmtAgo, guard, loading, readF
 const field = (o) => baseField({ tip: true, ...o });
 
 const SOURCE = {
-  database: ['ok', 'Using these keys'],
+  database: ['ok', 'Using These Keys'],
   environment: ['warn', 'Using STRIPE_* from .env'],
-  none: ['bad', 'Online billing is off'],
+  none: ['bad', 'Online Billing Is Off'],
 };
 
 const money = (cents) => (cents == null ? 'Custom' : `$${(cents / 100).toFixed(cents % 100 ? 2 : 0)}`);
 
 export async function render(mount) {
   if (!auth.isPlatformAdmin) {
-    mount.innerHTML = banner('Not available', 'This section is for platform staff.', 'warn');
+    mount.innerHTML = banner('Not Available', 'This section is for platform staff.', 'warn');
     return;
   }
   mount.innerHTML = loading();
@@ -30,11 +30,11 @@ export async function render(mount) {
   const missingPrices = cfg.plans.filter((p) => p.is_active && !p.stripe_price_id);
 
   mount.innerHTML = `
-    ${cfg.active_source === 'none' ? banner('Online billing is off',
+    ${cfg.active_source === 'none' ? banner('Online Billing Is Off',
       'Website "Buy now", in-app checkout and automatic renewals all need a Stripe secret key.', 'warn') : ''}
-    ${cfg.active_mode === 'test' ? banner('Test mode',
+    ${cfg.active_mode === 'test' ? banner('Test Mode',
       'Payments use Stripe test cards (4242 4242 4242 4242) and no money moves. Switch to live keys and live prices before launch.', '') : ''}
-    ${cfg.active_source !== 'none' && !cfg.active_has_webhook_secret ? banner('Webhook signing secret missing',
+    ${cfg.active_source !== 'none' && !cfg.active_has_webhook_secret ? banner('Webhook Signing Secret Missing',
       'Without it every Stripe webhook is refused, so paid checkouts never create or activate accounts and renewals are never recorded.', 'bad') : ''}
 
     <form id="stripeForm" class="card" novalidate>
@@ -49,7 +49,7 @@ export async function render(mount) {
         ${secretField('webhook_secret', 'Webhook Signing Secret', cfg.has_webhook_secret ? 'saved' : null, 'whsec_…',
           'Shown on the webhook endpoint in Stripe (Developers → Webhooks → your endpoint → Signing secret).')}
         ${field({ name: 'enabled', label: 'Use These Keys', boolean: true, required: true, value: String(cfg.enabled !== false),
-          options: [{ value: 'true', label: 'On — bill through these keys' }, { value: 'false', label: 'Off — fall back to .env' }] })}
+          options: [{ value: 'true', label: 'On — Bill Through These Keys' }, { value: 'false', label: 'Off — Fall Back To .env' }] })}
       </div>
       ${cfg.environment_key_hint && cfg.active_source !== 'environment' ? `<div class="hint">.env also has a key (${esc(cfg.environment_key_hint)}); it's used only while these are off or empty.</div>` : ''}
       ${cfg.updated_at ? `<div class="hint" style="margin-top:6px">Last saved ${esc(fmtAgo(cfg.updated_at))}${cfg.updated_by ? ` by ${esc(cfg.updated_by)}` : ''}.</div>` : ''}
@@ -65,16 +65,16 @@ export async function render(mount) {
     </div>
 
     <div class="card" style="margin-top:16px">
-      <div class="card-head"><h2>Plans and prices</h2>
-        <div class="actions"><a class="btn sm" href="#/platform/plans">Edit plans</a>
-          <button type="button" class="primary sm" id="stripeTest" ${cfg.active_source === 'none' ? 'disabled' : ''}>Test connection</button></div></div>
+      <div class="card-head"><h2>Plans And Prices</h2>
+        <div class="actions"><a class="btn sm" href="#/platform/plans">Edit Plans</a>
+          <button type="button" class="primary sm" id="stripeTest" ${cfg.active_source === 'none' ? 'disabled' : ''}>Test Connection</button></div></div>
       ${missingPrices.length ? banner(`${missingPrices.length} active plan${missingPrices.length === 1 ? '' : 's'} can't be bought online`,
         'Add each one’s Stripe price id (price_…, a monthly recurring price) on the Plans page.', 'warn') : ''}
-      <table><thead><tr><th>Plan</th><th class="num">Price / mo</th><th>Stripe price</th><th>Check</th></tr></thead>
+      <table><thead><tr><th>Plan</th><th class="num">Price / Mo</th><th>Stripe Price</th><th>Check</th></tr></thead>
         <tbody>${cfg.plans.map((p) => `<tr data-plan="${esc(p.name)}">
           <td>${esc(p.name)}${p.is_active ? '' : ' <span class="pill mute">retired</span>'}</td>
           <td class="num">${esc(money(p.monthly_price_cents))}</td>
-          <td class="mono">${p.stripe_price_id ? esc(p.stripe_price_id) : '<span class="hint">none</span>'}</td>
+          <td class="mono">${p.stripe_price_id ? esc(p.stripe_price_id) : '<span class="hint">None</span>'}</td>
           <td class="check hint">—</td></tr>`).join('')}</tbody></table>
       <p class="err" id="stripeTestError" style="margin-top:10px"></p>
     </div>`;
@@ -90,12 +90,12 @@ export async function render(mount) {
     values.clear_secret_key = Boolean(values.clear_secret_key);
     values.clear_webhook_secret = Boolean(values.clear_webhook_secret);
     busy($('#stripeSave', mount), async () => {
-      if (await guard(() => api.patch('/admin/stripe', values), 'Stripe settings saved')) render(mount);
+      if (await guard(() => api.patch('/admin/stripe', values), 'Stripe Settings Saved')) render(mount);
     });
   });
 
   $('#copyWh', mount).addEventListener('click', () => {
-    navigator.clipboard?.writeText(cfg.webhook_url).then(() => toast('Webhook URL copied', 'ok'));
+    navigator.clipboard?.writeText(cfg.webhook_url).then(() => toast('Webhook URL Copied', 'ok'));
   });
 
   $('#stripeTest', mount).addEventListener('click', (event) => busy(event.currentTarget, async () => {
@@ -123,6 +123,6 @@ function secretField(name, label, hint, placeholder, help) {
       <input type="password" name="${name}" id="${name}" autocomplete="new-password" spellcheck="false"
              placeholder="${hint ? 'Leave blank to keep the saved one' : esc(placeholder)}">
       ${hint ? `<label class="hint" style="display:inline-flex;gap:8px;align-items:center;margin-top:8px;font-weight:400;cursor:pointer">
-        <input type="checkbox" name="clear_${name}" style="width:auto;margin:0"> Remove the saved one</label>` : ''}
+        <input type="checkbox" name="clear_${name}" style="width:auto;margin:0"> Remove The Saved One</label>` : ''}
     </div>`;
 }

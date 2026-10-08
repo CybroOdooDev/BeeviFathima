@@ -248,3 +248,27 @@ def test_staff_onboarded_owner_also_gets_a_verification_email(api, captured_mail
     assert response.status_code == 201, response.text
     assert len(captured_mail) == 1
     assert captured_mail[0]["to"] == "owner@globex.example.com"
+
+
+def test_a_malformed_address_is_refused_before_any_lookup(monkeypatch):
+    """``you@yourcompanycom`` has no dot in its domain. It is refused on shape,
+    with a message saying so, without ever reaching a DNS lookup."""
+    from app.services import email_check
+
+    def no_lookup(*a, **k):
+        raise AssertionError("shape errors must not reach validate_email / DNS")
+
+    monkeypatch.setattr(email_check, "validate_email", no_lookup)
+    cases = {
+        "you@yourcompanycom": "dot is missing",
+        "you.yourcompany.com": "exactly one @",
+        "@yourcompany.com": "before the @",
+        "you@": "after the @",
+        "you@a.b": "valid email",
+        "you @x.com": "exactly one @" if False else "valid email",
+        "": "Enter your email",
+    }
+    for address, fragment in cases.items():
+        with pytest.raises(email_check.UngenuineEmailError) as exc:
+            email_check.assert_genuine_email(address)
+        assert fragment in str(exc.value), (address, str(exc.value))

@@ -6,6 +6,8 @@ import logging
 from datetime import date, datetime, time, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from time import monotonic
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -431,6 +433,45 @@ def delete_punch(
     return MessageOut(message="Punch deleted")
 
 
+_DETAILS_CHECKED: dict[str, float] = {}
+
+
+def _fill_missing_companies(db: Session, tenant) -> None:
+    try:
+        missing = db.scalar(
+            select(func.count(EmployeeMapping.id)).where(
+                EmployeeMapping.tenant_id == tenant.id,
+                EmployeeMapping.status == MappingStatus.mapped.value,
+                EmployeeMapping.odoo_employee_id.is_not(None),
+                EmployeeMapping.odoo_company_id.is_(None)
+                | (EmployeeMapping.odoo_department_name.is_(None)
+                   & EmployeeMapping.odoo_manager_id.is_(None)),
+            )
+        )
+        # Throttled: someone with neither a department nor a manager would
+        # otherwise trigger an Odoo read on every page open.
+        now = monotonic()
+        if not missing or now - _DETAILS_CHECKED.get(tenant.id, -1e9) < 300:
+            return
+        _DETAILS_CHECKED[tenant.id] = now
+        conn = db.scalars(
+            select(OdooConnection).where(
+                OdooConnection.tenant_id == tenant.id, OdooConnection.is_active.is_(True)
+            ).limit(1)
+        ).first()
+        if conn is None:
+            return
+        from app.services.connections import build_odoo_client
+        from app.services.roster_import import refresh_companies
+
+        odoo = build_odoo_client(tenant, conn)
+        odoo.authenticate()
+        if refresh_companies(db, tenant, odoo, force=True):
+            db.commit()
+    except Exception:  # noqa: BLE001 — a display cache must never break the list
+        db.rollback()
+
+
 @router.get("/mappings", response_model=list[MappingOut])
 def list_mappings(
     status_filter: str | None = Query(default=None, alias="status"),
@@ -438,13 +479,37 @@ def list_mappings(
     principal: Principal = Depends(get_principal),
     db: Session = Depends(get_db),
 ) -> list[EmployeeMapping]:
+    # Employees matched before companies were recorded get theirs the first
+    # time the list is opened, rather than waiting for the next sync.
+    _fill_missing_companies(db, principal.tenant)
     stmt = select(EmployeeMapping).where(EmployeeMapping.tenant_id == principal.tenant.id)
     if status_filter:
         stmt = stmt.where(EmployeeMapping.status == status_filter)
     else:
         # People in a company switched off are not part of the roster until it
         # is switched back on (ask for them with ?status=out_of_scope).
-        stmt = stmt.where(EmployeeMapping.status != MappingStatus.out_of_scope.value)
+        stmt = stmt.where(EmployeeMapping.status.not_in([
+            MappingStatus.out_of_scope.value, MappingStatus.removed.value]))
+        # Hide them the moment a company is switched off, not only after the
+        # next sync has parked them: the connection's switches decide.
+        conn = db.scalars(
+            select(OdooConnection).where(
+                OdooConnection.tenant_id == principal.tenant.id,
+                OdooConnection.is_active.is_(True),
+            ).limit(1)
+        ).first()
+        if conn is not None:
+            off = list(conn.disabled_company_ids or [])
+            if off:
+                stmt = stmt.where(
+                    EmployeeMapping.odoo_company_id.is_(None)
+                    | EmployeeMapping.odoo_company_id.not_in(off)
+                )
+            if conn.company_id is not None:
+                stmt = stmt.where(
+                    EmployeeMapping.odoo_company_id.is_(None)
+                    | (EmployeeMapping.odoo_company_id == conn.company_id)
+                )
     return list(
         db.scalars(
             stmt.order_by(EmployeeMapping.status, EmployeeMapping.emp_code).limit(limit)
@@ -505,6 +570,39 @@ def update_mapping(
     return mapping
 
 
+@router.delete("/mappings/{mapping_id}", response_model=MessageOut)
+def delete_mapping(
+    mapping_id: str,
+    request: Request,
+    principal: Principal = Depends(require_writer),
+    db: Session = Depends(get_db),
+) -> MessageOut:
+    """Delete an unmatched badge from the list.
+
+    Only badges nobody has been matched to can go: a matched employee is
+    unmapped first. The row is kept, hidden, rather than dropped, so the next
+    sync or device-user push does not put it straight back; its held punches
+    are skipped.
+    """
+    mapping = db.get(EmployeeMapping, mapping_id)
+    if mapping is None or mapping.tenant_id != principal.tenant.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Mapping not found")
+    if mapping.status == MappingStatus.mapped.value:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "That badge is matched to an Odoo employee — unmatch it first.")
+    mapping.status = MappingStatus.removed.value
+    mapping.match_note = "Deleted by a user."
+    db.query(PunchRecord).filter(
+        PunchRecord.tenant_id == principal.tenant.id,
+        PunchRecord.emp_code == mapping.emp_code,
+        PunchRecord.process_state == PunchState.unmapped.value,
+    ).update({"process_state": PunchState.skipped.value,
+              "error_message": "Badge deleted from the unmatched list"})
+    audit(db, principal, "mapping.delete", mapping.emp_code, "", request)
+    db.commit()
+    return MessageOut(message="Badge deleted")
+
+
 @router.get("/attendance", response_model=list[AttendanceOut])
 def list_attendance(
     date_from: str | None = None,
@@ -563,9 +661,19 @@ def dashboard(
     odoo_conn = db.scalars(
         select(OdooConnection).where(OdooConnection.tenant_id == tenant.id).limit(1)
     ).first()
-    source = db.scalars(
-        select(DeviceSource).where(DeviceSource.tenant_id == tenant.id).limit(1)
-    ).first()
+    sources = db.scalars(
+        select(DeviceSource).where(DeviceSource.tenant_id == tenant.id)
+        .order_by(DeviceSource.created_at)
+    ).all()
+    # One word for the whole set: the worst state any connection is in.
+    source_state = "missing"
+    for rank in ("failed", "degraded", "unverified", "connected"):
+        if any(x.status == rank for x in sources):
+            source_state = rank
+            break
+    counts = {"total": len(sources)}
+    for name in ("connected", "degraded", "failed", "unverified"):
+        counts[name] = sum(1 for x in sources if x.status == name)
 
     return DashboardOut(
         tenant=TenantOut.model_validate(tenant),
@@ -584,8 +692,9 @@ def dashboard(
         last_run=SyncRunOut.model_validate(last_run) if last_run else None,
         connection_health={
             "odoo": odoo_conn.status if odoo_conn else "missing",
-            "source": source.status if source else "missing",
+            "source": source_state,
         },
+        source_counts=counts,
         schedule=_schedule_out(db, tenant),
         renewal_warning=renewal_warning(tenant),
     )

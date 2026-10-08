@@ -38,7 +38,7 @@ export function confirmLeave() {
     dialog.setAttribute('aria-labelledby', 'leaveTitle');
     dialog.style.width = 'min(440px, calc(100vw - 24px))';
     dialog.innerHTML = `
-      <div class="wiz-head"><strong id="leaveTitle">${esc('Unsaved changes')}</strong>
+      <div class="wiz-head"><strong id="leaveTitle">${esc('Unsaved Changes')}</strong>
         <button type="button" class="link wiz-x" data-answer="cancel" aria-label="Close">&times;</button></div>
       <div class="wiz-body">
         <p style="margin:0">You have changes on this page that haven’t been saved.

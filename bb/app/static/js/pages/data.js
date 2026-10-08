@@ -3,8 +3,7 @@
 import { api, auth } from '../api.js';
 import {
   $, busy, empty, esc, field, fmtAgo, fmtHours, fmtLocal, fmtUtc, guard, loading, pill,
-  readForm, stat, todayISO,
-} from '../ui.js';
+  readForm, stat, todayISO, triggerLabel } from '../ui.js';
 
 const TRASH_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
   + 'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
@@ -22,9 +21,9 @@ function rangePresets() {
   return [
     { label: 'Today', from: today, to: today },
     { label: 'Yesterday', from: todayISO(-1), to: todayISO(-1) },
-    { label: 'Last 7 days', from: todayISO(-6), to: today },
-    { label: 'This month', from: iso(monthStart), to: today },
-    { label: 'Last 30 days', from: todayISO(-29), to: today },
+    { label: 'Last 7 Days', from: todayISO(-6), to: today },
+    { label: 'This Month', from: iso(monthStart), to: today },
+    { label: 'Last 30 Days', from: todayISO(-29), to: today },
   ];
 }
 
@@ -78,7 +77,7 @@ export async function renderAttendance(mount, route) {
       <div class="grid cols-3" style="margin-bottom:14px">
         ${stat({ label: 'People', value: people })}
         ${stat({ label: 'Hours', value: hours.toFixed(1), note: 'punch to punch' })}
-        ${stat({ label: 'Still open', value: open, tone: open ? 'warn' : '', note: 'no check-out yet' })}
+        ${stat({ label: 'Still Open', value: open, tone: open ? 'warn' : '', note: 'no check-out yet' })}
       </div>
       <div class="card">
         <h2>Shifts <span class="hint">${rows.length}${n ? ` matching “${esc(needle.trim())}”` : ''}${
@@ -106,7 +105,7 @@ export async function renderAttendance(mount, route) {
           </table>
         </div>
       </div>` : empty(
-        n ? `No one matching “${needle.trim()}”` : 'No attendance in this range',
+        n ? `No one matching “${needle.trim()}”` : 'No Attendance In This Range',
         n ? 'Check the spelling, or clear the search.' : 'Pick a wider range above, or run a sync.'
       );
   };
@@ -133,13 +132,13 @@ export function unmappedCard(attention) {
   if (!attention.length) {
     return `
       <div class="card" id="unmapped" style="margin-top:18px">
-        <h2>Unmapped employees <span class="hint">none</span></h2>
-        ${empty('Every badge is matched', 'New badges show up here after a sync, until they are matched.')}
+        <h2>Unmapped Employees <span class="hint">None</span></h2>
+        ${empty('Every Badge Is Matched', 'New badges show up here after a sync, until they are matched.')}
       </div>`;
   }
   return `
     <div class="card" id="unmapped" style="margin-top:18px">
-      <h2>Unmapped employees <span class="hint">${attention.length} badge${attention.length === 1 ? '' : 's'} holding attendance</span></h2>
+      <h2>Unmapped Employees <span class="hint">${attention.length} badge${attention.length === 1 ? '' : 's'} holding attendance</span></h2>
       <p style="color:var(--muted);margin:0 0 12px;font-size:13px">
         These badges have punched but no Odoo employee carries them, so their
         attendance is held. Pick the employee each one belongs to — or, for
@@ -148,7 +147,7 @@ export function unmappedCard(attention) {
       </p>
       <div class="scroll" style="overflow:visible">
         <table>
-          <thead><tr><th>Badge</th><th>Name on the device</th><th>Status</th><th>Match to Odoo employee</th></tr></thead>
+          <thead><tr><th>Badge</th><th>Name On The Device</th><th>Status</th><th>Match To Odoo Employee</th></tr></thead>
           <tbody>
             ${attention.map((m) => `
               <tr>
@@ -160,11 +159,13 @@ export function unmappedCard(attention) {
                     <div class="match-row">
                       <div class="picker" data-picker="${esc(m.id)}">
                         <input type="search" placeholder="Search Odoo employees…" autocomplete="off"
-                               aria-label="Odoo employee for badge ${esc(m.emp_code)}" value="${esc(m.source_name && m.source_name !== 'Unknown badge' ? m.source_name : '')}">
+                               aria-label="Odoo employee for badge ${esc(m.emp_code)}" value="${esc(m.source_name && String(m.source_name).toLowerCase() !== 'unknown badge' ? m.source_name : '')}">
                         <ul class="picker-list hidden" role="listbox"></ul>
                       </div>
                       <button class="sm primary" data-map="${esc(m.id)}" disabled>Match</button>
                       <button class="sm link" data-ignore="${esc(m.id)}" title="Stop holding attendance for this badge — its punches are skipped.">Ignore</button>
+                      <span class="remove-slot"><button type="button" class="icon-btn" data-remove="${esc(m.id)}" aria-label="Delete badge ${esc(m.emp_code)}"
+                              title="Delete — removes this badge from the list. Its held punches are skipped, and it won't come back on the next sync.">${TRASH_ICON}</button></span>
                     </div>` : '<span class="hint">Your role cannot match badges.</span>'}
                 </td>
               </tr>`).join('')}
@@ -182,13 +183,46 @@ export function wireUnmapped(mount, rerender) {
         guard(async () => {
           await api.patch(`/mappings/${button.dataset.ignore}`, { status: 'ignored' });
           await rerender();
-        }, 'Badge ignored')
+        }, 'Badge Ignored')
       )
     );
+  });
+
+  // Two clicks, like deleting a punch: the first arms the icon, the second deletes.
+  mount.querySelectorAll('[data-remove]').forEach((button) => {
+    let armed = null;
+    const icon = button.innerHTML;
+    button.addEventListener('click', () => {
+      if (!armed) {
+        button.textContent = 'Confirm Delete';
+        button.classList.remove('icon-btn');
+        button.classList.add('sm', 'danger');
+        armed = setTimeout(() => {
+          armed = null;
+          button.innerHTML = icon;
+          button.classList.remove('sm', 'danger');
+          button.classList.add('icon-btn');
+        }, 4000);
+        return;
+      }
+      clearTimeout(armed);
+      armed = null;
+      busy(button, () => guard(async () => {
+        await api.del(`/mappings/${button.dataset.remove}`);
+        await rerender();
+      }, 'Badge Deleted'));
+    });
   });
 }
 
 export const needsMatch = (m) => ['unmapped', 'ambiguous'].includes(m.status);
+
+const FUNNEL = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4-2v-4z"/></svg>';
+
+// The Employees filters live for the session, so coming back to the page
+// keeps what you had narrowed to.
+const EMP_FILTERS = { department: new Set(), manager: new Set(), company: new Set() };
+let empSearch = '';
 
 export async function renderEmployees(mount) {
   mount.innerHTML = loading();
@@ -196,45 +230,152 @@ export async function renderEmployees(mount) {
   const waiting = mappings.filter(needsMatch).length;
   const resolved = mappings.filter((m) => !needsMatch(m));
 
+  const distinct = (pairs) => [...new Map(pairs.filter(([v]) => v != null && v !== ''))
+    .entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1])));
+  const companies = distinct(resolved.map((m) => [String(m.odoo_company_id ?? ''), m.odoo_company_name || (m.odoo_company_id != null ? `Company #${m.odoo_company_id}` : '')]));
+  const departments = distinct(resolved.map((m) => [m.odoo_department_name, m.odoo_department_name]));
+  const managers = distinct(resolved.map((m) => [m.odoo_manager_id != null ? String(m.odoo_manager_id) : '', m.odoo_manager_name || (m.odoo_manager_id != null ? `Employee #${m.odoo_manager_id}` : '')]));
+  // A company column and filter only earn their place when more than one
+  // company's employees are listed.
+  const showCompany = companies.length > 1;
+  const showDept = departments.length > 0;
+  const showManager = managers.length > 0;
+  const GROUPS = [
+    ['department', 'Department', departments, showDept],
+    ['manager', 'Manager', managers, showManager],
+    ['company', 'Company', companies, showCompany],
+  ].filter((g) => g[3]);
+  // Drop stale selections (a company switched off, a manager who left).
+  for (const [key, , options] of GROUPS) {
+    const valid = new Set(options.map(([v]) => v));
+    EMP_FILTERS[key].forEach((v) => { if (!valid.has(v)) EMP_FILTERS[key].delete(v); });
+  }
+  if (!showCompany) EMP_FILTERS.company.clear();
+  if (!showDept) EMP_FILTERS.department.clear();
+  if (!showManager) EMP_FILTERS.manager.clear();
+  const activeCount = () => GROUPS.reduce((n, [key]) => n + EMP_FILTERS[key].size, 0);
+
+  const menuHtml = () => `
+    ${GROUPS.map(([key, title, options]) => `
+      <fieldset class="flt-group"><legend>${esc(title)}</legend>
+        <div class="flt-scroll">
+          ${options.map(([v, label]) => `<label class="flt-opt"><input type="checkbox" data-eflt="${key}" value="${esc(v)}"
+            ${EMP_FILTERS[key].has(v) ? 'checked' : ''}> <span>${esc(label)}</span></label>`).join('')}
+        </div>
+      </fieldset>`).join('')}
+    <div class="flt-foot"><button type="button" class="sm" data-eflt-clear ${activeCount() ? '' : 'disabled'}>Clear All Filters</button></div>`;
+
   mount.innerHTML = `
     <div class="card">
-      <div class="card-head" style="position:static">
-        <h2>Employees <span class="hint">${resolved.length} matched to Odoo</span></h2>
+      <div class="card-head" style="position:static;justify-content:flex-end">
         <div class="actions">
-          ${resolved.length > 8 ? '<input type="search" id="matchedFilter" class="compact-search" placeholder="Filter by name or badge">' : ''}
+          ${resolved.length ? `<input type="search" id="matchedFilter" class="compact-search" style="width:300px"
+            placeholder="Search by name, badge or Odoo ID" aria-label="Search employees" value="${esc(empSearch)}">` : ''}
+          ${GROUPS.length ? `<span class="flt-wrap" style="margin-left:0">
+            <button class="sm flt-btn ${activeCount() ? 'on' : ''}" id="empFltBtn" aria-haspopup="true" aria-expanded="false" title="Filters">
+              ${FUNNEL}<span>Filters</span>${activeCount() ? `<span class="flt-count">${activeCount()}</span>` : ''}</button>
+            <div class="flt-menu flt-menu-right hidden" id="empFltMenu">${menuHtml()}</div></span>` : ''}
           ${waiting ? `<a class="btn sm warn-link" href="#/settings/odoo?show=unmapped">
-            Show unmapped employees (${waiting})</a>` : ''}
+            Show Unmapped Employees (${waiting})</a>` : ''}
         </div>
       </div>
       ${resolved.length ? `
         <div class="scroll">
           <table id="matchedTable">
-            <thead><tr><th>Employee</th><th>Badge</th><th>Matched by</th><th>Status</th><th>Open shift</th><th>Last punch</th></tr></thead>
+            <thead><tr><th>Employee</th>${showDept ? '<th>Department</th>' : ''}${showManager ? '<th>Manager</th>' : ''}${showCompany ? '<th>Company</th>' : ''}<th>Badge</th><th>Matched By</th><th>Status</th><th>Open Shift</th><th>Last Punch</th></tr></thead>
             <tbody>
               ${resolved.map((m) => `
-                <tr data-search="${esc(`${m.odoo_employee_name || ''} ${m.emp_code}`.toLowerCase())}">
+                <tr data-search="${esc(`${m.odoo_employee_name || ''} ${m.emp_code} ${m.odoo_employee_id ?? ''} ${m.source_name || ''}`.toLowerCase())}"
+                    data-odoo="${esc(m.odoo_employee_id ?? '')}"
+                    data-department="${esc(m.odoo_department_name ?? '')}"
+                    data-manager="${esc(m.odoo_manager_id ?? '')}"
+                    data-company="${esc(m.odoo_company_id ?? '')}">
                   <td><div>${esc(m.odoo_employee_name || '—')}</div>${m.odoo_employee_id ? `<div class="hint mono">Odoo #${esc(m.odoo_employee_id)}</div>` : ''}</td>
+                  ${showDept ? `<td>${esc(m.odoo_department_name || '—')}</td>` : ''}
+                  ${showManager ? `<td>${esc(m.odoo_manager_name || '—')}</td>` : ''}
+                  ${showCompany ? `<td>${esc(m.odoo_company_name || '—')}</td>` : ''}
                   <td class="mono">${esc(m.emp_code)}</td>
-                  <td>${esc(m.match_method || '—')}</td>
+                  <td style="text-transform:capitalize">${esc(m.match_method || '—')}</td>
                   <td>${pill(m.status)}</td>
                   <td>${m.open_attendance_id
                     ? `<span class="pill warn">open #${esc(m.open_attendance_id)}</span>`
                     : '<span class="pill mute">none</span>'}</td>
                   <td>${esc(m.last_punch_at ? fmtAgo(m.last_punch_at) : '—')}</td>
                 </tr>`).join('')}
+              <tr id="empNone" class="hidden"><td colspan="12" class="hint" style="text-align:center;padding:18px">No employees match.</td></tr>
             </tbody>
           </table>
-        </div>` : empty('Nothing matched yet', waiting
+        </div>` : empty('Nothing Matched Yet', waiting
           ? 'Badges have punched but none is matched yet — use “Show unmapped employees” above.'
           : 'Badges appear here after the first sync.')}
     </div>`;
 
-  $('#matchedFilter', mount)?.addEventListener('input', (event) => {
-    const n = event.target.value.trim().toLowerCase();
-    mount.querySelectorAll('#matchedTable tbody tr').forEach((tr) => {
-      tr.classList.toggle('hidden', Boolean(n) && !tr.dataset.search.includes(n));
+  // One pass applies the search and every filter together. Within a filter,
+  // ticking several values means "any of these"; across filters, "all of".
+  const applyFilters = () => {
+    const n = ($('#matchedFilter', mount)?.value || '').trim().toLowerCase();
+    empSearch = n ? $('#matchedFilter', mount).value : '';
+    let shown = 0;
+    mount.querySelectorAll('#matchedTable tbody tr[data-search]').forEach((tr) => {
+      const hide = (n && !tr.dataset.search.includes(n))
+        || EMP_FILTERS.department.size && !EMP_FILTERS.department.has(tr.dataset.department)
+        || EMP_FILTERS.manager.size && !EMP_FILTERS.manager.has(tr.dataset.manager)
+        || EMP_FILTERS.company.size && !EMP_FILTERS.company.has(tr.dataset.company);
+      tr.classList.toggle('hidden', Boolean(hide));
+      if (!hide) shown += 1;
     });
-  });
+    $('#empNone', mount)?.classList.toggle('hidden', shown > 0);
+    const filtering = Boolean(n) || activeCount() > 0;
+    const count = $('#empCount', mount);
+    if (count) count.textContent = filtering
+      ? `${shown} of ${resolved.length} shown` : `${resolved.length} matched to Odoo`;
+  };
+
+  const btn = $('#empFltBtn', mount);
+  const menu = $('#empFltMenu', mount);
+  const syncButton = () => {
+    btn.classList.toggle('on', activeCount() > 0);
+    btn.querySelector('.flt-count')?.remove();
+    if (activeCount()) btn.insertAdjacentHTML('beforeend', `<span class="flt-count">${activeCount()}</span>`);
+    menu.querySelector('[data-eflt-clear]').disabled = activeCount() === 0;
+  };
+  if (btn && menu) {
+    menu.addEventListener('change', (event) => {
+      const box = event.target.closest('[data-eflt]');
+      if (!box) return;
+      const set = EMP_FILTERS[box.dataset.eflt];
+      if (box.checked) set.add(box.value); else set.delete(box.value);
+      syncButton();
+      applyFilters();
+    });
+    menu.querySelector('[data-eflt-clear]').addEventListener('click', () => {
+      Object.values(EMP_FILTERS).forEach((set) => set.clear());
+      menu.querySelectorAll('[data-eflt]').forEach((box) => { box.checked = false; });
+      syncButton();
+      applyFilters();
+    });
+    btn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const open = menu.classList.toggle('hidden') === false;
+      btn.setAttribute('aria-expanded', String(open));
+    });
+    const away = (event) => {
+      if (!document.body.contains(btn)) { document.removeEventListener('click', away); return; }
+      if (!menu.classList.contains('hidden') && !menu.contains(event.target)) {
+        menu.classList.add('hidden');
+        btn.setAttribute('aria-expanded', 'false');
+      }
+    };
+    document.addEventListener('click', away);
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && !menu.classList.contains('hidden')) {
+        menu.classList.add('hidden');
+        btn.setAttribute('aria-expanded', 'false');
+      }
+    });
+  }
+  $('#matchedFilter', mount)?.addEventListener('input', applyFilters);
+  applyFilters();
 }
 
 /** Search-as-you-type over the connected Odoo's employees.
@@ -329,8 +470,8 @@ function wirePicker(box, mount, rerender) {
 /* --- Activity ------------------------------------------------------------- */
 
 const STATE_LABEL = {
-  pending: 'Pending', synced: 'Synced', unmapped: 'Unmatched badge', error: 'Error',
-  skipped: 'Skipped', deleted: 'Deleted', held: 'Held (device limit)',
+  pending: 'Pending', synced: 'Synced', unmapped: 'Unmatched Badge', error: 'Error',
+  skipped: 'Skipped', deleted: 'Deleted', held: 'Held (Device Limit)',
 };
 
 function wireRunLogs(mount) {
@@ -388,12 +529,12 @@ export async function renderActivity(mount, route) {
   const viewTabs = `
     <div class="tabs">
       <a href="#/activity" class="${view === 'punches' ? 'active' : ''}">Punches</a>
-      <a href="#/activity?view=runs" class="${view === 'runs' ? 'active' : ''}">Sync runs</a>
+      <a href="#/activity?view=runs" class="${view === 'runs' ? 'active' : ''}">Sync Runs</a>
     </div>`;
 
   const runsCard = `
     <div class="card" style="margin-bottom:14px">
-      <h2>Sync runs <span class="hint">the last ${runs.length}</span></h2>
+      <h2>Sync Runs <span class="hint">the last ${runs.length}</span></h2>
       ${runs.length ? `
         <div class="scroll">
           <table>
@@ -408,14 +549,14 @@ export async function renderActivity(mount, route) {
                   <td class="num">${esc(r.attendances_created)}</td>
                   <td class="num">${esc(r.attendances_closed)}</td>
                   <td class="num">${esc(r.error_count)}</td>
-                  <td>${esc(r.triggered_by)}</td>
+                  <td>${esc(triggerLabel(r.triggered_by))}</td>
                   <td class="actions-cell"><div class="row-actions">
                     ${r.punches_new
                       ? `<a class="btn sm" href="${linkFor({
                           run_id: r.id, state: '', emp_code: '', view: '',
                           terminal_sn: '', date_from: '', date_to: '' })}"
                          >${esc(r.punches_new)} punch${r.punches_new === 1 ? '' : 'es'}</a>`
-                      : '<span class="hint">no new punches</span>'}
+                      : '<span class="hint">No New Punches</span>'}
                     <button class="sm" data-log="${esc(r.id)}">Log</button>
                   </div></td>
                 </tr>
@@ -427,7 +568,7 @@ export async function renderActivity(mount, route) {
                 </tr>`).join('')}
             </tbody>
           </table>
-        </div>` : empty('No runs yet', 'Press Sync now at the top to run one.')}
+        </div>` : empty('No Runs Yet', 'Press Sync now at the top to run one.')}
     </div>`;
 
   if (view === 'runs') {
@@ -439,7 +580,7 @@ export async function renderActivity(mount, route) {
   mount.innerHTML = `
     ${viewTabs}
     <div class="card">
-      <h2>Punch ledger <span class="hint">${filtered
+      <h2>Punch Ledger <span class="hint">${filtered
         ? `${punches.length} punch${punches.length === 1 ? '' : 'es'} matching`
         : 'every punch ever pulled'}</span></h2>
       ${shownRun ? `
@@ -456,7 +597,7 @@ export async function renderActivity(mount, route) {
                  late and their clocks drift. Those stay listed under the run
                  that first saw them.`
               : '.'}
-          <a href="${linkFor({ run_id: '' })}">Show the whole ledger</a>
+          <a href="${linkFor({ run_id: '' })}">Show The Whole Ledger</a>
         </div>` : ''}
       <div class="chips" role="group" aria-label="State">
         ${states.map((s) => `
@@ -467,7 +608,7 @@ export async function renderActivity(mount, route) {
       <form id="punchFilters" class="filter-row" style="margin:14px 0 6px">
         <label class="inline-field"><span>Device</span>
           <select name="terminal_sn">
-            <option value="">any device</option>
+            <option value="">Any Device</option>
             ${devices.map((d) => `<option value="${esc(d.serial_number)}"${
               d.serial_number === terminal ? ' selected' : ''
             }>${esc(d.alias || d.serial_number)}</option>`).join('')}
@@ -487,7 +628,7 @@ export async function renderActivity(mount, route) {
       ${punches.length ? `
         <div class="scroll">
           <table>
-            <thead><tr><th>Punch time</th><th>Badge</th><th>Dir</th><th>Device</th><th>State</th><th class="num">Odoo</th><th>Detail</th><th></th></tr></thead>
+            <thead><tr><th>Punch Time</th><th>Badge</th><th>Dir</th><th>Device</th><th>State</th><th class="num">Odoo</th><th>Detail</th><th></th></tr></thead>
             <tbody>
               ${punches.map((p) => `
                 <tr>
@@ -514,10 +655,10 @@ export async function renderActivity(mount, route) {
         </div>
         ${punches.length >= limit && limit < 500 ? `
           <div class="row" style="justify-content:center;margin-top:12px">
-            <a class="btn" href="${linkFor({ limit: String(Math.min(limit + 100, 500)) })}">Show more</a>
+            <a class="btn" href="${linkFor({ limit: String(Math.min(limit + 100, 500)) })}">Show More</a>
           </div>` : punches.length >= 500 ? '<div class="hint" style="text-align:center;margin-top:10px">Showing the latest 500 — narrow the filters to see older ones.</div>' : ''}
         ` : empty(
-          'No punches',
+          'No Punches',
           filtered
             ? 'Nothing matches these filters. Widen the dates, or clear them.'
             : stateFilter
@@ -540,7 +681,7 @@ export async function renderActivity(mount, route) {
         guard(async () => {
           await api.post(`/punches/${button.dataset.retry}/retry`);
           await renderActivity(mount, route);
-        }, 'Queued for the next sync')
+        }, 'Queued For The Next Sync')
       )
     );
   });
@@ -554,7 +695,7 @@ export async function renderActivity(mount, route) {
       if (!armed) {
         // Armed: the muted icon turns into a plain "Confirm delete" button for
         // a few seconds, then goes back.
-        button.textContent = 'Confirm delete';
+        button.textContent = 'Confirm Delete';
         button.classList.remove('icon-btn');
         button.classList.add('sm', 'danger');
         armed = setTimeout(() => {
@@ -571,7 +712,7 @@ export async function renderActivity(mount, route) {
         guard(async () => {
           await api.del(`/punches/${button.dataset.delete}`);
           await renderActivity(mount, route);
-        }, 'Punch deleted')
+        }, 'Punch Deleted')
       );
     });
   });

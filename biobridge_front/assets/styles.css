@@ -340,6 +340,23 @@ section { padding: 96px 0; }
 .phone-code-pop li.none { cursor: default; color: #7a7d96; }
 .phone-code-pop li.none:hover { background: none; }
 
+/* Elements shown/hidden from script use the hidden attribute; keep it winning over display rules. */
+[hidden] { display: none !important; }
+
+/* Show / hide eye inside password fields (assets/site.js). */
+.pw-wrap { position: relative; display: block; width: 100%; }
+.pw-wrap > input { width: 100%; padding-right: 46px; }
+.pw-toggle { position: absolute; top: 0; right: 6px; height: 100%; width: 34px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: 0; background: transparent; color: var(--faint); cursor: pointer; border-radius: 8px; }
+.pw-toggle:hover { color: var(--accent); }
+.pw-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pw-toggle[aria-pressed="true"] { color: var(--accent); }
+
+/* The confirmation / set-password card: 15% narrower than the default 620px notice card. */
+#verifyCard { max-width: 527px; }
+
+.field input[aria-invalid="true"] { border-color: #d92d20; }
+
+
 /* Monthly / yearly switch (pricing page) and its saving badge. */
 .interval { display: flex; width: fit-content; margin: 0 auto 36px; gap: 4px; padding: 4px; background: var(--bg); border: 1px solid var(--rule); border-radius: 999px; }
 .interval button { font: inherit; font-weight: 600; font-size: 15px; color: var(--muted); background: transparent; border: 0; padding: 10px 22px; border-radius: 999px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; }

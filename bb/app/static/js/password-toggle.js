@@ -30,16 +30,16 @@ function enhance(input) {
   button.type = 'button';            // never submits the form
   button.className = 'pw-toggle';
   button.innerHTML = EYE;
-  button.setAttribute('aria-label', 'Show password');
+  button.setAttribute('aria-label', 'Show Password');
   button.setAttribute('aria-pressed', 'false');
-  button.title = 'Show password';
+  button.title = 'Show Password';
   wrap.appendChild(button);
 
   const set = (visible) => {
     input.type = visible ? 'text' : 'password';
     button.innerHTML = visible ? EYE_OFF : EYE;
     button.setAttribute('aria-pressed', String(visible));
-    const label = visible ? 'Hide password' : 'Show password';
+    const label = visible ? 'Hide Password' : 'Show Password';
     button.setAttribute('aria-label', label);
     button.title = label;
   };

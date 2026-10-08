@@ -48,7 +48,7 @@ def verification_link(raw_token: str) -> str:
 def send_verification_email(user: User, raw_token: str) -> None:
     link = verification_link(raw_token)
     follow_up = (
-        "Once it's confirmed we'll email your login details.\n\n"
+        "The link opens a page where you choose your password and sign in.\n\n"
         if user.credentials_pending else ""
     )
     send_email(
@@ -62,6 +62,21 @@ def send_verification_email(user: User, raw_token: str) -> None:
             "If you didn't request this, you can ignore it."
         ),
     )
+
+
+def peek_token(db: Session, raw_token: str) -> User | None:
+    """Look at ``raw_token`` without using it up: the user it belongs to if it
+    is still good, else ``None``. Lets the confirmation page decide whether to
+    ask for a password before the token is consumed."""
+    user = db.scalars(
+        select(User).where(User.email_verify_token_hash == hash_token(raw_token))
+    ).first()
+    if user is None:
+        return None
+    expires_at = ensure_aware(user.email_verify_token_expires_at)
+    if expires_at is None or expires_at < datetime.now(timezone.utc):
+        return None
+    return user
 
 
 def verify_token(db: Session, raw_token: str) -> User | None:

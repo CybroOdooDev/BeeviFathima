@@ -12,21 +12,21 @@
 <link rel="stylesheet" href="assets/styles.css">
 </head>
 <body>
-<a class="skip" href="#main">Skip to content</a>
+<a class="skip" href="#main">Skip To Content</a>
 
 <header class="site-header">
   <div class="wrap">
     <a class="brand" href="index.html" aria-label="BioBridge home"><span class="brand-mark">B</span><span>Bio<b>Bridge</b></span></a>
     <nav class="nav" aria-label="Main">
-      <a href="index.html#how">How it works</a>
+      <a href="index.html#how">How It Works</a>
       <a href="index.html#features">Features</a>
       <a href="pricing.html">Pricing</a>
-      <a href="setup.html" aria-current="page">Setup guide</a>
+      <a href="setup.html" aria-current="page">Setup Guide</a>
       <a href="contact.html">Contact</a>
     </nav>
     <div class="header-cta">
-      <a class="btn btn-ghost btn-sm" data-app="signin" href="#">Sign in</a>
-      <a class="btn btn-primary btn-sm" href="signup.html">Start free trial</a>
+      <a class="btn btn-ghost btn-sm" data-app="signin" href="#">Sign In</a>
+      <a class="btn btn-primary btn-sm" href="signup.html">Start Free Trial</a>
     </div>
     <button class="menu-btn" type="button" aria-label="Menu" aria-expanded="false">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
@@ -37,23 +37,23 @@
 <main id="main" class="wrap docs">
   <nav class="toc" aria-label="On this page">
     <span class="eyebrow">Setup guide</span>
-    <a href="#before">Before you start</a>
+    <a href="#before">Before You Start</a>
     <a href="#odoo">1 · Connect Odoo</a>
-    <a href="#biotime">2a · Add a BioTime server</a>
-    <a href="#device">2b · Add a standalone device</a>
-    <a href="#badges">3 · Match badges</a>
-    <a href="#pairing">4 · Choose a pairing mode</a>
+    <a href="#biotime">2a · Add A BioTime Server</a>
+    <a href="#device">2b · Add A Standalone Device</a>
+    <a href="#badges">3 · Match Badges</a>
+    <a href="#pairing">4 · Choose A Pairing Mode</a>
     <a href="#trouble">Troubleshooting</a>
   </nav>
 
   <article class="doc">
     <header style="display:flex;flex-direction:column;gap:12px">
-      <h1>Set up BioBridge</h1>
+      <h1>Set Up BioBridge</h1>
       <p class="lead">About 30 minutes from sign-up to your first attendance record in Odoo.</p>
     </header>
 
     <section id="before" class="box" style="padding:26px 28px">
-      <h2>Before you start</h2>
+      <h2>Before You Start</h2>
       <ul>
         <li>An Odoo user in <b>Attendances / Administrator</b> (or HR Officer), with an API key: Odoo → Preferences → Account Security → New API Key.</li>
         <li>For BioTime: its server URL and an admin login. For a standalone terminal: its IP address, reachable from BioBridge.</li>
@@ -68,28 +68,28 @@
     </section>
 
     <section id="biotime" style="padding:0">
-      <h2>2a · Add a BioTime server</h2>
+      <h2>2a · Add A BioTime Server</h2>
       <p>In <b>Settings → Biometric connections</b>, choose <b>+ Add connection → Platform server</b>. Give it a name, the server URL, login, password and the server's timezone. Once it connects, press <b>Import terminals</b> to bring in every terminal BioTime manages, with its area.</p>
     </section>
 
     <section id="device" style="padding:0">
-      <h2>2b · Add a standalone device</h2>
+      <h2>2b · Add A Standalone Device</h2>
       <p>Choose <b>+ Add connection → Standalone device</b>. Name it for where it hangs (<i>Front door</i>), add its location and IP address, and connect. BioBridge reads the serial number from the device and registers it in Odoo straight away.</p>
       <p>Each later <b>Test connection</b> also adds any Odoo employees with a badge ID or PIN who aren't on the device yet, so new hires can enrol their fingerprint.</p>
     </section>
 
     <section id="badges" style="padding:0">
-      <h2>3 · Match badges</h2>
+      <h2>3 · Match Badges</h2>
       <p>BioBridge matches each badge to an Odoo employee by <b>barcode</b>, then <b>PIN</b>, <b>registration number</b> and <b>work email</b>. Anything it can't match with certainty waits under <b>Unmapped employees</b> for you to pick — its attendance is held, not lost.</p>
     </section>
 
     <section id="pairing" style="padding:0">
-      <h2>4 · Choose a pairing mode</h2>
+      <h2>4 · Choose A Pairing Mode</h2>
       <p>In <b>Settings → Pairing</b>. Most sites never need to change the default.</p>
       <div class="grid cols-3" style="gap:14px;margin-top:16px">
         <div class="card" style="padding:20px"><h3 style="font-size:16px">Alternating</h3><p style="font-size:14px">In, out, in, out by time. Right for devices with no IN/OUT keys — most of them.</p></div>
-        <div class="card" style="padding:20px"><h3 style="font-size:16px">State based</h3><p style="font-size:14px">Trusts the device's IN/OUT key. Falls back to alternating if everything arrives as "Check In".</p></div>
-        <div class="card" style="padding:20px"><h3 style="font-size:16px">First / last</h3><p style="font-size:14px">First punch of the day in, last out. Set when the day starts for night shifts.</p></div>
+        <div class="card" style="padding:20px"><h3 style="font-size:16px">State Based</h3><p style="font-size:14px">Trusts the device's IN/OUT key. Falls back to alternating if everything arrives as "Check In".</p></div>
+        <div class="card" style="padding:20px"><h3 style="font-size:16px">First / Last</h3><p style="font-size:14px">First punch of the day in, last out. Set when the day starts for night shifts.</p></div>
       </div>
     </section>
 
@@ -98,7 +98,7 @@
       <p><b>Times are hours off.</b> The device timezone on the connection is wrong — punches arrive with no offset.</p>
       <p><b>"Already checked in" from Odoo.</b> An existing attendance overlaps the new one, often one entered by hand. Fix it in Odoo, then press Retry on the punch in Activity.</p>
       <p><b>A terminal's punches never arrive.</b> Check it isn't disabled on the Terminals page.</p>
-      <p>Still stuck? <a href="contact.html">Contact us</a>.</p>
+      <p>Still stuck? <a href="contact.html">Contact Us</a>.</p>
     </section>
   </article>
 </main>
@@ -110,8 +110,8 @@
       <p class="about">Biometric attendance, synced into Odoo. Built by [COMPANY NAME].</p>
       <p class="copy">© <span data-year></span> [COMPANY NAME]</p>
     </div>
-    <nav aria-label="Product"><b>Product</b><a href="index.html#features">Features</a><a href="pricing.html">Pricing</a><a href="setup.html">Setup guide</a></nav>
-    <nav aria-label="Company"><b>Company</b><a href="contact.html">Contact sales</a><a href="contact.html">Book a demo</a><a data-app="signin" href="#">Sign in</a></nav>
+    <nav aria-label="Product"><b>Product</b><a href="index.html#features">Features</a><a href="pricing.html">Pricing</a><a href="setup.html">Setup Guide</a></nav>
+    <nav aria-label="Company"><b>Company</b><a href="contact.html">Contact Sales</a><a href="contact.html">Book A Demo</a><a data-app="signin" href="#">Sign In</a></nav>
     <nav aria-label="Legal"><b>Legal</b><a href="[TERMS URL]">Terms</a><a href="[PRIVACY URL]">Privacy</a></nav>
   </div>
 </footer>

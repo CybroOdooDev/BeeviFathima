@@ -18,7 +18,7 @@ function deviceState(d) {
   return d.is_enabled ? pill('active', 'enabled') : pill('skipped', 'disabled');
 }
 
-const syncButton = (source, label = 'Sync now') => (auth.canWrite && source.is_active !== false
+const syncButton = (source, label = 'Sync Now') => (auth.canWrite && source.is_active !== false
   ? `<button class="sm primary" data-sync-source="${esc(source.id)}"
              title="Pull ${esc(source.name)}'s punches now and push them to Odoo">${esc(label)}</button>`
   : '');
@@ -30,7 +30,7 @@ function standaloneCard(sources, devicesBySource) {
       <div class="scroll">
         <table class="tight-table">
           <thead><tr><th>Device</th><th>Address</th><th>Serial</th>
-            <th class="num">Punches</th><th>Last seen</th><th>State</th><th>Connection</th><th></th></tr></thead>
+            <th class="num">Punches</th><th>Last Seen</th><th>State</th><th>Connection</th><th></th></tr></thead>
           <tbody>
             ${sources.map((s) => {
               const d = (devicesBySource[s.id] || [])[0];
@@ -46,7 +46,7 @@ function standaloneCard(sources, devicesBySource) {
                   <td class="num">${esc(d?.punch_count ?? '—')}</td>
                   <td>${esc(d?.last_seen_at ? fmtAgo(d.last_seen_at) : '—')}</td>
                   <td>${d ? deviceState(d)
-                      : '<span class="hint" data-tip="Recorded the first time Test connection reaches the device (Settings → Biometric connections)">not recognised yet</span>'}</td>
+                      : '<span class="hint" data-tip="Recorded the first time Test connection reaches the device (Settings → Biometric connections)">Not Recognised Yet</span>'}</td>
                   <td><span data-tip="Checked ${esc(fmtAgo(s.last_checked_at))}">${pill(s.status)}</span></td>
                   <td class="actions-cell"><div class="row-actions">${syncButton(s)}</div></td>
                 </tr>`;
@@ -71,7 +71,7 @@ function platformCard(source, devices) {
         <div class="scroll">
           <table>
             <thead><tr><th>Terminal</th><th>Serial</th><th>IP</th><th>Area</th>
-              <th class="num">Punches</th><th>Last seen</th><th>State</th></tr></thead>
+              <th class="num">Punches</th><th>Last Seen</th><th>State</th></tr></thead>
             <tbody>
               ${devices.map((d) => `
                 <tr>
@@ -85,7 +85,7 @@ function platformCard(source, devices) {
                 </tr>`).join('')}
             </tbody>
           </table>
-        </div>` : empty('No terminals imported yet',
+        </div>` : empty('No Terminals Imported Yet',
           'Use “Import terminals” on this connection in Settings → Biometric connections.')}
     </div>`;
 }
@@ -110,23 +110,23 @@ export async function renderTerminals(mount, route) {
   mount.innerHTML = sources.length ? `
     <div class="page-bar">
       <span class="hint">${count} terminal${count === 1 ? '' : 's'} across ${sources.length} connection${sources.length === 1 ? '' : 's'}</span>
-      <a class="btn sm" href="#/settings/biometric">Manage connections</a>
+      <a class="btn sm" href="#/settings/biometric">Manage Connections</a>
     </div>
     <nav class="tabs" aria-label="Connection type">
       <a href="#/terminals?view=standalone" class="${view === 'standalone' ? 'active' : ''}"
-         ${view === 'standalone' ? 'aria-current="page"' : ''}>Standalone devices <span class="tab-count">${standalone.length}</span></a>
+         ${view === 'standalone' ? 'aria-current="page"' : ''}>Standalone Devices <span class="tab-count">${standalone.length}</span></a>
       <a href="#/terminals?view=platforms" class="${view === 'platforms' ? 'active' : ''}"
-         ${view === 'platforms' ? 'aria-current="page"' : ''}>Platform servers <span class="tab-count">${platforms.length}</span></a>
+         ${view === 'platforms' ? 'aria-current="page"' : ''}>Platform Servers <span class="tab-count">${platforms.length}</span></a>
     </nav>
     ${view === 'standalone'
       ? (standalone.length ? standaloneCard(standalone, devicesBySource)
-        : `<div class="card">${empty('No standalone devices', 'Add one in Settings → Biometric connections.')}</div>`)
+        : `<div class="card">${empty('No Standalone Devices', 'Add one in Settings → Biometric connections.')}</div>`)
       : (platforms.length ? platforms.map((s) => platformCard(s, devicesBySource[s.id] || [])).join('')
-        : `<div class="card">${empty('No platform servers', 'Add one in Settings → Biometric connections.')}</div>`)}
+        : `<div class="card">${empty('No Platform Servers', 'Add one in Settings → Biometric connections.')}</div>`)}
   ` : `
     <div class="card">
-      ${empty('No biometric connections yet', 'Add a BioTime server or a standalone device, then its terminals show up here.')}
-      ${auth.canWrite ? '<div class="row" style="justify-content:center"><a class="btn primary-link" href="#/settings/biometric?add=1">Add connection</a></div>' : ''}
+      ${empty('No Biometric Connections Yet', 'Add a BioTime server or a standalone device, then its terminals show up here.')}
+      ${auth.canWrite ? '<div class="row" style="justify-content:center"><a class="btn primary-link" href="#/settings/biometric?add=1">Add Connection</a></div>' : ''}
     </div>`;
 
   mount.querySelectorAll('[data-sync-source]').forEach((button) => {

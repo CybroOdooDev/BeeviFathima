@@ -37,15 +37,24 @@ from app.schemas import (
     SubscriptionPlanOut,
     TokenPair,
     UserOut,
+    SignInCodeIn,
+    VerifyCheckOut,
+    VerifyEmailOut,
     VerifyEmailRequest,
 )
 from app.services.email_check import UngenuineEmailError, assert_genuine_email
 from app.services.email_verification import (
     issue_verification_token,
+    peek_token,
     send_verification_email,
     verify_token,
 )
-from app.services.onboarding import send_credentials
+from app.services.onboarding import (
+    consume_signin_code,
+    issue_signin_code,
+    send_account_ready,
+    send_credentials,
+)
 from app.services import password_reset
 from app.services.timeutils import ensure_aware, is_past
 
@@ -271,7 +280,7 @@ def _refuse_pending(db: Session, email: str) -> None:
     if user is not None and user.credentials_pending:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
-            "Confirm your email first — we'll send your login details as soon as you do.",
+            "Confirm your email first — open the link we emailed you to choose your password.",
         )
 
 
@@ -401,29 +410,66 @@ def logout(refresh_token: str = "", db: Session = Depends(get_db)) -> MessageOut
     return MessageOut(message="Signed out")
 
 
-@router.post("/verify-email", response_model=MessageOut)
-def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db)) -> MessageOut:
-    """The link in the confirmation email lands here.
+@router.post("/verify-email/check", response_model=VerifyCheckOut)
+def verify_email_check(payload: VerifyEmailRequest, db: Session = Depends(get_db)) -> VerifyCheckOut:
+    """Is this confirmation link still good, and does the page need to ask for
+    a password? Does not use the link up."""
+    user = peek_token(db, payload.token)
+    if user is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "That link is invalid or has expired.")
+    return VerifyCheckOut(email=user.email, needs_password=bool(user.credentials_pending))
+
+
+@router.post("/verify-email", response_model=VerifyEmailOut)
+def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db)) -> VerifyEmailOut:
+    """The confirmation page lands here.
 
     Unauthenticated on purpose — the token itself is the credential, and the
     person clicking it may not have signed in on this device.
+
+    An account registered from the website has no password yet, so for it the
+    same step also sets one: the address is confirmed, the password stored,
+    and a one-time ``signin_code`` returned so the page's "Sign in" button
+    opens the dashboard directly.
     """
-    user = verify_token(db, payload.token)
-    if user is None:
+    candidate = peek_token(db, payload.token)
+    if candidate is None:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, "That link is invalid or has expired."
         )
+    if candidate.credentials_pending and not payload.password:
+        # Before the token is spent, so the person can simply try again.
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Choose a password to finish setting up your account.")
+    user = verify_token(db, payload.token)
     if user.credentials_pending:
-        # Registered from the website: confirming the address is what
-        # releases the login details (app.services.onboarding).
-        sent = send_credentials(db, user)
-        return MessageOut(message=(
-            "Email confirmed. We've emailed your login details." if sent else
-            "Email confirmed. We couldn't send your login details just now — "
-            "use \"Resend\" on this page in a minute."
-        ))
+        user.hashed_password = hash_password(payload.password)
+        user.credentials_pending = False
+        user.must_change_password = False
+        code = issue_signin_code(user)
+        db.commit()
+        sent = send_account_ready(db, user)
+        return VerifyEmailOut(
+            message=("Email confirmed and password set. We've emailed a note confirming how to sign in."
+                     if sent else "Email confirmed and password set. You can sign in now."),
+            signin_code=code,
+        )
     db.commit()
-    return MessageOut(message="Email confirmed.")
+    return VerifyEmailOut(message="Email confirmed.")
+
+
+@router.post("/signin-code", response_model=TokenPair)
+def signin_with_code(payload: SignInCodeIn, request: Request, db: Session = Depends(get_db)) -> TokenPair:
+    """Exchange the one-time code from the confirmation page for a customer
+    session. Single use, short-lived, and refused for staff or workspace-less
+    accounts exactly as the password door is."""
+    user = consume_signin_code(db, payload.code)
+    if user is None or user.is_platform_admin or user.tenant_id is None:
+        db.commit()
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "That sign-in link has expired — sign in with your email and password.")
+    _record_login(user)
+    tokens = _issue(db, user, request, SCOPE_TENANT)
+    db.commit()
+    return tokens
 
 
 @router.post("/change-password", response_model=MessageOut)

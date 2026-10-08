@@ -18,11 +18,11 @@ import {
 const field = (o) => baseField({ tip: true, ...o });
 
 const money = (cents) => (cents == null ? 'Custom' : `$${(cents / 100).toFixed(cents % 100 ? 2 : 0)}`);
-const cap = (n, unit) => (n == null ? '<span class="hint">unlimited</span>' : `${esc(n)} ${unit}`);
+const cap = (n, unit) => (n == null ? '<span class="hint">Unlimited</span>' : `${esc(n)} ${unit}`);
 
 export async function render(mount) {
   if (!auth.isPlatformAdmin) {
-    mount.innerHTML = banner('Not available', 'This section is for platform staff.', 'warn');
+    mount.innerHTML = banner('Not Available', 'This section is for platform staff.', 'warn');
     return;
   }
   mount.innerHTML = loading();
@@ -32,15 +32,15 @@ export async function render(mount) {
     <div class="page-bar">
       <span class="hint">${plans.filter((p) => p.is_active).length} active · ${
         plans.filter((p) => !p.is_active).length} retired</span>
-      <button class="primary sm" id="newPlan">New plan</button>
+      <button class="primary sm" id="newPlan">New Plan</button>
     </div>
     <div class="card">
       ${plans.length ? `
         <div class="scroll">
           <table class="tight-table plans-table">
             <thead><tr>
-              <th>Plan</th><th class="num">Price / mo</th><th class="num">Employees</th>
-              <th class="num">Devices</th><th class="num">Fastest sync</th><th>Stripe</th>
+              <th>Plan</th><th class="num">Price / Mo</th><th class="num">Employees</th>
+              <th class="num">Devices</th><th class="num">Fastest Sync</th><th>Stripe</th>
               <th class="num">Accounts</th><th>Status</th><th></th>
             </tr></thead>
             <tbody>${plans.map(rowFor).join('')}</tbody>
@@ -48,8 +48,8 @@ export async function render(mount) {
         </div>
         <div class="hint" style="margin-top:12px">Changing a plan's limits applies to every account
           on it from the next sync. For one customer's exception, use
-          <a href="#/platform">All accounts</a> → Configure → Limits.</div>`
-        : empty('No plans yet', 'Create the first one — every account without a plan has no limits.')}
+          <a href="#/platform">All Accounts</a> → Configure → Limits.</div>`
+        : empty('No Plans Yet', 'Create the first one — every account without a plan has no limits.')}
     </div>`;
 
   const refresh = () => render(mount);
@@ -63,7 +63,7 @@ export async function render(mount) {
     del?.addEventListener('click', () => {
       if (!del.classList.contains('armed')) {
         del.classList.add('armed');
-        del.textContent = 'Click again to delete';
+        del.textContent = 'Click Again To Delete';
         del.classList.replace('danger-outline', 'danger');
         setTimeout(() => {
           if (!del.isConnected) return;
@@ -90,8 +90,8 @@ function rowFor(p) {
         ? `<div class="hint">${money(p.yearly_price_cents)} / yr</div>` : ''}</td>
       <td class="num">${cap(p.max_employees, '')}</td>
       <td class="num">${cap(p.max_devices, '')}</td>
-      <td class="num">${p.min_sync_interval_minutes ? `${esc(p.min_sync_interval_minutes)} min` : '<span class="hint">any</span>'}</td>
-      <td>${p.stripe_price_id ? `<span class="mono hint">${esc(p.stripe_price_id)}</span>` : '<span class="hint">not sold online</span>'}</td>
+      <td class="num">${p.min_sync_interval_minutes ? `${esc(p.min_sync_interval_minutes)} min` : '<span class="hint">Any</span>'}</td>
+      <td>${p.stripe_price_id ? `<span class="mono hint">${esc(p.stripe_price_id)}</span>` : '<span class="hint">Not Sold Online</span>'}</td>
       <td class="num">${esc(p.tenants)}</td>
       <td>${pill(p.is_active ? 'active' : 'skipped', p.is_active ? 'active' : 'retired')}</td>
       <td class="actions-cell"><div class="row-actions">
@@ -111,7 +111,7 @@ function openPlanDialog(plan, onSaved) {
 
   dialog.innerHTML = `
     <div class="wiz-head">
-      <strong>${plan ? `Edit ${esc(plan.name)}` : 'New plan'}</strong>
+      <strong>${plan ? `Edit ${esc(plan.name)}` : 'New Plan'}</strong>
       <button type="button" class="link wiz-x" data-close aria-label="Close">&times;</button>
     </div>
     <div class="wiz-body">
@@ -153,7 +153,7 @@ function openPlanDialog(plan, onSaved) {
                     help: 'The monthly Price customers are charged. Empty = cannot be bought online; '
                         + 'staff assign it. Changing it affects new checkouts and switches only.' })}
           ${field({ name: 'is_active', label: 'Status', value: String(p.is_active), boolean: true, required: true,
-                    options: [{ value: 'true', label: 'Active — can be chosen' },
+                    options: [{ value: 'true', label: 'Active — Can Be Chosen' },
                               { value: 'false', label: 'Retired — kept for accounts on it' }] })}
           ${field({ name: 'is_default', label: 'Default For New Accounts', value: String(p.is_default),
                     boolean: true, required: true,
@@ -166,7 +166,7 @@ function openPlanDialog(plan, onSaved) {
     </div>
     <div class="wiz-foot">
       <button type="button" class="link" data-close>Cancel</button>
-      <div class="actions"><button type="submit" form="planForm" class="primary save">${plan ? 'Save plan' : 'Create plan'}</button></div>
+      <div class="actions"><button type="submit" form="planForm" class="primary save">${plan ? 'Save Plan' : 'Create Plan'}</button></div>
     </div>`;
 
   $$('[data-close]', dialog).forEach((b) => b.addEventListener('click', close));

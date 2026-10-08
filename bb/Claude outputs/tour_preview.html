@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Setup tour preview</title>
+<style>
+:root{--bg:#f4f5f9;--panel:#fff;--ink:#12141f;--muted:#5b6070;--faint:#8a8fa0;--rule:#dcdfe8;--accent:#4f46e5;--accent-soft:#eceafd;--ok:#067647;--ok-soft:#dcfae6}
+*{box-sizing:border-box}body{margin:0;background:#e9ebf2;font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif;color:var(--ink)}
+.bar{max-width:1000px;margin:0 auto;padding:16px 20px 0}
+.bar h1{font-size:16px;margin:0 0 4px}.bar p{margin:0 0 10px;color:var(--muted);font-size:13px}
+.chips{display:flex;gap:6px;flex-wrap:wrap}.chips button{font:inherit;border:1px solid var(--rule);background:#fff;border-radius:999px;padding:5px 12px;cursor:pointer;color:var(--muted)}
+.chips button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.stage{position:relative;max-width:1000px;margin:12px auto 24px;background:var(--bg);border-radius:12px;overflow:hidden;min-height:560px;padding:20px}
+.card{background:var(--panel);border:1px solid var(--rule);border-radius:12px;padding:16px 20px;box-shadow:0 1px 2px rgba(0,0,0,.04);margin-bottom:14px}
+.hint{color:var(--muted);font-size:12.5px}h2{margin:2px 0 0;font-size:19px}
+.head{display:flex;justify-content:space-between;align-items:flex-start}
+.btn{font:inherit;border:1px solid var(--rule);background:#fff;border-radius:8px;padding:6px 12px;font-weight:600}
+.btn.p{background:var(--accent);border-color:var(--accent);color:#fff}
+ol.steps{display:flex;list-style:none;margin:12px 0 0;padding:14px 0 0;border-top:1px solid #eceef4}
+ol.steps li{flex:1;display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--faint)}
+ol.steps b{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;font-size:11.5px;border:1px solid var(--rule);background:#fff}
+ol.steps li.cur{color:var(--ink);font-weight:600}ol.steps li.cur b{background:var(--accent);border-color:var(--accent);color:#fff}
+ol.steps li.done b{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+label.f{display:block;font-weight:600;font-size:13px}label.f span.i{display:block;margin-top:5px;border:1px solid var(--rule);border-radius:8px;padding:8px 10px;font-weight:400;color:var(--faint);background:#fff}
+.row{display:flex;gap:8px;align-items:center}
+table{width:100%;border-collapse:collapse}td,th{padding:9px 8px;border-bottom:1px solid #eceef4;text-align:left;font-size:13px}th{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.05em}
+.pill{font-size:11.5px;border-radius:999px;padding:2px 9px;background:var(--ok-soft);color:var(--ok)}
+/* tour */
+.dim{position:absolute;inset:0;z-index:20;pointer-events:none}
+.spot{position:absolute;border-radius:10px;box-shadow:0 0 0 2000px rgba(18,20,31,.58);outline:2px solid #fff;transition:all .28s ease}
+.tip{position:absolute;z-index:30;width:320px;background:#fff;border-radius:12px;padding:16px 18px;box-shadow:0 12px 36px rgba(0,0,0,.28);transition:all .28s ease}
+.tip h3{margin:0 0 4px;font-size:15px}.tip p{margin:0 0 12px;color:var(--muted);font-size:13.5px}
+.tip .meta{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--faint)}
+.tip .btns{display:flex;gap:8px;align-items:center}
+.tip button{font:inherit;border-radius:8px;padding:6px 12px;font-weight:600;cursor:pointer;border:1px solid var(--rule);background:#fff}
+.tip button.p{background:var(--accent);border-color:var(--accent);color:#fff}.tip button.l{border:0;background:none;color:var(--muted);font-weight:500;padding:6px 4px}
+.dots{display:flex;gap:4px;margin-bottom:10px}.dots i{width:6px;height:6px;border-radius:50%;background:#d6d9e4}.dots i.on{background:var(--accent);width:16px;border-radius:4px}
+.tip:before{content:"";position:absolute;width:12px;height:12px;background:#fff;transform:rotate(45deg);left:var(--ax,28px);top:-6px}
+.tip.up:before{top:auto;bottom:-6px}
+.note{max-width:1000px;margin:0 auto 24px;padding:0 20px;color:var(--muted);font-size:13px}
+</style></head><body>
+<div class="bar"><h1>Setup tour — preview</h1>
+<p>Click through the real flow: pick a setup step, then use Next / Back inside the tooltip. The "Take the tour" button would sit beside "Exit setup" and start the tour for the step you are on.</p>
+<div class="chips" id="chips"></div></div>
+<div class="stage" id="stage"></div>
+<div class="note">Nothing here runs in your app yet. If this looks right I'll build it for real: tooltips attach to the live fields, follow the form if it re-renders, and Esc or "Skip tour" closes it.</div>
+<script>
+const head=(n)=>`<div class="card" id="hd"><div class="head"><div><span class="hint">Step ${n+1} of 5</span><h2>${['Connect Odoo','Connect your biometric system','Pairing Rules','Run the first sync','Match unknown badges'][n]}</h2></div>
+<div class="row"><button class="btn" id="tourbtn">▶ Take the tour</button><button class="btn">Exit setup</button></div></div>
+<ol class="steps" id="stepper">${['Odoo','Biometric','Pairing','First sync','Badges'].map((s,i)=>`<li class="${i==n?'cur':i<n?'done':''}"><b>${i<n?'✓':i+1}</b>${s}</li>`).join('')}</ol></div>`;
+const S=[
+{body:`<div class="card" id="intro"><p style="margin:0 0 6px">BioBridge writes attendance into your Odoo. Enter your Odoo address, database, login and an API key.</p><p class="hint" style="margin:0">Create the API key in Odoo: avatar → My Profile → Account Security → New API Key.</p></div>
+<div class="card"><div class="head"><h2>Odoo</h2><div class="row"><button class="btn" id="test">Test connection</button><button class="btn p" id="save">Connect Odoo</button></div></div>
+<div class="grid2" style="margin-top:12px"><label class="f" id="url">Server URL<span class="i">https://acme.odoo.com</span></label><label class="f" id="db">Database<span class="i">acme</span></label><label class="f" id="login">Login<span class="i">admin@acme.com</span></label><label class="f" id="key">API Key<span class="i">••••••••••••••••</span></label></div></div>`,
+stops:[['#hd','Let’s connect Odoo','Five short steps take you from nothing to attendance flowing into Odoo. You can leave any time and come back.','down'],
+['#url','Your Odoo address','Just the address — no /odoo or /web on the end. On Odoo Online the database is usually the subdomain.','down'],
+['#key','Create an API key','In Odoo: avatar → My Profile → Account Security → New API Key. Copy it right away — Odoo shows it once. Use a user who can manage Attendances.','up'],
+['#test','Test before connecting','Checks the address, login and key without saving anything. Connect Odoo unlocks once the test passes.','down']]},
+{body:`<div class="card" id="intro"><p style="margin:0">Tell BioBridge where punches come from: a server (BioTime, HikCentral, BioStar 2) or a terminal directly.</p></div>
+<div class="card"><div class="head"><h2>Biometric connections</h2><button class="btn p" id="add">+ Add connection</button></div>
+<table style="margin-top:8px"><tr><th>Name</th><th>Type</th><th>Status</th></tr><tr id="row"><td>Main office</td><td>ZKTeco cloud push</td><td><span class="pill">connected</span></td></tr></table></div>`,
+stops:[['#intro','Which one is yours?','Punching on terminals managed by software on a PC or server? Choose that software. Terminal works on its own? Choose the device.','down'],
+['#add','Add a connection','Pick your protocol and follow the two short steps. You can add several — one per site or per company.','down'],
+['#row','Check the status','Connected means BioBridge can read punches. Failed shows what to fix; Test connection re-checks it.','up']]},
+{body:`<div class="card" id="intro"><p style="margin:0">Pairing decides which punch is a check-in and which a check-out. The defaults suit most sites.</p></div>
+<div class="card"><h2>Pairing rules</h2><div class="grid2" style="margin-top:12px"><label class="f" id="mode">Pairing mode<span class="i">Alternating (in, out, in, out)</span></label><label class="f" id="dbl">Double-tap window<span class="i">60 seconds</span></label><label class="f" id="shift">Longest shift<span class="i">16 hours</span></label></div></div>`,
+stops:[['#mode','Alternating suits most','Most terminals have no IN/OUT keys, so the first punch is in, the next out, and so on.','down'],
+['#dbl','Double-taps','A second tap inside this window is ignored, so a quick re-scan doesn’t flip someone out.','down'],
+['#shift','Longest shift','A shift open longer than this is closed automatically and flagged for review.','up']]},
+{body:`<div class="card" id="intro"><p style="margin:0">Pull the punches recorded so far and write them to Odoo as attendance.</p></div>
+<div class="card" id="run"><h2>First sync</h2><p class="hint">Reads up to the last few weeks of punches.</p><button class="btn p" id="sync">Sync Now</button><div id="res" style="margin-top:12px"><table><tr><th>Result</th><th>New punches</th><th>Attendance created</th></tr><tr><td><span class="pill">success</span></td><td>12</td><td>1</td></tr></table></div></div>`,
+stops:[['#sync','Run it once','Press Sync Now. The first run can take a minute. After that it runs on its own schedule.','down'],
+['#res','Read the result','New punches were read from your devices; attendance created is what reached Odoo. Anything held shows up in the next step.','up']]},
+{body:`<div class="card" id="intro"><p style="margin:0">Punches from badges no Odoo employee carries are held here until matched.</p></div>
+<div class="card"><h2>Unmapped employees</h2><table style="margin-top:8px"><tr><th>Badge</th><th>Punches</th><th>Employee</th><th></th></tr><tr id="r1"><td>1042</td><td>6</td><td><span class="btn" style="font-weight:400;color:var(--faint)">Search employee…</span></td><td><span class="btn" id="m">Match</span> <span class="btn">Ignore</span></td></tr></table></div>`,
+stops:[['#r1','One row per unknown badge','Search the employee it belongs to, then press Match. Their held attendance is released straight away.','down'],
+['#m','Match or Ignore','Ignore a badge you don’t need (a visitor card, say). It stops being flagged.','up'],
+['#intro','Make it automatic','Put each person’s device user ID in their Badge ID in Odoo (Employee → HR Settings) and matching happens by itself.','down']]}
+];
+let cur=0,k=0,on=false;const stage=document.getElementById('stage'),chips=document.getElementById('chips');
+['Odoo','Biometric','Pairing','First sync','Badges'].forEach((n,i)=>{const b=document.createElement('button');b.textContent=`${i+1}. ${n}`;b.onclick=()=>{cur=i;k=0;draw(true)};chips.appendChild(b)});
+function draw(start){stage.innerHTML=head(cur)+S[cur].body;[...chips.children].forEach((c,i)=>c.classList.toggle('on',i==cur));document.getElementById('tourbtn').onclick=()=>{k=0;on=true;tour()};on=!!start;if(on)tour()}
+function tour(){stage.querySelectorAll('.dim,.tip').forEach(e=>e.remove());if(!on)return;const st=S[cur].stops,[sel,t,txt,pos]=st[k];const el=stage.querySelector(sel),sr=stage.getBoundingClientRect(),r=el.getBoundingClientRect();
+const pad=6,x=r.left-sr.left-pad,y=r.top-sr.top-pad,w=r.width+pad*2,h=r.height+pad*2;
+const d=document.createElement('div');d.className='dim';d.innerHTML=`<div class="spot" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px"></div>`;stage.appendChild(d);
+const tip=document.createElement('div');tip.className='tip'+(pos=='up'?' up':'');
+tip.innerHTML=`<div class="dots">${st.map((_,i)=>`<i class="${i==k?'on':''}"></i>`).join('')}</div><h3>${t}</h3><p>${txt}</p><div class="meta"><span>${k+1} of ${st.length}</span><div class="btns"><button class="l" data-a="skip">Skip tour</button>${k?'<button data-a="back">Back</button>':''}<button class="p" data-a="next">${k==st.length-1?(cur==4?'Finish':'Next step →'):'Next'}</button></div></div>`;
+stage.appendChild(tip);const tw=320;let left=Math.max(12,Math.min(x,sr.width-tw-12));tip.style.left=left+'px';tip.style.setProperty('--ax',Math.max(18,Math.min(x+w/2-left-6,tw-30))+'px');
+tip.style.top=(pos=='up'?(y-tip.offsetHeight-14):(y+h+14))+'px';
+tip.onclick=e=>{const a=e.target.dataset.a;if(!a)return;if(a=='skip'){on=false;tour()}else if(a=='back'){k--;tour()}else{if(k<st.length-1){k++;tour()}else if(cur<4){cur++;k=0;draw(true)}else{on=false;tour()}}}}
+draw(true);
+</script></body></html>

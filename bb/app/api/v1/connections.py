@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -56,6 +58,7 @@ from app.services.connections import (
 )
 from app.services.device_limits import over_limit_device_ids
 from app.services.provisioning import provision_unmapped
+from app.services.roster_import import auto_import
 from app.services.sync_engine import SyncEngine
 
 log = logging.getLogger(__name__)
@@ -184,7 +187,9 @@ def create_odoo(
     )
     db.add(conn)
     _dupe_name_guard(db, payload.name)
-    _probe_odoo(principal, conn)
+    if _probe_odoo(principal, conn).ok:
+        db.flush()
+        auto_import(db, principal.tenant)
     audit(db, principal, "odoo.create", conn.id, payload.url, request)
     db.commit()
     db.refresh(conn)
@@ -259,6 +264,8 @@ def test_odoo(
 ) -> TestResult:
     conn = _get_odoo(db, principal, conn_id)
     result = _probe_odoo(principal, conn)
+    if result.ok:
+        auto_import(db, principal.tenant)
     db.commit()
     return result
 
@@ -443,6 +450,60 @@ def _endpoint_key(provider: str | None, base_url: str, username: str | None) -> 
     return key
 
 
+def _is_private_address(base_url: str) -> bool:
+    """True for an address that only means something inside one network.
+
+    192.168.1.201 at one customer is not the 192.168.1.201 at another, so those
+    cannot be claimed by one account. Public hostnames and public IPs can.
+    """
+    value = (base_url or "").strip()
+    if value.lower().startswith("adms://"):
+        return False  # a serial number is global
+    host = (urlparse(value if "://" in value else f"zk://{value}").hostname or "").lower()
+    if not host:
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+        return ip.is_private or ip.is_loopback or ip.is_link_local
+    except ValueError:
+        return "." not in host or host.endswith((".local", ".lan", ".internal", ".localhost", ".test"))
+
+
+def _refuse_if_another_account_has_it(
+    db: Session, principal: Principal, wanted: str, base_url: str,
+    username: str | None, provider: str | None,
+) -> None:
+    """One server or device, one BioBridge account.
+
+    Two accounts polling the same server would each ingest every punch and write
+    it to their own Odoo, and a cloud-push terminal can only talk to one. So an
+    address already connected under a different account is refused. The message
+    does not say whose it is. Addresses that are only private to a network are
+    exempt (see _is_private_address).
+    """
+    if _is_private_address(base_url):
+        return
+    value = (base_url or "").strip()
+    needle = (value[7:] if value.lower().startswith("adms://")
+              else (urlparse(value if "://" in value else f"zk://{value}").hostname or "")).lower()
+    if not needle:
+        return
+    rows = db.scalars(
+        select(DeviceSource).where(
+            DeviceSource.tenant_id != principal.tenant.id,
+            func.lower(DeviceSource.base_url).contains(needle),
+        )
+    ).all()
+    for other in rows:
+        if _endpoint_key(other.provider, other.base_url, other.username) == wanted:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "This server or device is already connected to another BioBridge account. "
+                "A server can only be linked to one account at a time. If it is yours, ask "
+                "the other account to remove it first, or contact support.",
+            )
+
+
 def _refuse_duplicate_address(
     db: Session, principal: Principal, base_url: str, except_id: str | None = None,
     provider: str | None = None, username: str | None = None,
@@ -458,6 +519,7 @@ def _refuse_duplicate_address(
     192.168.1.201 on their own networks.
     """
     wanted = _endpoint_key(provider, base_url, username)
+    _refuse_if_another_account_has_it(db, principal, wanted, base_url, username, provider)
     for other in db.scalars(
         select(DeviceSource).where(DeviceSource.tenant_id == principal.tenant.id)
     ).all():
@@ -596,6 +658,8 @@ def create_source(
     probe = _probe_source(principal, source)
     if probe.ok:
         _register_standalone_device(db, principal, source)
+        db.flush()
+        auto_import(db, principal.tenant)
     audit(db, principal, "source.create", source.id, payload.base_url, request)
     db.commit()
     db.refresh(source)
@@ -763,6 +827,8 @@ def test_source(
         note = _register_standalone_device(db, principal, source)
         if note:
             result.message = f"{result.message}. {note}"
+        db.flush()
+        auto_import(db, principal.tenant)
     db.commit()
     return result
 

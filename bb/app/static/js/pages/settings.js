@@ -45,7 +45,7 @@ export async function render(mount, route) {
   const body = $('#settingsBody', mount);
   const renderSection = RENDERERS[section];
   if (!renderSection) {
-    body.innerHTML = empty('Not found', 'That settings page does not exist.');
+    body.innerHTML = empty('Not Found', 'That settings page does not exist.');
     return;
   }
   await renderSection(body, route);
@@ -110,7 +110,7 @@ async function tenantContext() {
 function topBanners(ctx) {
   return `
     ${ctx.stopped ? banner(
-      'Syncing is stopped for this account',
+      'Syncing Is Stopped For This Account',
       'BioBridge has stopped collecting new punches. Your settings below '
       + 'still save, and they take effect once the account is restored. '
       + 'Contact support about restoring it.',
@@ -132,7 +132,7 @@ function cardHead(title, hint, actions = '') {
 }
 
 const saveButton = (readonly) =>
-  readonly ? '' : '<button class="primary" id="save" type="submit">Save settings</button>';
+  readonly ? '' : '<button class="primary" id="save" type="submit">Save Settings</button>';
 
 /** Tell the router this form has unsaved changes whenever it differs from
  * what was on screen when it was drawn, so leaving the page can ask first.
@@ -147,10 +147,10 @@ function trackDirty(form, save, touched = () => false) {
       if (!form.reportValidity()) return false;
       try {
         await save();
-        toast('Settings saved', 'ok');
+        toast('Settings Saved', 'ok');
         return true;
       } catch (error) {
-        if (error.status !== 401) toast(error.message || 'Could not save', 'bad');
+        if (error.status !== 401) toast(error.message || 'Could Not Save', 'bad');
         return false;
       }
     },
@@ -168,7 +168,7 @@ function saveTenantForm(mount, formId, buttonId, reRender) {
       guard(async () => {
         await api.patch('/tenant', values);
         await reRender(mount);
-      }, 'Settings saved')
+      }, 'Settings Saved')
     );
   });
 }
@@ -217,9 +217,9 @@ async function renderGeneral(mount) {
         })}
       </form>
       <div class="row" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--rule-soft)">
-        <button type="button" id="pwOpen">Change user password</button>
+        <button type="button" id="pwOpen">Change User Password</button>
         ${auth.user?.role === 'owner'
-          ? '<button type="button" class="danger-outline" id="delAccount" style="border-color:var(--bad)" title="Permanently delete this account and everything BioBridge holds for it">Delete account</button>' : ''}
+          ? '<button type="button" class="danger-outline" id="delAccount" style="border-color:var(--bad)" title="Permanently delete this account and everything BioBridge holds for it">Delete Account</button>' : ''}
       </div>
     </div>
     `;
@@ -243,8 +243,8 @@ async function renderPairing(mount) {
         ${field({
           name: 'pairing_mode', label: 'Mode', value: tenant.pairing_mode, required: true,
           options: [
-            { value: 'alternating', label: 'Alternating — in, out, in, out' },
-            { value: 'state_based', label: 'State based — trust the device' },
+            { value: 'alternating', label: 'Alternating — In, Out, In, Out' },
+            { value: 'state_based', label: 'State Based — Trust The Device' },
             { value: 'first_last', label: 'First / last — first in, last out' },
           ],
           help: 'Alternating suits devices with no IN/OUT keys, which is most of the field. State based needs those keys configured correctly; it falls back automatically when a device stamps everything "Check In".',
@@ -272,7 +272,7 @@ async function renderPairing(mount) {
           options: [
             { value: 'flag', label: 'Flag — write a zero-length record for review' },
             { value: 'create', label: 'Create — infer a check-in 8 hours earlier' },
-            { value: 'ignore', label: 'Ignore — drop it' },
+            { value: 'ignore', label: 'Ignore — Drop It' },
           ],
         })}
       </div>
@@ -305,7 +305,7 @@ async function renderPlan(mount, route) {
     <div class="card">
       ${cardHead('Plan', 'what this account is billed and limited by',
         `${activePlans.length && !readonly
-          ? `<a class="btn primary-link" href="#/settings/billing/choose">${tenant.plan_id && !ctx.paysAtCheckout ? 'Change plan' : 'Choose a plan'}</a>`
+          ? `<a class="btn primary-link" href="#/settings/billing/choose">${tenant.plan_id && !ctx.paysAtCheckout ? 'Change Plan' : 'Choose A Plan'}</a>`
           : ''}`)}
       ${justPaid && !tenant.billed_by_stripe ? banner(
         'Payment received — activating your plan',
@@ -327,9 +327,9 @@ async function renderPlan(mount, route) {
         '', !readonly ? { href: '#/settings/billing/choose', label: 'Change' } : null) : ''}
       ${renewalWarning && (tenant.status === 'trialing' || tenant.plan_id) ? banner(
         tenant.status === 'trialing'
-          ? (renewalWarning.days_left <= 0 ? 'Trial ends today'
+          ? (renewalWarning.days_left <= 0 ? 'Trial Ends Today'
               : `Trial ends in ${renewalWarning.days_left} day${renewalWarning.days_left === 1 ? '' : 's'}`)
-          : (renewalWarning.days_left <= 0 ? 'Renews today'
+          : (renewalWarning.days_left <= 0 ? 'Renews Today'
               : `Renews in ${renewalWarning.days_left} day${renewalWarning.days_left === 1 ? '' : 's'}`),
         tenant.status === 'trialing'
           ? 'Choose a plan to keep syncing once it ends.'
@@ -338,27 +338,27 @@ async function renderPlan(mount, route) {
             : 'Changing plans here does not change that date — contact support to renew.'),
         renewalWarning.urgent ? 'bad' : 'warn') : ''}
       ${retired ? banner(
-        `${tenant.plan_name || 'Your plan'} is no longer offered`,
+        `${tenant.plan_name || 'Your Plan'} is no longer offered`,
         'You stay on it until you choose another.',
-        'warn', !readonly ? { href: '#/settings/billing/choose', label: 'Choose a plan' } : null) : ''}
-      ${!activePlans.length ? empty('No plans available', '') : ''}
+        'warn', !readonly ? { href: '#/settings/billing/choose', label: 'Choose A Plan' } : null) : ''}
+      ${!activePlans.length ? empty('No Plans Available', '') : ''}
       ${readonly ? '<div class="hint">Your role cannot change the plan.</div>' : ''}
       ${tenant.status === 'cancelled' ? banner(
-        'This plan has ended',
+        'This Plan Has Ended',
         'Your account, connections and history are kept, but nothing syncs. Choose a plan to start again, '
         + 'or delete the account under General if you are finished with BioBridge.',
         'warn') : ''}
       ${!readonly && !tenant.billed_by_stripe && ['trialing', 'active', 'past_due'].includes(tenant.status) ? `
         <div class="row" style="margin-top:14px">
-          <button type="button" id="discontinuePlan">Discontinue plan</button>
+          <button type="button" id="discontinuePlan">Discontinue Plan</button>
         </div>
         <div id="discontinueConfirm" hidden class="banner warn" style="margin-top:12px">
-          <strong>Discontinue this plan?</strong>
+          <strong>Discontinue This Plan?</strong>
           Syncing stops right away. Your account, connections and history are kept; you can choose a plan again
           later, and the account is only removed if you or BioBridge staff delete it.
           <div class="row" style="margin-top:10px">
-            <button type="button" class="primary sm" id="discontinueYes">Yes, discontinue</button>
-            <button type="button" class="sm" id="discontinueNo">Keep it</button>
+            <button type="button" class="primary sm" id="discontinueYes">Yes, Discontinue</button>
+            <button type="button" class="sm" id="discontinueNo">Keep It</button>
           </div>
         </div>` : ''}
     </div>`;
@@ -407,7 +407,7 @@ async function renderChoosePlan(mount, route) {
     mount.innerHTML = `
       ${topBanners(ctx)}
       <div class="card">
-        ${cardHead('Choose a plan', '', '<a class="btn" href="#/settings/billing">&larr; Billing</a>')}
+        ${cardHead('Choose A Plan', '', '<a class="btn" href="#/settings/billing">&larr; Billing</a>')}
         <div class="hint">Your role cannot change the plan.</div>
       </div>`;
     return;
@@ -419,15 +419,15 @@ async function renderChoosePlan(mount, route) {
     // one exception: a switch is already queued, in which case picking the
     // current plan again is how it gets cancelled, so that card stays live.
     tags[tenant.plan_id] = tenant.pending_plan_id
-      ? { label: 'Current plan', tone: 'current', locked: false, ctaLabel: 'Cancel scheduled switch' }
-      : { label: 'Current plan', tone: 'current' };
+      ? { label: 'Current Plan', tone: 'current', locked: false, ctaLabel: 'Cancel Scheduled Switch' }
+      : { label: 'Current Plan', tone: 'current' };
   }
-  if (tenant.pending_plan_id) tags[tenant.pending_plan_id] = { label: 'Already scheduled', tone: 'warn' };
+  if (tenant.pending_plan_id) tags[tenant.pending_plan_id] = { label: 'Already Scheduled', tone: 'warn' };
 
   mount.innerHTML = `
     ${topBanners(ctx)}
     <div class="card">
-      ${cardHead('Choose a plan', '', '<a class="btn" href="#/settings/billing">&larr; Billing</a>')}
+      ${cardHead('Choose A Plan', '', '<a class="btn" href="#/settings/billing">&larr; Billing</a>')}
       <p class="hint" style="margin:-4px 0 16px">${paysAtCheckout
         ? 'Pick a plan to pay for it securely on Stripe. It starts as soon as the payment goes through, and renews monthly — cancel any time from Manage billing.'
         : tenant.billed_by_stripe && willDefer
@@ -441,8 +441,8 @@ async function renderChoosePlan(mount, route) {
         + 'if the new plan needs a slower one.'}</p>
       ${activePlans.length ? pricingCards({
         plans: activePlans, tags, showRecommended: false,
-        ctaLabel: paysAtCheckout ? 'Continue to payment' : willDefer ? 'Switch at renewal' : 'Switch to this plan',
-      }) : empty('No plans available', '')}
+        ctaLabel: paysAtCheckout ? 'Continue To Payment' : willDefer ? 'Switch At Renewal' : 'Switch To This Plan',
+      }) : empty('No Plans Available', '')}
     </div>`;
 
   if (!activePlans.length) return;
@@ -460,7 +460,7 @@ async function renderChoosePlan(mount, route) {
     // that card is never locked even though it's tagged, so this still
     // needs its own message rather than the plain "Plan changed" default.
     const message = planId === tenant.plan_id
-      ? (tenant.pending_plan_id ? 'Scheduled change cancelled' : 'Already on this plan')
+      ? (tenant.pending_plan_id ? 'Scheduled Change Cancelled' : 'Already On This Plan')
       : willDefer ? `Switch to ${nameOf(planId)} scheduled for your next renewal`
       : `Switched to ${nameOf(planId)}`;
     busy(button, () =>
@@ -487,11 +487,14 @@ let odooLastCompanies = null; // { connId, companies: [{id, name}] } | null
 
 async function renderOdoo(mount, route) {
   mount.innerHTML = loading();
-  const [odooList, mappings] = await Promise.all([
+  const [odooList, mappings, sources] = await Promise.all([
     api.get('/odoo-connections'),
     api.get('/mappings?limit=500').catch(() => []),
+    api.get('/sources').catch(() => []),
   ]);
   const odoo = odooList[0] || null;
+  // Badges can only be matched once a biometric connection is working too.
+  const biometricUp = sources.some((x) => x.status === 'connected');
   const readonly = !auth.canWrite;
 
   if (!odoo || odooLastCompanies?.connId !== odoo.id) odooLastCompanies = null;
@@ -499,28 +502,28 @@ async function renderOdoo(mount, route) {
   // Test sits before Connect, left to right, and on a new connection Connect
   // only unlocks once the values in the form have been tested — see
   // wireTestFirst. Remove is kept apart from both, on the far left.
-  const removeControls = odoo && !readonly ? (
+  const inSetup = Boolean(mount.closest('#setupBody'));
+  const removeControls = odoo && !readonly && !inSetup ? (
     odooConfirmDelete
-      ? '<span class="hint">Remove this connection?</span>'
+      ? '<span class="hint">Remove This Connection?</span>'
         + '<button type="button" class="sm danger" id="odooRemoveCommit">Remove</button>'
         + '<button type="button" class="sm link" id="odooRemoveCancel">Cancel</button>'
-      : '<button type="button" class="sm link" id="odooRemove">Remove connection</button>'
+      : '<button type="button" class="sm link" id="odooRemove">Remove Connection</button>'
   ) : '';
   const actions = readonly ? '' : `
     ${removeControls}
-    <button type="button" id="testOdoo">Test connection</button>
+    <button type="button" id="testOdoo">Test Connection</button>
     <button class="primary" id="saveOdoo" type="submit" form="odooForm">
-      ${odoo ? 'Save changes' : 'Connect Odoo'}</button>`;
+      ${odoo ? 'Save Changes' : 'Connect Odoo'}</button>`;
 
   mount.innerHTML = `
     ${readonly ? banner('Read-only', 'Your role cannot change connections.', 'warn') : ''}
 
     <div class="card">
-      ${cardHead('Odoo', 'where attendance is written', actions)}
+      ${cardHead('Odoo', '', inSetup ? '' : actions)}
       ${!odoo && !readonly ? testFirstHint('Connect Odoo') : ''}
       <div id="odooTestResult"></div>
       <div id="odooStatus">${odoo ? statusRow(odoo) : ''}</div>
-      <div id="odooStatusExtras">${trackingExtrasHtml(odoo, odooLastCompanies?.companies)}</div>
       <form id="odooForm" ${readonly ? 'inert' : ''}>
         ${field({
           name: 'url', label: 'Server URL', required: true, tip: true, strongHelp: true,
@@ -534,7 +537,7 @@ async function renderOdoo(mount, route) {
         ${field({ name: 'username', label: 'Login', required: true, value: odoo?.username || '' })}
         ${field({
           name: 'api_key', label: 'API Key', type: 'password', tip: true,
-          required: !odoo,
+          required: true, noRequiredAttr: !!odoo,
           placeholder: odoo ? 'unchanged' : '',
           help: odoo
             ? 'Stored encrypted and never shown again. Leave blank to keep the current one.'
@@ -542,10 +545,11 @@ async function renderOdoo(mount, route) {
         })}
         <div id="companyField">${companyFieldHtml(odoo, odooLastCompanies?.companies, savedDisabled(odoo, odooLastCompanies?.companies))}</div>
       </form>
+      ${inSetup && actions ? `<div class="setup-foot actions">${actions}</div>` : ''}
     </div>
-    ${odoo ? unmappedCard(mappings.filter(needsMatch)) : ''}`;
+    ${odoo && biometricUp ? unmappedCard(mappings.filter(needsMatch)) : ''}`;
 
-  if (odoo) wireUnmapped(mount, () => renderOdoo(mount));
+  if (odoo && biometricUp) wireUnmapped(mount, () => renderOdoo(mount));
   // "Show unmapped employees" on the Employees page lands here.
   if (route?.query?.show === 'unmapped') {
     const card = $('#unmapped', mount);
@@ -625,7 +629,7 @@ async function renderOdoo(mount, route) {
     test: $('#testOdoo', mount),
     commit: $('#saveOdoo', mount),
     result: $('#odooTestResult', mount),
-    label: odoo ? 'Save changes' : 'Connect Odoo',
+    label: odoo ? 'Save Changes' : 'Connect Odoo',
     ignore: ['company_id'],
     gate: !odoo,
     probe: async () => {
@@ -724,7 +728,7 @@ async function renderOdoo(mount, route) {
         : null;
     } else {
       await api.post('/odoo-connections', values);
-      toast('Odoo connected', 'ok');
+      toast('Odoo Connected', 'ok');
     }
   };
 
@@ -733,6 +737,19 @@ async function renderOdoo(mount, route) {
   trackDirty(form, async () => {
     await persistOdoo();
   }, () => companiesTouched);
+
+  // A saved connection offers Save changes only once something differs from
+  // what is stored; the page redraws after a save, which hides it again.
+  if (odoo && !readonly) {
+    const saveBtn = $('#saveOdoo', mount);
+    const baseline = JSON.stringify(readForm(form));
+    const syncSave = () => {
+      saveBtn.hidden = !(JSON.stringify(readForm(form)) !== baseline || companiesTouched);
+    };
+    syncSave();
+    form.addEventListener('input', syncSave);
+    form.addEventListener('change', syncSave);
+  }
 
   form.addEventListener('submit', (event) => {
     event.preventDefault();
@@ -759,7 +776,7 @@ async function renderOdoo(mount, route) {
         await api.del(`/odoo-connections/${odoo.id}`);
         odooConfirmDelete = false;
         await renderOdoo(mount);
-      }, 'Odoo connection removed')
+      }, 'Odoo Connection Removed')
     )
   );
 }
@@ -796,7 +813,7 @@ function testResultHtml(result, stale) {
   if (!result) return '';
   return `
     <div class="test-result ${result.ok ? 'ok' : 'bad'}${stale ? ' stale' : ''}">
-      <strong>${result.ok ? 'Connection works' : 'Connection failed'}</strong>
+      <strong>${result.ok ? 'Connection Works' : 'Connection Failed'}</strong>
       <span>${esc(result.message)}</span>
       ${stale ? '<span class="hint">The form has changed since this test — test again.</span>' : ''}
     </div>`;
@@ -860,16 +877,16 @@ function deviceTrackingRow(odoo) {
   if (odoo.has_device_tracking) {
     const via = odoo.device_tracking_mode === 'module'
       ? 'via the installed BioBridge Attendance Devices add-on'
-      : 'set up automatically, no Odoo add-on installed';
+      : '';
     return `
       <div class="row" style="margin-bottom:14px;align-items:center;gap:10px">
-        ${pill('active', 'Device tracking on')}
-        <span style="color:var(--muted);font-size:12.5px">${esc(via)}</span>
+        ${pill('active', 'Device Tracking On')}
+        ${via ? `<span style="color:var(--muted);font-size:12.5px">${esc(via)}</span>` : ''}
       </div>`;
   }
   return `
     <div class="row" style="margin-bottom:14px;align-items:center;gap:10px">
-      ${pill('pending', 'Device tracking off')}
+      ${pill('pending', 'Device Tracking Off')}
       <span class="hint">Attendance records won't show which terminal punched them. Test connection turns this on.</span>
     </div>`;
 }
@@ -911,8 +928,7 @@ function companyScopeRow(odoo, companies) {
  * has brought device tracking up to date, without touching the rest of the
  * form or the test-result panel. */
 function trackingExtrasHtml(odoo, companies) {
-  if (!odoo || odoo.status !== 'connected') return '';
-  return deviceTrackingRow(odoo) + companyScopeRow(odoo, companies);
+  return '';
 }
 
 /** Which companies are switched off, as a Set of id strings, for what is
@@ -973,31 +989,7 @@ function companyFieldHtml(odoo, companies, off) {
 let editingSourceId = null;
 let confirmDeleteId = null; // a source id pending removal confirmation
 
-const KIND_CHOICES = [
-  {
-    kind: 'platform',
-    title: 'Platform server',
-    example: 'e.g. ZKTeco BioTime, Suprema BioStar 2, HikCentral, Hik-Connect, Matrix COSEC CENTRA, Anviz CrossChex Cloud',
-    body: 'One connection to a server that already collects punches from many terminals.',
-  },
-  {
-    kind: 'device',
-    title: 'Standalone device',
-    example: 'e.g. a ZKTeco, Hikvision, Dahua, Matrix COSEC or Cams terminal',
-    body: 'Connect to one terminal — by its IP address, or through its cloud service ID.',
-  },
-  {
-    // Still a "device" connection, but the terminal calls BioBridge — see
-    // app/integrations/providers/zkteco_adms.py.
-    kind: 'device',
-    key: 'push',
-    provider: 'zk_adms',
-    title: 'Cloud push device',
-    example: 'e.g. ZKTeco, eSSL or Realtime terminal',
-    body: 'The terminal sends its punches to BioBridge over the internet. Nothing to open on your network.',
-  },
-];
-const PROVIDER_LABEL = { zk_device: 'ZKTeco protocol', zk_adms: 'Cloud push', hik_isapi: 'Hikvision', biostar2: 'Suprema BioStar 2', cosec: 'Matrix COSEC', cosec_centra: 'COSEC CENTRA', crosschex: 'Anviz CrossChex', hikconnect: 'Hik-Connect', hikcentral: 'HikCentral', cams: 'Cams Biometrics', dahua: 'Dahua' };
+const PROVIDER_LABEL = { zk_device: 'ZKTeco Protocol', zk_adms: 'Cloud Push', hik_isapi: 'Hikvision', biostar2: 'Suprema BioStar 2', cosec: 'Matrix COSEC', cosec_centra: 'COSEC CENTRA', crosschex: 'Anviz CrossChex', hikconnect: 'Hik-Connect', hikcentral: 'HikCentral', cams: 'Cams Biometrics', dahua: 'Dahua' };
 /** Which direct-device protocol is offered first. */
 const DIRECT_ORDER = { zk_device: 0, hik_isapi: 1, dahua: 2, cosec: 3, cams: 4, biotime: 0, biostar2: 1, hikcentral: 2, hikconnect: 3, cosec_centra: 4, crosschex: 5 };
 /** Where push devices send to — from /providers (setup), for the forms. */
@@ -1009,7 +1001,7 @@ function pushSetupHtml(serial) {
   const port = pushSetup?.server_port || 80;
   return `
     <div class="push-setup">
-      <strong>On the device</strong>
+      <strong>On The Device</strong>
       <ol>
         <li>Open <b>Menu → Comm. → Cloud Server Setting</b> (on some models <b>ADMS</b>).</li>
         <li>Server address <code>${esc(host)}</code>, server port <code>${esc(port)}</code>.</li>
@@ -1028,16 +1020,11 @@ async function renderBiometric(mount, route) {
   ]);
   pushSetup = allProviders.find((p) => p.slug === 'zk_adms')?.setup || pushSetup;
   const readonly = !auth.canWrite;
-  // Only offer what fits the kind picked — a standalone-device protocol has no
-  // business in the platform form, and vice versa. See AttendanceProvider.kinds.
-  // Providers built only for this kind come first (ordered by DIRECT_ORDER).
-  // A push device is its own choice in the wizard, so the standalone
-  // (direct) choice lists only protocols BioBridge dials itself.
-  const providersFor = (kind, only) => allProviders
-    .filter((p) => (only ? p.slug === only
-      : (p.kinds || ['platform', 'device']).includes(kind) && !p.pushes))
-    .sort((a, b) => (a.kinds?.length || 2) - (b.kinds?.length || 2)
-      || (DIRECT_ORDER[a.slug] ?? 9) - (DIRECT_ORDER[b.slug] ?? 9));
+  // The add wizard offers every protocol in one searchable list; what kind
+  // of connection it is (platform server, standalone device, cloud push) comes
+  // from the protocol picked — see AttendanceProvider.kinds.
+  const providersFor = () => [...allProviders]
+    .sort((a, b) => String(a.label).localeCompare(String(b.label)));
 
   // Providers that can create a user on the device — "Test connection"
   // also creates missing Odoo employees there for these (see
@@ -1055,7 +1042,7 @@ async function renderBiometric(mount, route) {
   devices.forEach((d) => { (devicesBySource[d.source_id] ||= []).push(d); });
 
   const actions = readonly ? '' : `
-    <button type="button" class="primary" id="addConnection">+ Add connection</button>`;
+    <button type="button" class="primary" id="addConnection">+ Add Connection</button>`;
 
   mount.innerHTML = `
     ${readonly ? banner('Read-only', 'Your role cannot change connections.', 'warn') : ''}
@@ -1066,7 +1053,7 @@ async function renderBiometric(mount, route) {
 
       ${sources.map((s) => sourceCard(s, devicesBySource[s.id] || [], readonly, canProvision.has(s.provider), !noInventory.has(s.provider))).join('')}
       ${!sources.length ? empty(
-        'No biometric connections yet',
+        'No Biometric Connections Yet',
         readonly ? '' : 'Use “+ Add connection” above to connect a platform server or a device.'
       ) : ''}
     </div>`;
@@ -1083,11 +1070,11 @@ async function renderBiometric(mount, route) {
 }
 
 /* ===========================================================================
- * The add-connection wizard: a modal <dialog> in three steps.
+ * The add-connection wizard: a modal <dialog> in two steps.
  *
- *   1 Type     platform server or standalone device (a click moves on)
- *   2 Details  the connection's fields, for the protocol picked
- *   3 Connect  the test runs by itself on arrival; Connect unlocks once the
+ *   1 Details  one searchable list of protocols; the fields below it follow
+ *              the protocol picked (platform server, device or cloud push)
+ *   2 Connect  the test runs by itself on arrival; Connect unlocks once the
  *              values have been tested, and reads "… anyway" after a failure
  *
  * Lives on <body>, outside the settings page, so nothing the page re-renders
@@ -1104,23 +1091,25 @@ function openAddWizard({ providersFor, onDone, canProvision = new Set() }) {
 
   const state = {
     step: 1,
-    kind: null,
-    choice: null,      // which KIND_CHOICES card (kind, or 'push')
-    provider: null,
-    values: {},        // what step 2 holds, kept across Back/Next
+    provider: null,    // chosen in the one searchable list; decides everything below
+    values: {},        // what step 1 holds, kept across Back/Next
     tested: null,      // { fingerprint, result }
   };
-  const STEPS = ['Type', 'Details', 'Test & connect'];
+  const STEPS = ['Details', 'Test & Connect'];
 
-  const choiceOf = () => KIND_CHOICES.find((c) => (c.key || c.kind) === state.choice);
-  const providers = () => providersFor(state.kind, choiceOf()?.provider);
-  const isDevice = () => state.kind === 'device';
-  const commitLabel = () => (isDevice() ? 'Connect device' : 'Connect platform');
+  const allProviders = providersFor();
+  const metaOf = () => allProviders.find((p) => p.slug === state.provider);
+  // Every protocol is one kind of connection only.
+  const kind = () => (metaOf()?.kinds || ['platform'])[0];
+  const isDevice = () => kind() === 'device';
+  const KIND_HINT = { platform: 'Platform Server', device: 'Standalone Device' };
+  const hintOf = (p) => (p.pushes ? 'Cloud Push Device' : KIND_HINT[(p.kinds || ['platform'])[0]]);
+  const commitLabel = () => (isDevice() ? 'Connect Device' : 'Connect Platform');
 
   /** Step 2's values shaped the way the API takes them. */
   const payload = () => {
     const values = { ...state.values };
-    values.connection_kind = state.kind;
+    values.connection_kind = kind();
     values.provider = state.provider;
     if (state.provider === 'zk_device' && values.base_url && !/^zk:\/\//i.test(values.base_url)) {
       values.base_url = `zk://${values.base_url}`;
@@ -1154,34 +1143,28 @@ function openAddWizard({ providersFor, onDone, canProvision = new Set() }) {
   function bodyHtml() {
     if (state.step === 1) {
       return `
-        <p class="hint" style="margin:0 0 12px">What are you connecting?</p>
-        <div class="choice-grid">
-          ${KIND_CHOICES.map((c) => `
-            <button type="button" class="choice${state.choice === (c.key || c.kind) ? ' picked' : ''}" data-choose-kind="${esc(c.key || c.kind)}">
-              <span class="choice-icon" aria-hidden="true">${KIND_ICON[c.key || c.kind]}</span>
-              <span class="choice-title">${esc(c.title)}</span>
-              <span class="choice-example">${esc(c.example)}</span>
-              <span class="choice-body">${esc(c.body)}</span>
-            </button>`).join('')}
-        </div>`;
-    }
-    if (state.step === 2) {
-      return `
         <form id="wizForm" novalidate>
-          ${sourceFieldsHtml(null, state.kind, providers(), state.provider)}
+          ${field({
+            name: 'provider', label: 'Connection Protocol', required: true, value: state.provider || '',
+            items: allProviders.map((p) => ({ value: p.slug, label: p.label, hint: hintOf(p) })),
+            placeholder: 'Search or choose a protocol…', emptyNote: 'No Matching Protocol',
+          })}
+          ${state.provider
+            ? sourceFieldsHtml(null, kind(), [metaOf()], state.provider)
+            : '<p class="hint">Pick a protocol to see what it needs — BioTime, ZKTeco, Hikvision, Dahua and more.</p>'}
         </form>`;
     }
     const v = payload();
     const current = state.tested && state.tested.fingerprint === fingerprint();
     const push = state.provider === 'zk_adms';
     const rows = [
-      ['Type', push ? 'Cloud push device' : isDevice() ? 'Standalone device' : 'Platform server'],
-      ['Protocol', providers().find((p) => p.slug === state.provider)?.label || state.provider],
+      ['Protocol', metaOf()?.label || state.provider],
+      ['Type', hintOf(metaOf() || {})],
       ['Name', v.name],
       ...(isDevice() ? [['Location', v.location]] : []),
-      [push ? 'Device serial' : ['crosschex', 'hikconnect'].includes(state.provider) ? 'Region' : state.provider === 'cams' ? 'Endpoint URL' : isDevice() ? 'Device address' : 'Server URL',
+      [push ? 'Device Serial' : ['crosschex', 'hikconnect'].includes(state.provider) ? 'Region' : state.provider === 'cams' ? 'Endpoint URL' : isDevice() ? 'Device Address' : 'Server URL',
         push ? String(v.base_url || '').replace(/^adms:\/\//i, '') : v.base_url],
-      ...(v.username ? [[state.provider === 'crosschex' ? 'API key' : state.provider === 'hikconnect' ? 'App key' : state.provider === 'hikcentral' ? 'Partner key' : state.provider === 'cams' ? 'Service Tag ID' : 'Username', v.username]] : []),
+      ...(v.username ? [[state.provider === 'crosschex' ? 'API Key' : state.provider === 'hikconnect' ? 'App Key' : state.provider === 'hikcentral' ? 'Partner Key' : state.provider === 'cams' ? 'Service Tag ID' : 'Username', v.username]] : []),
       ['Timezone', v.server_timezone],
     ];
     return `
@@ -1189,45 +1172,46 @@ function openAddWizard({ providersFor, onDone, canProvision = new Set() }) {
         ${rows.map(([k, val]) => `<dt>${esc(k)}</dt><dd>${esc(val || '—')}</dd>`).join('')}
       </dl>
       <div id="wizResult">${current && state.tested.result.blocked
-        ? `<div class="test-result bad"><strong>Already connected</strong><span>${esc(state.tested.result.message)}</span>
+        ? `<div class="test-result bad"><strong>Already Connected</strong><span>${esc(state.tested.result.message)}</span>
              <span class="hint">Go back and enter a different address, or close this and edit the existing connection.</span></div>`
         : current
         ? testResultHtml(state.tested.result, false)
           + (push && !state.tested.result.ok ? pushSetupHtml(String(v.base_url || '').replace(/^adms:\/\//i, '')) : '')
-        : '<div class="test-result pending"><strong>Testing the connection…</strong><span>Nothing is saved yet.</span></div>'}</div>`;
+        : state.testing
+        ? '<div class="test-result pending"><strong>Testing The Connection…</strong><span>Nothing is saved yet.</span></div>'
+        : '<div class="test-result pending"><strong>Not Tested Yet</strong><span>Click Test Connection to check these details. Nothing is saved yet.</span></div>'}</div>`;
   }
 
   function footHtml() {
     const back = state.step > 1
       ? '<button type="button" class="link" data-wiz="back">&larr; Back</button>'
       : '<button type="button" class="link" data-wiz="cancel">Cancel</button>';
-    if (state.step === 1) return `${back}<span></span>`;
-    if (state.step === 2) {
-      return `${back}<button type="submit" form="wizForm" class="primary" data-wiz="next">Next: test &rarr;</button>`;
+    if (state.step === 1) {
+      return `${back}<button type="submit" form="wizForm" class="primary" data-wiz="next" ${
+        state.provider ? '' : 'disabled'}>Next &rarr;</button>`;
     }
     const current = state.tested && state.tested.fingerprint === fingerprint();
     const ok = current && state.tested.result.ok;
     const blocked = current && state.tested.result.blocked;
     return `${back}
       <div class="actions">
-        <button type="button" data-wiz="test" ${current ? '' : 'disabled'}>Test again</button>
+        <button type="button" data-wiz="test" id="wizTest">Test Connection</button>
         <button type="button" class="primary" data-wiz="connect" ${current && !blocked ? '' : 'disabled'}>
-          ${esc(blocked ? 'Already connected' : current && !ok ? `${commitLabel()} anyway` : commitLabel())}</button>
+          ${esc(blocked ? 'Already Connected' : current && !ok ? `${commitLabel()} anyway` : commitLabel())}</button>
       </div>`;
   }
 
   function render() {
     dialog.innerHTML = `
       <div class="wiz-head">
-        <strong id="wizTitle">Add a biometric connection</strong>
+        <strong id="wizTitle">Add A Biometric Connection</strong>
         <button type="button" class="link wiz-x" data-wiz="cancel" aria-label="Close">&times;</button>
       </div>
       ${stepper()}
-      <div class="wiz-body">${bodyHtml()}<p class="err" id="wizError"></p></div>
+      <div class="wiz-body${state.step === 1 ? ' wiz-tall' : ''}">${bodyHtml()}<p class="err" id="wizError"></p></div>
       <div class="wiz-foot">${footHtml()}</div>`;
     wire();
-    if (state.step === 2) restoreValues();
-    if (state.step === 3 && !(state.tested && state.tested.fingerprint === fingerprint())) runTest();
+    if (state.step === 1) restoreValues();
   }
 
   function restoreValues() {
@@ -1238,7 +1222,9 @@ function openAddWizard({ providersFor, onDone, canProvision = new Set() }) {
       // that has its own default (CrossChex's region, COSEC's "sa" login).
       if (el && k !== 'provider' && !(!v && el.value)) el.value = v ?? '';
     });
-    (form.querySelector('input:not([type=hidden])') || form).focus();
+    // First visit: the protocol search takes focus; afterwards the first field.
+    (state.provider ? form.querySelector('input:not([type=hidden]):not(.ss-input)') : form.querySelector('.ss-input')
+      || form).focus?.();
   }
 
   async function runTest() {
@@ -1257,7 +1243,8 @@ function openAddWizard({ providersFor, onDone, canProvision = new Set() }) {
         message: error.message || 'The test could not run.',
       };
     }
-    if (!dialog.isConnected || state.step !== 3) return;
+    if (!dialog.isConnected || state.step !== 2) return;
+    state.testing = false;
     state.tested = { fingerprint: fp, result };
     render();
   }
@@ -1265,41 +1252,36 @@ function openAddWizard({ providersFor, onDone, canProvision = new Set() }) {
   function wire() {
     dialog.querySelectorAll('[data-wiz=cancel]').forEach((b) => b.addEventListener('click', close));
     dialog.querySelector('[data-wiz=back]')?.addEventListener('click', () => {
-      if (state.step === 2) state.values = readForm($('#wizForm', dialog));
       state.step -= 1;
+      state.testing = false;
       render();
     });
-    dialog.querySelectorAll('[data-choose-kind]').forEach((b) => b.addEventListener('click', () => {
-      if (state.choice !== b.dataset.chooseKind) {
-        state.choice = b.dataset.chooseKind;
-        state.kind = choiceOf()?.kind || b.dataset.chooseKind;
-        state.provider = providers()[0]?.slug || 'biotime';
-        state.values = {};
-        state.tested = null;
-      }
-      state.step = 2;
-      render();
-    }));
 
     const form = $('#wizForm', dialog);
     if (form) {
-      form.querySelector('select[name=provider]')?.addEventListener('change', (event) => {
+      // Picking a protocol redraws the fields for it; what was typed in the
+      // shared ones (name, timezone…) is carried over.
+      form.addEventListener('change', (event) => {
+        if (event.target.name !== 'provider' || event.target.value === state.provider) return;
         state.values = readForm(form);
         state.provider = event.target.value;
+        state.tested = null;
         render();
       });
       form.addEventListener('submit', (event) => {
         event.preventDefault();
-        if (!form.reportValidity()) return;
+        if (!state.provider || !form.reportValidity()) return;
         state.values = readForm(form);
-        state.step = 3;
+        state.step = 2;
         render();
       });
     }
 
     dialog.querySelector('[data-wiz=test]')?.addEventListener('click', () => {
       state.tested = null;
+      state.testing = true;
       render();
+      runTest();
     });
     // Errors are shown in the wizard, not as a toast: the modal sits above
     // everything on the page, toasts included.
@@ -1309,11 +1291,11 @@ function openAddWizard({ providersFor, onDone, canProvision = new Set() }) {
         try {
           created = await api.post('/sources', payload());
         } catch (error) {
-          if (error.status !== 401) $('#wizError', dialog).textContent = error.message || 'Could not connect';
+          if (error.status !== 401) $('#wizError', dialog).textContent = error.message || 'Could Not Connect';
           return;
         }
         close();
-        toast(isDevice() ? 'Device connected and added to Terminals' : 'Connection added', 'ok');
+        toast(isDevice() ? 'Device Connected And Added To Terminals' : 'Connection Added', 'ok');
         // Connect already tested it; a source that answered also gets any
         // Odoo employees it is missing, same as a later Test connection.
         if (created?.status === 'connected' && canProvision.has(state.provider)) {
@@ -1371,7 +1353,7 @@ function openEditWizard({ source, onDone, canProvision = new Set() }) {
     <div class="wiz-foot">
       <button type="button" class="link" data-wiz="cancel">Cancel</button>
       <div class="actions">
-        <button type="button" data-wiz="test">Test connection</button>
+        <button type="button" data-wiz="test">Test Connection</button>
         <button type="button" class="primary" data-wiz="save">Save</button>
       </div>
     </div>`;
@@ -1449,7 +1431,7 @@ function openEditWizard({ source, onDone, canProvision = new Set() }) {
         toast(outcome.message, outcome.ok ? 'ok' : 'bad');
         if (outcome.ok && canProvision.has(provider)) await provisionAfterTest(source.id);
       } catch (e) {
-        if (e.status !== 401) error.textContent = e.message || 'Could not save';
+        if (e.status !== 401) error.textContent = e.message || 'Could Not Save';
         return;
       }
       await onDone();
@@ -1469,13 +1451,6 @@ function openEditWizard({ source, onDone, canProvision = new Set() }) {
   return dialog;
 }
 
-const KIND_ICON = {
-  // A server stack, and a single terminal — drawn inline, no assets.
-  platform: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="4" y="3.5" width="16" height="7" rx="1.5"/><rect x="4" y="13.5" width="16" height="7" rx="1.5"/><path d="M8 7h.01M8 17h.01M12 7h4M12 17h4"/></svg>`,
-  device: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="6" y="2.5" width="12" height="19" rx="2"/><rect x="8.5" y="5.5" width="7" height="5" rx="1"/><circle cx="12" cy="15.5" r="2.2"/></svg>`,
-  // A terminal with signal arcs: it calls out.
-  push: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3.5" y="7" width="10" height="14.5" rx="2"/><circle cx="8.5" cy="16.5" r="1.8"/><path d="M6 10.5h5M16.5 8.5a4 4 0 0 1 0 5.5M19 6a7.5 7.5 0 0 1 0 10.5"/></svg>`,
-};
 
 /** One line for the toast after Import terminals created employees. */
 /** After a connection answers a test, put any Odoo employees it is
@@ -1527,7 +1502,7 @@ function confirmDeleteTerminal(name, serial, punches = 0) {
     dialog.setAttribute('aria-labelledby', 'delTermTitle');
     dialog.style.width = 'min(460px, calc(100vw - 24px))';
     dialog.innerHTML = `
-      <div class="wiz-head"><strong id="delTermTitle">Delete terminal?</strong>
+      <div class="wiz-head"><strong id="delTermTitle">Delete Terminal?</strong>
         <button type="button" class="link wiz-x" data-no aria-label="Close">&times;</button></div>
       <div class="wiz-body">
         <p style="margin:0 0 10px"><strong>${esc(name)}</strong> <span class="mono hint">${esc(serial)}</span></p>
@@ -1541,7 +1516,7 @@ function confirmDeleteTerminal(name, serial, punches = 0) {
       </div>
       <div class="wiz-foot">
         <button type="button" data-no>Cancel</button>
-        <button type="button" class="danger" data-yes>Delete terminal</button>
+        <button type="button" class="danger" data-yes>Delete Terminal</button>
       </div>`;
     document.body.append(dialog);
     let answer = false;
@@ -1556,8 +1531,8 @@ function confirmDeleteTerminal(name, serial, punches = 0) {
 }
 
 function sourceCard(source, devices, readonly, canProvision = false, canImport = true) {
-  const kindLabel = source.provider === 'zk_adms' ? 'Cloud push device'
-    : source.connection_kind === 'device' ? 'Standalone device' : 'Platform server';
+  const kindLabel = source.provider === 'zk_adms' ? 'Cloud Push Device'
+    : source.connection_kind === 'device' ? 'Standalone Device' : 'Platform Server';
   const providerLabel = PROVIDER_LABEL[source.provider];
   const isConfirming = confirmDeleteId === source.id;
 
@@ -1583,15 +1558,15 @@ function sourceCard(source, devices, readonly, canProvision = false, canImport =
             ${!isConfirming ? `<button type="button" class="sm link" data-remove="${esc(source.id)}">Remove</button>` : ''}
             <button type="button" class="sm" data-edit="${esc(source.id)}">Edit</button>
             <button type="button" class="sm" data-test="${esc(source.id)}"
-                    ${canProvision ? 'data-provision="1" title="Also creates Odoo employees who have a Badge ID or PIN and aren\'t on the device yet."' : ''}>Test connection</button>
+                    ${canProvision ? 'data-provision="1" title="Also creates Odoo employees who have a Badge ID or PIN and aren\'t on the device yet."' : ''}>Test Connection</button>
             ${source.connection_kind === 'device' || !canImport ? ''
               // One terminal, registered by the connection test itself (see
               // _register_standalone_device), so nothing to import. Creating
               // missing Odoo employees on the device/platform belongs to
               // Test connection (data-provision), never to this button.
-              : `<button type="button" class="sm" data-discover="${esc(source.id)}">Import terminals</button>`}
+              : `<button type="button" class="sm" data-discover="${esc(source.id)}">Import Terminals</button>`}
             ${auth.canWrite && source.is_active !== false ? `<button type="button" class="sm primary" data-sync-source="${esc(source.id)}"
-                    title="Pull this connection's punches now and push them to Odoo">Sync now</button>` : ''}
+                    title="Pull this connection's punches now and push them to Odoo">Sync Now</button>` : ''}
           </div>` : ''}
       </div>
       ${!readonly && isConfirming ? `
@@ -1600,12 +1575,12 @@ function sourceCard(source, devices, readonly, canProvision = false, canImport =
           <button type="button" class="sm danger" data-remove-commit="${esc(source.id)}">Remove</button>
           <button type="button" class="sm link" data-remove-cancel="${esc(source.id)}">Cancel</button>
         </div>` : ''}
-      ${source.status_message ? banner('Last error', source.status_message, 'bad') : ''}
+      ${source.status_message ? banner('Last Error', source.status_message, 'bad') : ''}
 
       ${devices.length ? `
         <div class="scroll" style="margin-top:12px">
           <table>
-            <thead><tr><th>Device</th><th>Serial</th><th>IP</th><th class="num">Punches</th><th>Last seen</th><th>Pairing</th><th></th></tr></thead>
+            <thead><tr><th>Device</th><th>Serial</th><th>IP</th><th class="num">Punches</th><th>Last Seen</th><th>Pairing</th><th></th></tr></thead>
             <tbody>
               ${devices.map((d) => `
                 <tr data-device="${esc(d.id)}">
@@ -1646,7 +1621,7 @@ function sourceCard(source, devices, readonly, canProvision = false, canImport =
 function sourceFormHtml(source, kind, providers, currentProvider, provision = false) {
   const isDevice = kind === 'device';
   const provider = source ? source.provider : (currentProvider || providers[0]?.slug || 'biotime');
-  const commitLabel = source ? 'Save changes' : isDevice ? 'Connect device' : 'Connect platform';
+  const commitLabel = source ? 'Save Changes' : isDevice ? 'Connect Device' : 'Connect Platform';
 
   return `
     <form class="sourceForm" data-kind="${esc(kind)}" data-provider="${esc(provider)}"
@@ -1654,10 +1629,10 @@ function sourceFormHtml(source, kind, providers, currentProvider, provision = fa
           ${source ? `data-editing="${esc(source.id)}"` : ''}
           ${provision ? 'data-provision="1"' : ''}>
       <div class="form-head">
-        <strong>${esc(source ? `Edit ${source.name}` : isDevice ? 'New standalone device' : 'New platform server')}</strong>
+        <strong>${esc(source ? `Edit ${source.name}` : isDevice ? 'New Standalone Device' : 'New Platform Server')}</strong>
         <div class="actions">
           <button class="sm link" type="button" data-cancel-form="1">Cancel</button>
-          <button class="sm" type="button" data-test-form="1">Test connection</button>
+          <button class="sm" type="button" data-test-form="1">Test Connection</button>
           <button class="primary sm" type="submit" data-commit="1">${esc(commitLabel)}</button>
         </div>
       </div>
@@ -1709,7 +1684,7 @@ function sourceFieldsHtml(source, kind, providers, provider) {
         strongHelp: true, datalist: timezoneNames(),
       })}
       <div class="push-setup">
-        <strong>In COSEC first</strong>
+        <strong>In COSEC First</strong>
         <ol>
           <li>Open <b>Admin → Utility → API Configuration</b>.</li>
           <li>In the <b>T&amp;A events</b> template include <b>User ID</b> and <b>Event Date/Time</b> — and ideally <b>Entry/Exit</b>, <b>Device</b> and <b>Index No</b>.</li>
@@ -1750,12 +1725,12 @@ function sourceFieldsHtml(source, kind, providers, provider) {
       ${field({
         name: 'verify_ssl', label: 'HTTPS Certificate', boolean: true,
         value: String(source ? source.verify_ssl : false),
-        options: [{ value: 'false', label: 'Accept the server’s own certificate' },
-                  { value: 'true', label: 'Require a trusted certificate' }],
+        options: [{ value: 'false', label: 'Accept The Server’s Own Certificate' },
+                  { value: 'true', label: 'Require A Trusted Certificate' }],
         help: 'HikCentral installs with a self-signed certificate unless you replaced it.',
       })}
       <div class="push-setup">
-        <strong>In HikCentral first</strong>
+        <strong>In HikCentral First</strong>
         <ol>
           <li>Install the <b>HikCentral Professional OpenAPI</b> add-on that matches your HCP version.</li>
           <li>In the OpenAPI settings, add a <b>partner</b> for BioBridge and copy its <b>AK</b> and <b>SK</b>.</li>
@@ -1872,7 +1847,7 @@ function sourceFieldsHtml(source, kind, providers, provider) {
         datalist: timezoneNames(),
       })}
       <div class="push-setup">
-        <strong>In Cams API Monitor first</strong>
+        <strong>In Cams API Monitor First</strong>
         <ol>
           <li>Register the device and note its <b>Service Tag ID</b>, <b>AuthToken</b> and <b>endpoint URL</b>.</li>
           <li>Add this BioBridge server’s address as an <b>allowed origin</b> (otherwise Cams answers “invalid origin”).</li>
@@ -1921,8 +1896,8 @@ function sourceFieldsHtml(source, kind, providers, provider) {
       ${cosec ? '' : field({
         name: 'verify_ssl', label: 'HTTPS Certificate', boolean: true,
         value: String(source ? source.verify_ssl : false),
-        options: [{ value: 'false', label: 'Accept the device’s own certificate' },
-                  { value: 'true', label: 'Require a trusted certificate' }],
+        options: [{ value: 'false', label: 'Accept The Device’s Own Certificate' },
+                  { value: 'true', label: 'Require A Trusted Certificate' }],
         help: 'Only matters for https:// addresses. Most terminals use a self-signed certificate.',
       })}`;
   }
@@ -1988,6 +1963,7 @@ function sourceFieldsHtml(source, kind, providers, provider) {
           ? 'Only if the device has a communication password set. Leave blank for the factory default (no password).'
           : source ? 'Leave blank to keep the current one.' : '',
       })}
+      ${!isZk && !isBioStar ? '<div class="field-pair">' : ''}
       ${field({
         name: 'server_timezone', label: isBioStar ? 'Site Timezone' : isDevice ? 'Device Timezone' : 'Server Timezone',
         required: true, value: source?.server_timezone || auth.tenant?.timezone || 'UTC',
@@ -1999,15 +1975,16 @@ function sourceFieldsHtml(source, kind, providers, provider) {
       ${isBioStar ? field({
         name: 'verify_ssl', label: 'HTTPS Certificate', boolean: true,
         value: String(source ? source.verify_ssl : false),
-        options: [{ value: 'false', label: 'Accept the server’s own certificate' },
-                  { value: 'true', label: 'Require a trusted certificate' }],
+        options: [{ value: 'false', label: 'Accept The Server’s Own Certificate' },
+                  { value: 'true', label: 'Require A Trusted Certificate' }],
         help: 'BioStar 2 installs with a self-signed certificate unless you replaced it.',
       }) : ''}
       ${!isZk && !isBioStar ? field({
-        name: 'auth_type', label: 'Auth Style', value: source?.auth_type || 'token',
+        name: 'auth_type', label: 'Auth Style', required: true, value: source?.auth_type || 'token',
         options: ['token', 'jwt'],
         help: 'BioTime 8.5+ usually needs jwt; older builds use token.',
       }) : ''}
+      ${!isZk && !isBioStar ? '</div>' : ''}
 `;
 }
 
@@ -2022,7 +1999,7 @@ export async function syncSource(sourceId) {
     run.status === 'failed' ? 'bad' : 'ok');
     return run;
   } catch (error) {
-    if (error.status !== 401) toast(error.message || 'Sync failed', 'bad');
+    if (error.status !== 401) toast(error.message || 'Sync Failed', 'bad');
     return null;
   }
 }
@@ -2031,12 +2008,9 @@ function statusRow(connection) {
   return `
     <div class="row" style="margin-bottom:14px">
       ${pill(connection.status)}
-      <span style="color:var(--muted);font-size:12.5px">
-        checked ${esc(fmtAgo(connection.last_checked_at))}
-      </span>
     </div>
     ${connection.status_message
-      ? banner('Last error', connection.status_message, 'bad') : ''}`;
+      ? banner('Last Error', connection.status_message, 'bad') : ''}`;
 }
 
 function wireBiometric(mount, canProvision = new Set(), sources = [], providersFor) {
@@ -2070,7 +2044,7 @@ function wireBiometric(mount, canProvision = new Set(), sources = [], providersF
           await api.del(`/sources/${button.dataset.removeCommit}`);
           confirmDeleteId = null;
           await renderBiometric(mount);
-        }, 'Connection removed')
+        }, 'Connection Removed')
       )
     );
   });
@@ -2103,7 +2077,7 @@ function wireBiometric(mount, canProvision = new Set(), sources = [], providersF
         guard(async () => {
           const sourceId = button.dataset.discover;
           await api.post(`/sources/${sourceId}/discover-devices`);
-          toast('Terminals imported', 'ok');
+          toast('Terminals Imported', 'ok');
           await renderBiometric(mount);
         })
       )
@@ -2169,7 +2143,7 @@ function wireBiometric(mount, canProvision = new Set(), sources = [], providersF
             if (result.ok && form.dataset.provision) await provisionAfterTest(editing);
           } else {
             await api.post('/sources', values);
-            toast('Connection added', 'ok');
+            toast('Connection Added', 'ok');
           }
           editingSourceId = null;
           await renderBiometric(mount);
@@ -2185,7 +2159,7 @@ function wireBiometric(mount, canProvision = new Set(), sources = [], providersF
         guard(async () => {
           await api.del(`/devices/${button.dataset.deleteDevice}`);
           await renderBiometric(mount);
-        }, 'Terminal deleted')
+        }, 'Terminal Deleted')
       );
     });
   });

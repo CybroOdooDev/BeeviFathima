@@ -3,76 +3,7 @@
 import { api, auth } from '../api.js';
 import { pairingReviewed } from '../setup-state.js';
 import {
-  $, banner, busy, empty, esc, fmtAgo, fmtIn, guard, loading, pill, stat, fmtUtc,
-} from '../ui.js';
-
-/* The automatic-sync strip.
- *
- * This is the one thing an operator checks after setup: is it running by
- * itself, or am I going to be pressing a button every morning? So it reports
- * the scheduler's actual heartbeat rather than the configured interval — a
- * deployment whose scheduler died looks perfectly healthy from every other
- * angle, right up until payroll notices the missing days. */
-function scheduleCard(schedule, needsSetup) {
-  const s = schedule || {};
-  const stopped = !auth.tenant?.syncable;
-  const tone = stopped ? 'bad' : s.running ? 'ok' : 'warn';
-  const modeLabel = s.mode === 'celery' ? 'Celery beat' : s.mode === 'inprocess'
-    ? 'in the API process' : null;
-
-  let headline;
-  let detail;
-  if (!auth.tenant?.syncable) {
-    // First in the chain, and above the scheduler's own state, because it is
-    // the true answer for this reader: whatever the scheduler is doing, it is
-    // not going to sync this account. Getting this wrong was worse than saying
-    // nothing — next_run_at is null for a stopped account, so this card used to
-    // fall through to "sync is turned off in Settings" and send people to a
-    // screen where their own switch is plainly still on.
-    headline = 'Syncing is stopped for this account';
-    detail = 'Your records are unchanged and still here. New punches are not '
-      + 'being collected while the account is stopped. Contact support to have '
-      + 'it restored.';
-  } else if (!s.running) {
-    headline = 'Automatic sync is not running';
-    detail = s.last_tick_at
-      ? `Nothing has scheduled a sync since ${esc(fmtAgo(s.last_tick_at))}. `
-        + 'Punches are still collected when you press Sync now.'
-      : 'No scheduler has ever reported in. Attendance will only move when '
-        + 'someone presses Sync now.';
-  } else if (needsSetup) {
-    headline = 'Automatic sync is running, with nothing to sync';
-    detail = 'The schedule is alive; it starts pulling punches once both sides '
-      + 'are connected.';
-  } else if (!s.next_run_at) {
-    headline = 'Automatic sync is paused for this account';
-    detail = 'The scheduler is running, but this account has sync turned off in '
-      + 'Settings.';
-  } else {
-    headline = `Next sync ${esc(fmtIn(s.next_run_at))}`;
-    detail = `Every ${esc(s.effective_interval_minutes)} minute`
-      + `${s.effective_interval_minutes === 1 ? '' : 's'}`
-      + (modeLabel ? `, ${modeLabel}` : '')
-      + `. Last checked ${esc(fmtAgo(s.last_tick_at))}.`;
-  }
-
-  return `
-    <div class="card" style="margin-bottom:14px">
-      <div class="row" style="justify-content:space-between;align-items:flex-start">
-        <div>
-          <h2 style="margin:0">${headline}</h2>
-          <div class="hint" style="margin-top:4px">${detail}</div>
-          ${s.interval_widened ? `<div class="hint strong" style="margin-top:6px">
-            Backed off to ${esc(s.effective_interval_minutes)} minutes after
-            repeated connection failures. It returns to your configured interval
-            as soon as one run succeeds.</div>` : ''}
-        </div>
-        <span class="pill ${tone}">${
-          stopped ? 'account stopped' : s.running ? 'scheduler live' : 'scheduler down'
-        }</span>
-      </div>
-    </div>`;
-}
+  $, banner, busy, empty, esc, fmtAgo, fmtIn, guard, loading, pill, stat, fmtUtc, triggerLabel } from '../ui.js';
 
 /* Getting started: the five things between signing up and attendance
  * arriving in Odoo, in order, each done from the guided setup (the one button above). Shown until
@@ -88,7 +19,7 @@ function setupChecklist({ health, devices, run, unmapped }) {
     },
     {
       done: connected(health.source),
-      title: 'Add a biometric connection',
+      title: 'Add A Biometric Connection',
       body: 'A BioTime server, or a device by its IP address.',
     },
     {
@@ -99,12 +30,12 @@ function setupChecklist({ health, devices, run, unmapped }) {
     },
     {
       done: Boolean(run),
-      title: 'Run the first sync',
+      title: 'Run The First Sync',
       body: 'Pulls punches and writes attendance. After this it runs on its own schedule.',
     },
     {
       done: Boolean(run) && unmapped === 0,
-      title: 'Match any unknown badges',
+      title: 'Match Unknown Badges',
       body: 'Badges no Odoo employee carries yet are held until they are matched.',
     },
   ];
@@ -114,13 +45,13 @@ function setupChecklist({ health, devices, run, unmapped }) {
   return `
     <div class="card checklist" style="margin-bottom:14px">
       <div class="card-head">
-        <h2>Get set up <span class="hint">${doneCount} of ${steps.length} done</span></h2>
+        <h2>BioBridge Setup</h2>
         <div class="row" style="gap:12px;flex-wrap:nowrap">
           ${doneCount ? `<div class="progress" aria-hidden="true"><span style="width:${(doneCount / steps.length) * 100}%"></span></div>` : ''}
           ${auth.canWrite ? `<div class="setup-start">
-            <a class="btn primary-link sm" href="#/get-started">${doneCount ? 'Continue guided setup' : 'Start guided setup'}</a>
+            <a class="btn primary-link sm" href="#/get-started">${doneCount ? 'Continue Setup' : 'Initial Setup'}</a>
             <div class="setup-pointer" role="note"><span class="setup-pointer-arrow" aria-hidden="true"></span>${
-              doneCount ? 'Continue setup' : 'Start here'}</div>
+              doneCount ? 'Continue Here' : 'Start Here'}</div>
           </div>` : ''}
         </div>
       </div>
@@ -134,12 +65,64 @@ function setupChecklist({ health, devices, run, unmapped }) {
     </div>`;
 }
 
+/* "Next sync in 15 min" with the scheduler's pulse. Only shown once setup is
+ * finished — before that, the checklist is what the page is for. */
+function scheduleCard(schedule) {
+  if (!schedule) return '';
+  const every = schedule.effective_interval_minutes;
+  let title; let detail; let tag;
+  if (!schedule.running) {
+    title = 'Scheduler Not Running';
+    detail = 'Automatic syncs are paused until the scheduler is back. You can still press Sync Now.';
+    tag = '<span class="pill bad">scheduler down</span>';
+  } else if (!schedule.next_run_at) {
+    title = 'Automatic Sync Is Off';
+    detail = 'Syncing is switched off or stopped for this account. Press Sync Now to run one by hand.';
+    tag = '<span class="pill mute">scheduler idle</span>';
+  } else {
+    title = `Next sync ${fmtIn(schedule.next_run_at)}`;
+    detail = `Every ${every} minutes${schedule.interval_widened ? ' (slowed to fit your plan)' : ''}.`
+      + (schedule.seconds_since_tick != null ? ` Last checked ${fmtAgo(new Date(Date.now() - schedule.seconds_since_tick * 1000).toISOString())}.` : '');
+    tag = '<span class="pill ok">scheduler live</span>';
+  }
+  return `
+    <div class="card" style="margin-bottom:14px">
+      <div class="row" style="justify-content:space-between;align-items:flex-start">
+        <div>
+          <h2 style="margin:0 0 4px;font-size:22px">${esc(title)}</h2>
+          <div style="color:var(--muted);font-size:13.5px">${esc(detail)}</div>
+        </div>
+        ${tag}
+      </div>
+    </div>`;
+}
+
+/* The one word for all biometric connections: the worst state among them. */
+function worstOf(sources, fallback) {
+  for (const st of ['failed', 'degraded', 'unverified', 'connected']) {
+    if ((sources || []).some((x) => x.status === st)) return st;
+  }
+  return fallback;
+}
+
+/* "failed" alone says little once there are several biometric connections:
+ * say how many are down, and which. Counted here from the connection list, so
+ * it does not depend on the dashboard payload carrying it. */
+function sourceDetail(sources) {
+  if (!sources || sources.length < 2) return '';
+  const failed = sources.filter((x) => x.status === 'failed');
+  if (!failed.length) return '';   // only a failure is worth a line
+  const names = failed.map((x) => esc(x.name || x.provider)).join(', ');
+  return `<tr><td colspan="2" class="hint">${failed.length} of ${sources.length} biometric connections failed. Needs attention: ${names}.</td></tr>`;
+}
+
 export async function render(mount) {
   mount.innerHTML = loading();
-  const [data, runs, devices] = await Promise.all([
+  const [data, runs, devices, sources] = await Promise.all([
     api.get('/dashboard'),
     api.get('/sync/runs?limit=5').catch(() => []),
     api.get('/devices').catch(() => []),
+    api.get('/sources').catch(() => []),
   ]);
 
   const health = data.connection_health || {};
@@ -156,18 +139,17 @@ export async function render(mount) {
   mount.innerHTML = `
     <div>
     <div class="rail-main">
-    ${checklist}
-    ${scheduleCard(data.schedule, needsSetup)}
+    ${checklist || scheduleCard(data.schedule)}
 
     <div class="grid cols-4" style="margin-bottom:14px">
-      ${stat({ label: 'Punches today', value: data.punches_today, href: `#/activity?date_from=${today}` })}
+      ${stat({ label: 'Punches Today', value: data.punches_today, href: `#/activity?date_from=${today}` })}
       ${stat({
         label: 'Pending', value: data.punches_pending,
         tone: data.punches_pending > 0 ? 'warn' : '',
         note: 'awaiting the next run', href: '#/activity?state=pending',
       })}
       ${stat({
-        label: 'Unmatched employee badges', value: data.unmapped_employees,
+        label: 'Unmatched Employee Badges', value: data.unmapped_employees,
         tone: data.unmapped_employees > 0 ? 'warn' : '', href: '#/settings/odoo?show=unmapped',
       })}
       ${stat({
@@ -182,38 +164,39 @@ export async function render(mount) {
         <table>
           <tbody>
             <tr class="conn-row"><td><a class="conn-link" href="#/settings/odoo">Odoo</a></td><td style="text-align:right"><a class="conn-link" href="#/settings/odoo">${pill(health.odoo)}</a></td></tr>
-            <tr class="conn-row"><td><a class="conn-link" href="#/settings/biometric">Biometric</a></td><td style="text-align:right"><a class="conn-link" href="#/settings/biometric">${pill(health.source)}</a></td></tr>
+            <tr class="conn-row"><td><a class="conn-link" href="#/settings/biometric">Biometric</a></td><td style="text-align:right"><a class="conn-link" href="#/settings/biometric">${pill(worstOf(sources, health.source))}</a></td></tr>
+            ${sourceDetail(sources)}
           </tbody>
         </table>
         <div class="row" style="margin-top:14px">
-          <a class="btn" href="#/settings/biometric">Manage connections</a>
+          <a class="btn" href="#/settings/biometric">Manage Connections</a>
         </div>
       </div>
 
       <div class="card">
-        <h2>Last sync${run ? ` <span class="pill mute" data-tip="${esc(fmtUtc(run.started_at))} UTC">${esc(fmtAgo(run.started_at))}</span>` : ''}</h2>
+        <h2 class="h2-split">Latest Sync${run ? ` <span class="pill mute" data-tip="${esc(fmtUtc(run.started_at))} UTC">${esc(fmtAgo(run.started_at))}</span>` : ''}</h2>
         ${run ? `
           <table>
             <tbody>
               <tr><td>Result</td><td style="text-align:right">${pill(run.status)}</td></tr>
-              <tr><td>New punches</td><td class="num" style="text-align:right">${esc(run.punches_new)}</td></tr>
-              <tr><td>Attendance created</td><td class="num" style="text-align:right">${esc(run.attendances_created)}</td></tr>
-              <tr><td>Attendance closed</td><td class="num" style="text-align:right">${esc(run.attendances_closed)}</td></tr>
+              <tr><td>New Punches</td><td class="num" style="text-align:right">${esc(run.punches_new)}</td></tr>
+              <tr><td>Attendance Created</td><td class="num" style="text-align:right">${esc(run.attendances_created)}</td></tr>
+              <tr><td>Attendance Closed</td><td class="num" style="text-align:right">${esc(run.attendances_closed)}</td></tr>
             </tbody>
           </table>
-          ${run.error_message ? banner('Last error', run.error_message, 'bad') : ''}
-        ` : empty('No sync has run yet', 'Connect both sides, then press Sync now.')}
+          ${run.error_message ? banner('Last Error', run.error_message, 'bad') : ''}
+        ` : empty('No Sync Has Run Yet', 'Connect both sides, then press Sync now.')}
         ${auth.canWrite ? `
           <div class="row" style="margin-top:14px">
-            <button class="primary" id="syncNow" ${needsSetup ? 'disabled' : ''}>Sync now</button>
-            <a class="btn" href="#/activity">View history</a>
+            <button class="primary" id="syncNow" ${needsSetup ? 'disabled' : ''}>Sync Now</button>
+            <a class="btn" href="#/activity">View History</a>
           </div>` : ''}
       </div>
     </div>
 
     ${runs.length ? `
       <div class="card" style="margin-top:14px">
-        <h2>Recent runs</h2>
+        <h2>Recent Runs</h2>
         <div class="scroll">
           <table>
             <thead><tr><th>Started</th><th>Result</th><th class="num">New</th><th class="num">Created</th><th class="num">Closed</th><th>Trigger</th></tr></thead>
@@ -225,7 +208,7 @@ export async function render(mount) {
                   <td class="num">${esc(r.punches_new)}</td>
                   <td class="num">${esc(r.attendances_created)}</td>
                   <td class="num">${esc(r.attendances_closed)}</td>
-                  <td>${esc(r.triggered_by)}</td>
+                  <td>${esc(triggerLabel(r.triggered_by))}</td>
                 </tr>`).join('')}
             </tbody>
           </table>

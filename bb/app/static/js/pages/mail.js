@@ -13,21 +13,21 @@ import { $, banner, busy, esc, field as baseField, fmtAgo, guard, loading, pill,
 const field = (o) => baseField({ tip: true, ...o });
 
 const SECURITY = [
-  { value: 'starttls', label: 'STARTTLS — port 587 (recommended)' },
-  { value: 'ssl', label: 'SSL/TLS — port 465' },
-  { value: 'none', label: 'None — port 25 (not recommended)' },
+  { value: 'starttls', label: 'STARTTLS — Port 587 (Recommended)' },
+  { value: 'ssl', label: 'SSL/TLS — Port 465' },
+  { value: 'none', label: 'None — Port 25 (Not Recommended)' },
 ];
 const PORT_FOR = { starttls: 587, ssl: 465, none: 25 };
 
 const SOURCE_TEXT = {
-  database: ['ok', 'Using these settings'],
+  database: ['ok', 'Using These Settings'],
   environment: ['warn', 'Using SMTP_* from .env'],
   none: ['bad', 'Not sending — emails are only logged'],
 };
 
 export async function render(mount) {
   if (!auth.isPlatformAdmin) {
-    mount.innerHTML = banner('Not available', 'This section is for platform staff.', 'warn');
+    mount.innerHTML = banner('Not Available', 'This section is for platform staff.', 'warn');
     return;
   }
   mount.innerHTML = loading();
@@ -36,15 +36,15 @@ export async function render(mount) {
   const [tone, sourceText] = SOURCE_TEXT[cfg.active_source] || SOURCE_TEXT.none;
 
   mount.innerHTML = `
-    ${cfg.active_source === 'none' ? banner('No email server yet',
+    ${cfg.active_source === 'none' ? banner('No Email Server Yet',
       'New customers never receive their confirmation link or login details until one is set up.', 'warn') : ''}
     ${cfg.active_source === 'environment' ? banner('Sending through .env',
       `Mail currently goes through ${esc(cfg.environment?.host || '')} from SMTP_* in .env. Saving here takes over from it.`) : ''}
     <form id="mailForm" class="card" novalidate>
       <div class="card-head">
-        <h2>Email server <span class="pill ${tone}">${esc(sourceText)}</span></h2>
+        <h2>Email Server <span class="pill ${tone}">${esc(sourceText)}</span></h2>
         <div class="actions">
-          ${gmail ? '<button type="button" id="useGmail">Fill in Gmail settings</button>' : ''}
+          ${gmail ? '<button type="button" id="useGmail">Fill In Gmail Settings</button>' : ''}
           <button class="primary" id="mailSave" type="submit">Save</button>
         </div>
       </div>
@@ -56,15 +56,15 @@ export async function render(mount) {
                   help: 'Has to match the port: STARTTLS on 587, SSL/TLS on 465.' })}
         ${field({ name: 'enabled', label: 'Use These Settings', boolean: true, required: true,
                   value: String(cfg.enabled !== false),
-                  options: [{ value: 'true', label: 'On — send through this server' },
-                            { value: 'false', label: 'Off — fall back to .env' }] })}
+                  options: [{ value: 'true', label: 'On — Send Through This Server' },
+                            { value: 'false', label: 'Off — Fall Back To .env' }] })}
         ${field({ name: 'username', label: 'Username', value: cfg.username, placeholder: 'no-reply@yourcompany.com',
                   help: 'The account to sign in as. Gmail / Workspace: the full address (left blank, the From address is used). Required with a password.' })}
         <div class="field">
           <label for="password">Password ${cfg.has_password ? '<span class="pill ok">saved</span>' : '<span class="opt">optional</span>'}</label>
           <input type="password" name="password" id="password" autocomplete="new-password"
                  placeholder="${cfg.has_password ? 'Leave blank to keep the saved one' : 'App Password for Gmail'}">
-          ${cfg.has_password ? '<label class="hint" style="display:inline-flex;gap:8px;align-items:center;margin-top:8px;font-weight:400;cursor:pointer"><input type="checkbox" name="clear_password" style="width:auto;margin:0"> Remove the saved password</label>' : ''}
+          ${cfg.has_password ? '<label class="hint" style="display:inline-flex;gap:8px;align-items:center;margin-top:8px;font-weight:400;cursor:pointer"><input type="checkbox" name="clear_password" style="width:auto;margin:0"> Remove The Saved Password</label>' : ''}
         </div>
         ${field({ name: 'from_email', label: 'From Address', type: 'email', value: cfg.from_email, required: true,
                   placeholder: 'no-reply@yourcompany.com',
@@ -78,10 +78,10 @@ export async function render(mount) {
     </form>
 
     <form id="mailTest" class="card" style="margin-top:16px" novalidate>
-      <div class="card-head"><h2>Send a test email <span class="hint">uses the settings in use right now</span></h2></div>
+      <div class="card-head"><h2>Send A Test Email <span class="hint">Uses The Settings In Use Right Now</span></h2></div>
       <div class="row">
         <input type="email" name="to" required value="${esc(auth.user?.email || '')}" style="max-width:320px" aria-label="Send the test to">
-        <button class="primary" id="mailTestGo" type="submit" ${cfg.active_source === 'none' ? 'disabled' : ''}>Send test email</button>
+        <button class="primary" id="mailTestGo" type="submit" ${cfg.active_source === 'none' ? 'disabled' : ''}>Send Test Email</button>
       </div>
       <p class="err" id="mailTestError" style="margin-top:10px"></p>
     </form>`;
@@ -121,7 +121,7 @@ export async function render(mount) {
     if (!values.from_email) delete values.from_email;
     values.clear_password = Boolean(values.clear_password);
     busy($('#mailSave', mount), async () => {
-      const ok = await guard(() => api.patch('/admin/mail', values), 'Email settings saved');
+      const ok = await guard(() => api.patch('/admin/mail', values), 'Email Settings Saved');
       if (ok) render(mount);
     });
   });

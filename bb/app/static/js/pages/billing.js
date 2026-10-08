@@ -24,8 +24,8 @@ const day = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, { year: 
 
 const INVOICE_TONE = { paid: 'active', open: 'pending', uncollectible: 'failed', void: 'skipped' };
 const SUB_LABEL = {
-  active: 'Active', trialing: 'Active', past_due: 'Payment overdue', unpaid: 'Unpaid',
-  canceled: 'Cancelled', incomplete: 'Awaiting payment', incomplete_expired: 'Expired',
+  active: 'Active', trialing: 'Active', past_due: 'Payment Overdue', unpaid: 'Unpaid',
+  canceled: 'Cancelled', incomplete: 'Awaiting Payment', incomplete_expired: 'Expired',
 };
 const SUB_TONE = { active: 'active', trialing: 'active', past_due: 'failed', unpaid: 'failed', canceled: 'skipped' };
 
@@ -45,14 +45,14 @@ export async function render(mount, route) {
   const readonly = !auth.canWrite;
 
   if (!data.enabled) {
-    mount.innerHTML = `<div class="card">${empty('Online billing is not set up',
+    mount.innerHTML = `<div class="card">${empty('Online Billing Is Not Set Up',
       'Your subscription is handled by BioBridge support. Contact them for invoices or renewals.')}</div>`;
     return;
   }
   if (!data.has_customer) {
     mount.innerHTML = `<div class="card">
-      ${empty('No subscription yet', 'Choose a plan and pay on Stripe — it then renews automatically every month.')}
-      ${readonly ? '' : '<div class="row" style="justify-content:center;margin-top:12px"><a class="btn primary-link" href="#/settings/billing/choose">Choose a plan</a></div>'}
+      ${empty('No Subscription Yet', 'Choose a plan and pay on Stripe — it then renews automatically every month.')}
+      ${readonly ? '' : '<div class="row" style="justify-content:center;margin-top:12px"><a class="btn primary-link" href="#/settings/billing/choose">Choose A Plan</a></div>'}
     </div>`;
     return;
   }
@@ -63,12 +63,12 @@ export async function render(mount, route) {
   const overdue = sub && ['past_due', 'unpaid'].includes(sub.status);
 
   mount.innerHTML = `
-    ${data.error ? banner('Stripe could not be reached', data.error, 'bad') : ''}
-    ${open ? `<div class="banner bad"><strong>${overdue ? 'Your renewal payment failed' : 'An invoice is waiting for payment'}</strong>
+    ${data.error ? banner('Stripe Could Not Be Reached', data.error, 'bad') : ''}
+    ${open ? `<div class="banner bad"><strong>${overdue ? 'Your Renewal Payment Failed' : 'An Invoice Is Waiting For Payment'}</strong>
         ${esc(money(open.amount_remaining ?? open.amount_due, open.currency))} is due${
           open.next_payment_attempt ? ` — Stripe will retry the saved card on ${esc(day(open.next_payment_attempt))}` : ''}.
         Pay now with any card to keep syncing.
-        ${readonly ? '' : `<button type="button" class="primary sm" data-pay="${esc(open.id)}" style="margin-left:8px">Pay now</button>`}</div>` : ''}
+        ${readonly ? '' : `<button type="button" class="primary sm" data-pay="${esc(open.id)}" style="margin-left:8px">Pay Now</button>`}</div>` : ''}
 
     <div class="grid cols-2">
       <div class="card">
@@ -77,26 +77,26 @@ export async function render(mount, route) {
           <table><tbody>
             <tr><td>Plan</td><td style="text-align:right"><strong>${esc(data.plan_name || '—')}</strong></td></tr>
             <tr><td>Price</td><td style="text-align:right">${esc(money((sub.unit_amount ?? 0) * (sub.quantity || 1), sub.currency))} / ${esc(sub.interval)}</td></tr>
-            <tr><td>${sub.cancel_at_period_end ? 'Ends on' : 'Next renewal'}</td>
+            <tr><td>${sub.cancel_at_period_end ? 'Ends On' : 'Next Renewal'}</td>
                 <td style="text-align:right">${esc(day(sub.cancel_at || sub.current_period_end))}</td></tr>
             <tr><td>Renewal</td><td style="text-align:right">${sub.cancel_at_period_end
-              ? '<span class="pill warn">Won’t renew</span>'
+              ? '<span class="pill warn">Won’t Renew</span>'
               : `Charged automatically${card?.last4 ? ` to ${esc(cardName(card))}` : ''}`}</td></tr>
           </tbody></table>
           ${sub.cancel_at_period_end ? `<div class="hint" style="margin-top:10px">Cancelled — the account keeps working until ${esc(day(sub.cancel_at || sub.current_period_end))}, then syncing stops.</div>` : ''}
           ${readonly ? '' : `<div class="row" style="margin-top:14px">
-            <a class="btn" href="#/settings/billing/choose">Change plan</a>
+            <a class="btn" href="#/settings/billing/choose">Change Plan</a>
             ${sub.cancel_at_period_end
-              ? '<button type="button" class="primary" id="resumeSub">Keep my subscription</button>'
-              : '<button type="button" id="cancelSub">Cancel subscription</button>'}
+              ? '<button type="button" class="primary" id="resumeSub">Keep My Subscription</button>'
+              : '<button type="button" id="cancelSub">Cancel Subscription</button>'}
           </div>
           <div id="cancelConfirm" hidden class="banner warn" style="margin-top:12px">
-            <strong>Cancel at the end of this period?</strong>
+            <strong>Cancel At The End Of This Period?</strong>
             Nothing more is charged. BioBridge keeps syncing until ${esc(day(sub.current_period_end))}, then stops. You can undo this until then.
             <div class="row" style="margin-top:10px">
-              <button type="button" class="primary sm" id="cancelYes">Yes, cancel at period end</button>
-              <button type="button" class="sm danger" id="cancelNowBtn">End it now instead</button>
-              <button type="button" class="sm" id="cancelNo">Keep it</button>
+              <button type="button" class="primary sm" id="cancelYes">Yes, Cancel At Period End</button>
+              <button type="button" class="sm danger" id="cancelNowBtn">End It Now Instead</button>
+              <button type="button" class="sm" id="cancelNo">Keep It</button>
             </div>
             <div class="hint" style="margin-top:8px">Ending it now stops syncing straight away and the rest of the paid period is not refunded.
               Your account, connections and history are kept either way; delete the account from Settings → General if you want it gone.
@@ -107,18 +107,18 @@ export async function render(mount, route) {
       </div>
 
       <div class="card">
-        <div class="card-head"><h2>Payment method</h2></div>
+        <div class="card-head"><h2>Payment Method</h2></div>
         ${card ? `<p style="margin:0 0 6px"><strong>${esc(cardName(card))}</strong></p>
           ${card.exp_month ? `<p class="hint" style="margin:0">Expires ${esc(String(card.exp_month).padStart(2, '0'))}/${esc(card.exp_year)}</p>` : ''}`
           : '<p class="hint">No card saved — renewals can’t be charged automatically.</p>'}
         ${readonly ? '' : `<div class="row" style="margin-top:14px">
-          <button type="button" id="updateCard">${card ? 'Update card' : 'Add a card'}</button>
+          <button type="button" id="updateCard">${card ? 'Update Card' : 'Add A Card'}</button>
           <span class="hint">Opens Stripe’s secure page.</span></div>`}
       </div>
     </div>
 
     <div class="card" style="margin-top:16px">
-      <div class="card-head"><h2>Invoices <span class="hint">last 12</span></h2></div>
+      <div class="card-head"><h2>Invoices <span class="hint">Last 12</span></h2></div>
       ${data.invoices.length ? `<div class="scroll"><table>
         <thead><tr><th>Date</th><th>Invoice</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead>
         <tbody>${data.invoices.map((inv) => `
@@ -133,7 +133,7 @@ export async function render(mount, route) {
               ${inv.invoice_pdf ? `<a class="btn sm" href="${esc(inv.invoice_pdf)}" target="_blank" rel="noopener">PDF</a>` : ''}
             </td>
           </tr>`).join('')}</tbody></table></div>`
-        : empty('No invoices yet', 'The first one appears after your first payment.')}
+        : empty('No Invoices Yet', 'The first one appears after your first payment.')}
     </div>`;
 
   $$('[data-pay]', mount).forEach((b) =>

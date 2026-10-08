@@ -33,6 +33,9 @@ class MappingStatus(str, enum.Enum):
     #: releases the held punches) but hidden from the Employees list, not
     #: counted against the plan, and never synced.
     out_of_scope = "out_of_scope"
+    #: Deleted by a user from the unmatched list. The row stays, hidden, so the
+    #: next sync / device-user push does not recreate it; its punches are skipped.
+    removed = "removed"
 
 
 class Direction(str, enum.Enum):
@@ -88,6 +91,15 @@ class EmployeeMapping(Base, UUIDPk, Timestamped):
 
     odoo_employee_id: Mapped[int | None] = mapped_column(Integer)
     odoo_employee_name: Mapped[str | None] = mapped_column(String(200))
+    #: The employee's Odoo company, for the Employees page's company filter.
+    #: A display cache, refreshed from the Odoo roster on each sync.
+    odoo_company_id: Mapped[int | None] = mapped_column(Integer)
+    odoo_company_name: Mapped[str | None] = mapped_column(String(200))
+    #: Department and manager (the employee's parent), cached for the Employees
+    #: page's filters; refreshed from the Odoo roster on each sync.
+    odoo_department_name: Mapped[str | None] = mapped_column(String(200))
+    odoo_manager_id: Mapped[int | None] = mapped_column(Integer)
+    odoo_manager_name: Mapped[str | None] = mapped_column(String(200))
 
     status: Mapped[str] = mapped_column(String(20), default=MappingStatus.unmapped.value)
     match_method: Mapped[str | None] = mapped_column(String(32))

@@ -11,7 +11,7 @@
  */
 
 // ---- settings: change these two lines when you deploy -------------------
-const APP_URL = 'http://localhost:8000';          // where BioBridge runs — just the address, e.g. http://127.0.0.1:8000
+const APP_URL = 'http://localhost:8001';          // where BioBridge runs — just the address, e.g. http://127.0.0.1:8000
 const FORM_ENDPOINT = '';                            // e.g. a Formspree / Basin URL; blank = email fallback
 const SALES_EMAIL = 'sales@example.com';             // used by the email fallback
 // --------------------------------------------------------------------------
@@ -244,7 +244,7 @@ if (form) {
         if (result && result.booking_url) {
           status.append(' ');
           const link = document.createElement('a');
-          link.href = result.booking_url; link.textContent = 'Pick a time now';
+          link.href = result.booking_url; link.textContent = 'Pick A Time Now';
           link.target = '_blank'; link.rel = 'noopener';
           status.append(link);
         }
@@ -265,16 +265,49 @@ if (form) {
 }
 
 
+// ---- email check ---------------------------------------------------------------
+// Catches the usual typos before anything is sent: a missing @, a missing dot in
+// the domain (you@yourcompanycom), a one-letter ending. Returns a message, or
+// '' when the address looks right. The app checks again, and looks the domain up.
+function emailProblem(value) {
+  const email = String(value || '').trim();
+  if (!email) return 'Enter your email address.';
+  if ((email.match(/@/g) || []).length !== 1) return 'An email address needs exactly one @, like you@yourcompany.com.';
+  const [local, domain] = email.split('@');
+  if (!local) return 'Add the part before the @, like you@yourcompany.com.';
+  if (!domain) return 'Add the domain after the @, like you@yourcompany.com.';
+  if (!domain.includes('.')) {
+    return `“${domain}” isn’t a complete domain — it looks like a dot is missing (for example yourcompany.com).`;
+  }
+  if (!/^[^\s@]+@(?:[^\s@.]+\.)+[^\s@.]{2,}$/.test(email)) {
+    return 'That doesn’t look like a valid email address. Use the form you@yourcompany.com.';
+  }
+  return '';
+}
+
 // ---- the app's API ------------------------------------------------------------
+// Every call gives up after this long, so a button can never sit on
+// "Creating your account…" forever when the app is slow or unreachable.
+const API_TIMEOUT_MS = 30000;
+
 async function callApi(path, body) {
   let response;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
   try {
-    response = await fetch(`${API}${path}`, body === undefined ? {} : {
+    response = await fetch(`${API}${path}`, body === undefined ? { signal: controller.signal } : {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: controller.signal,
     });
   } catch (exc) {
+    clearTimeout(timer);
+    if (exc && exc.name === 'AbortError') {
+      const slow = new Error('That is taking longer than expected. Please check your connection and try again.');
+      slow.status = 0;
+      throw slow;
+    }
     // The browser never got an answer: the app is down or unreachable at
     // APP_URL, or it answered without allowing this site (CORS_ORIGINS).
     // Visitors get a plain message; the cause goes to the console.
@@ -285,6 +318,7 @@ async function callApi(path, body) {
     error.status = 0;
     throw error;
   }
+  clearTimeout(timer);
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
     const detail = payload && payload.detail;
@@ -417,6 +451,7 @@ if (signupForm) {
   const notice = signupForm.querySelector('#signupNotice');
   const summary = document.querySelector('#planSummary');
   const say = (text, tone = '') => { status.textContent = text; status.className = `form-status ${tone}`; };
+  signupForm.querySelector('[name=email]').addEventListener('input', (e) => e.target.removeAttribute('aria-invalid'));
   let plans = null;
 
   // Timezones: every IANA zone the browser knows, with the visitor's own —
@@ -460,7 +495,7 @@ if (signupForm) {
     yearlyOption.textContent = p && p.yearly_price_cents != null && savingPct(p) > 0
       ? `Pay yearly — save ${savingPct(p)}%` : 'Pay yearly';
     billingNote.textContent = '';
-    go.textContent = buying ? 'Continue to payment' : 'Start 10-day free trial';
+    go.textContent = buying ? 'Continue To Payment' : 'Start 10-Day Free Trial';
     note.textContent = '';
     if (p && !yearlyOk && p.yearly_price_cents == null) {
       billingNote.textContent = `${p.name} is monthly only.`;
@@ -515,6 +550,14 @@ if (signupForm) {
     event.preventDefault();
     if (!signupForm.reportValidity()) return;
     const data = Object.fromEntries(new FormData(signupForm));
+    const emailField = signupForm.querySelector('[name=email]');
+    const problem = emailProblem(data.email);
+    emailField.setAttribute('aria-invalid', String(Boolean(problem)));
+    if (problem) {
+      say(problem, 'bad');
+      emailField.focus();
+      return;
+    }
     go.disabled = true;
     say(data.mode === 'buy' ? 'Opening the payment page…' : 'Creating your account…');
     try {
@@ -566,30 +609,66 @@ if (verifyCard) {
   const title = document.querySelector('#verifyTitle');
   const lead = document.querySelector('#verifyLead');
   const resendForm = document.querySelector('#verifyResend');
+  const passwordForm = document.querySelector('#verifyPassword');
+  const signinBtn = document.querySelector('#verifySignin');
   const fail = (text) => {
-    title.textContent = 'That link didn’t work';
+    title.textContent = 'That Link Didn’t Work';
     lead.textContent = `${text} Links work once and last a limited time — enter your email to get a new one.`;
     verifyCard.querySelector('.notice-icon').classList.add('bad');
+    passwordForm.hidden = true;
     resendForm.hidden = false;
+  };
+  // Confirmed (and, for a new account, the password set): the Sign in button
+  // carries a one-time code, so it opens the dashboard rather than a login form.
+  const done = (result) => {
+    title.textContent = result.signin_code ? 'You’re All Set' : 'Email Confirmed';
+    lead.textContent = result.signin_code
+      ? 'Your email is confirmed and your password is set. Sign in with your email address and that password — or use the button to go straight to your dashboard.'
+      : (result.message.replace(/^Email confirmed\.\s*/, '') || 'You can sign in now.');
+    passwordForm.hidden = true;
+    if (result.signin_code) {
+      signinBtn.href = `${appOrigin}/app/#/signin?code=${encodeURIComponent(result.signin_code)}`;
+    }
+    document.querySelector('#verifyActions').hidden = false;
+    // Tidy the address bar: the token has done its job.
+    history.replaceState(null, '', window.location.pathname);
   };
   if (!token) {
     fail('This page needs the link from your confirmation email.');
   } else {
-    callApi('/auth/verify-email', { token }).then((result) => {
-      title.textContent = 'Email confirmed';
-      const text = result.message.replace(/^Email confirmed\.\s*/, '');
-      lead.textContent = /login details/.test(text) && !/couldn't/.test(text)
-        ? `${text} Sign in with them — you'll choose your own password the first time.`
-        : text || 'You can sign in now.';
-      document.querySelector('#verifyActions').hidden = false;
-      resendForm.hidden = false;
-      // Tidy the address bar: the token has done its job.
-      history.replaceState(null, '', window.location.pathname);
+    callApi('/auth/verify-email/check', { token }).then((info) => {
+      if (!info.needs_password) {
+        return callApi('/auth/verify-email', { token }).then(done);
+      }
+      title.textContent = 'Choose Your Password';
+      lead.innerHTML = '';
+      lead.append('Confirming ', Object.assign(document.createElement('b'), { textContent: info.email }),
+        '. Choose a password to finish setting up your account.');
+      passwordForm.hidden = false;
+      passwordForm.password.focus();
     }).catch((error) => fail(error.message));
   }
+  passwordForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const status = passwordForm.querySelector('.form-status');
+    const go = passwordForm.querySelector('#verifyGo');
+    const say = (text) => { status.className = 'form-status bad'; status.textContent = text; };
+    if (passwordForm.password.value !== passwordForm.confirm.value) return say('The passwords don’t match.');
+    if (passwordForm.password.value.length < 10) return say('Use at least 10 characters.');
+    status.textContent = '';
+    go.disabled = true;
+    try {
+      done(await callApi('/auth/verify-email', { token, password: passwordForm.password.value }));
+    } catch (error) {
+      say(error.message);
+      go.disabled = false;
+    }
+  });
   resendForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     const status = resendForm.querySelector('.form-status');
+    const problem = emailProblem(resendForm.email.value);
+    if (problem) { status.className = 'form-status bad'; status.textContent = problem; return; }
     try {
       const result = await callApi('/public/resend', { email: resendForm.email.value });
       status.className = 'form-status ok';
@@ -600,3 +679,37 @@ if (verifyCard) {
     }
   });
 }
+
+
+// ---- show / hide password ---------------------------------------------------------
+// An eye inside every password field. Fields stay masked by default, and go
+// back to masked when focus leaves the field, so a revealed password is not
+// left on screen.
+(() => {
+  const EYE = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+  const EYE_OFF = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.9 17.9A10.9 10.9 0 0 1 12 19c-6.4 0-10-7-10-7a18.5 18.5 0 0 1 4.1-5.1"/><path d="M9.9 5.2A10 10 0 0 1 12 5c6.4 0 10 7 10 7a18.4 18.4 0 0 1-2.2 3.2"/><path d="M14.1 14.1a3 3 0 1 1-4.2-4.2"/><path d="M2 2l20 20"/></svg>';
+  document.querySelectorAll('input[type="password"]').forEach((input) => {
+    const wrap = document.createElement('span');
+    wrap.className = 'pw-wrap';
+    input.parentNode.insertBefore(wrap, input);
+    wrap.appendChild(input);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'pw-toggle';
+    button.innerHTML = EYE;
+    button.title = 'Show password';
+    button.setAttribute('aria-label', 'Show password');
+    button.setAttribute('aria-pressed', 'false');
+    wrap.appendChild(button);
+    const set = (visible) => {
+      input.type = visible ? 'text' : 'password';
+      button.innerHTML = visible ? EYE_OFF : EYE;
+      button.title = visible ? 'Hide password' : 'Show password';
+      button.setAttribute('aria-label', button.title);
+      button.setAttribute('aria-pressed', String(visible));
+    };
+    button.addEventListener('mousedown', (e) => e.preventDefault());   // keep the caret in the field
+    button.addEventListener('click', () => { set(input.type === 'password'); input.focus(); });
+    wrap.addEventListener('focusout', (e) => { if (!wrap.contains(e.relatedTarget)) set(false); });
+  });
+})();

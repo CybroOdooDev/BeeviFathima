@@ -10,9 +10,14 @@ Two ways in, one ending:
   the plan they paid for.
 
 Either way the owner has **no password yet**: the account cannot sign in
-until the address is confirmed. Confirming it (``POST /auth/verify-email``)
-generates a password and emails it with the login address
-(``send_credentials``); the first sign-in with it must set a new one.
+until the address is confirmed. The confirmation link opens a page where the
+owner chooses their own password; submitting it (``POST /auth/verify-email``)
+confirms the address, stores the password and signs them in, and an email
+confirms that the login is their address plus the password they set
+(``send_account_ready``) — a password is never emailed.
+
+``send_credentials`` (a generated password) remains only for accounts that
+confirmed under the older flow and never signed in; "resend" uses it.
 """
 
 from __future__ import annotations
@@ -31,7 +36,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.security import hash_password, new_token
+from app.core.security import hash_password, hash_token, new_token
 from app.models import (
     PendingSignup,
     SubscriptionPlan,
@@ -186,6 +191,65 @@ def send_credentials(db: Session, user: User) -> bool:
     except Exception as exc:  # noqa: BLE001
         log.warning("Could not send login details to %s: %s", user.email, exc)
         return False
+
+
+def send_account_ready(db: Session, user: User) -> bool:
+    """Tell the owner how to sign in, without repeating the password: it is
+    their email address and the password they just chose."""
+    tenant = db.get(Tenant, user.tenant_id) if user.tenant_id else None
+    try:
+        send_email(
+            db=db,
+            to=user.email,
+            subject="Your BioBridge account is ready",
+            body=(
+                f"Welcome to BioBridge{f', {tenant.name}' if tenant else ''}!\n\n"
+                "Your email is confirmed and your password is set. To sign in, use:\n\n"
+                f"  Sign in at: {login_url()}\n"
+                f"  Email:      {user.email}\n"
+                "  Password:   the password you chose when you confirmed your email\n\n"
+                "If you forget it, use \"Forgot password\" on the sign-in page.\n\n"
+                "Next: connect your Odoo database and your biometric device from "
+                "Settings. The setup guide walks through both.\n"
+            ),
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Could not send the account-ready email to %s: %s", user.email, exc)
+        return False
+
+
+# --- one-time sign-in code ---------------------------------------------------
+# The confirmation page may live on the marketing site, a different origin from
+# the app, so a session can't be handed over through browser storage. Instead
+# the page's "Sign in" button carries a short-lived, single-use code that the
+# app exchanges for a session. Stored hashed in the password-reset slot under
+# its own prefix, so a reset token can never be used as a code or the reverse.
+SIGNIN_CODE_MINUTES = 15
+
+
+def issue_signin_code(user: User) -> str:
+    raw = new_token()
+    user.password_reset_token_hash = hash_token("signin:" + raw)
+    user.password_reset_expires_at = datetime.now(timezone.utc) + timedelta(minutes=SIGNIN_CODE_MINUTES)
+    return raw
+
+
+def consume_signin_code(db: Session, raw: str) -> User | None:
+    """The user a live code belongs to, with the code spent; else None."""
+    user = db.scalars(
+        select(User).where(User.password_reset_token_hash == hash_token("signin:" + raw))
+    ).first()
+    if user is None:
+        return None
+    expires = user.password_reset_expires_at
+    if expires is not None and expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    user.password_reset_token_hash = None
+    user.password_reset_expires_at = None
+    if expires is None or expires < datetime.now(timezone.utc) or not user.is_active:
+        return None
+    return user
 
 
 def resend(db: Session, email: str) -> None:

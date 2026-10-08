@@ -250,8 +250,18 @@ class SyncEngine:
             # and they've punched for real).
             self._provision_employees(odoo, sources)
 
+            # Both ends are connected: bring in everyone the device already
+            # knows who matches an Odoo employee, without waiting for a punch.
+            self._import_matched_employees(odoo, sources)
+
             self._reconcile_company_scope(odoo)
             self._resolve_mappings(odoo)
+            try:
+                from app.services.roster_import import refresh_companies
+
+                refresh_companies(self.db, self.tenant, odoo, force=True)
+            except Exception:  # noqa: BLE001 — a display cache must never fail a sync
+                log.warning("company refresh skipped", exc_info=True)
             self._push(odoo, odoo_conn)
 
             self.tenant.consecutive_failures = 0
@@ -628,6 +638,22 @@ class SyncEngine:
 
         self.run.employees_provisioned = provisioned
 
+    # -- roster import (device users -> matched employees) -----------------
+    def _import_matched_employees(self, odoo: OdooClient, sources: list[DeviceSource]) -> None:
+        """Both ends are connected: link device users to Odoo employees now,
+        without waiting for a punch. See app.services.roster_import."""
+        from app.services.roster_import import import_matched_employees
+
+        try:
+            imported = import_matched_employees(
+                self.db, self.tenant, odoo, sources, self._log, build_source_provider
+            )
+        except Exception as exc:  # noqa: BLE001 — an import is a convenience, never a reason to fail a sync
+            self._log(f"Employee import skipped: {exc}", "warning")
+            return
+        if imported:
+            self.run.employees_matched = (self.run.employees_matched or 0) + imported
+
     # -- stage 4b: which companies are on --------------------------------
     def _reconcile_company_scope(self, odoo: OdooClient) -> None:
         """Keep mappings in step with the companies switched on for this Odoo.
@@ -729,6 +755,7 @@ class SyncEngine:
             if mapping and mapping.status in (
                 MappingStatus.mapped.value,
                 MappingStatus.ignored.value,
+                MappingStatus.removed.value,
                 MappingStatus.out_of_scope.value,
             ):
                 continue
@@ -876,7 +903,8 @@ class SyncEngine:
             ):
                 punch.process_state = PunchState.unmapped.value
                 continue
-            if mapping.status in (MappingStatus.ignored.value, MappingStatus.ambiguous.value):
+            if mapping.status in (MappingStatus.ignored.value, MappingStatus.ambiguous.value,
+                                  MappingStatus.removed.value):
                 punch.process_state = PunchState.skipped.value
                 punch.error_message = f"Mapping is {mapping.status}"
                 continue

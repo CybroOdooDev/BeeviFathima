@@ -714,7 +714,7 @@ pre.log {
 }
 .tabs a.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 550; }
 
-#toasts { position: fixed; right: 16px; bottom: 16px; display: grid; gap: 8px; z-index: 50; }
+#toasts { position: fixed; right: 16px; top: 16px; display: grid; gap: 8px; z-index: 50; }
 .toast {
   background: var(--panel);
   border: 1px solid var(--rule);
@@ -945,6 +945,8 @@ a.btn.primary-link { background: var(--accent); border-color: var(--accent); col
   pointer-events: none;
 }
 .picker-list li.active { background: var(--accent-soft); }
+.picker-list li { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.picker-list li .picker-hint { color: var(--muted); font-size: 11.5px; white-space: nowrap; }
 .banner .banner-action { display: block; width: fit-content; margin-top: 6px; }
 .topbar h1 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 820px) {
@@ -1271,19 +1273,26 @@ dialog.new-account-dialog .grid.cols-2 { grid-template-columns: repeat(auto-fit,
 }
 
 /* --- guided first setup (#/get-started, pages/getstarted.js) ------------- */
-.setup-wizard { display: flex; flex-direction: column; gap: 16px; }
-.setup-head { padding-bottom: 6px; }
+.setup-wizard { display: flex; flex-direction: column; gap: 14px; }
+/* The instructions sit in their own white card under the title card. */
+.setup-wizard > .setup-head { background: var(--panel); padding: 16px 20px; }
+.setup-head .setup-intro { margin: 0 0 6px; font-size: 14px; line-height: 1.55; }
+.setup-head .setup-help { margin: 0; font-size: 13px; line-height: 1.5; }
+/* The title and the step list stay on screen while the form scrolls. */
+.setup-sticky { position: sticky; top: 0; z-index: 6; padding-bottom: 0; box-shadow: 0 6px 18px rgba(0,0,0,.06); }
+.setup-sticky .setup-head-top { margin-bottom: 12px; }
+.setup-advance { display: inline-flex; align-items: center; gap: 10px; }
+button[hidden] { display: none !important; }
 .setup-head-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
 .setup-head-top h2 { margin: 2px 0 0; font-size: 19px; }
-.setup-steps { margin: 0 -20px; border-top: 1px solid var(--rule-soft); }
+.setup-steps { margin: 0; padding: 14px 0 16px; background: transparent; border-top: 1px solid var(--rule-soft); border-bottom: 0; gap: 8px; }
 .setup-steps li button { display: inline-flex; align-items: center; gap: 7px; padding: 0; color: inherit; font: inherit; text-decoration: none; }
 .setup-steps li button:disabled { cursor: default; opacity: 1; }
-.setup-intro { margin: 14px 0 6px; font-size: 14px; line-height: 1.55; }
+.setup-intro { margin: 0 0 6px; font-size: 14px; line-height: 1.55; }
 .setup-help { margin: 0 0 8px; line-height: 1.5; }
 .setup-body > .card + .card { margin-top: 16px; }
 .setup-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
 .setup-foot-status { color: var(--muted); font-size: 13px; }
-#setupFoot { position: sticky; bottom: 12px; z-index: 5; box-shadow: 0 6px 24px rgba(0,0,0,.08); }
 .setup-done { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 40px 24px; }
 .setup-done .notice-icon { width: 56px; height: 56px; border-radius: 16px; display: grid; place-items: center;
   background: var(--accent-soft); color: var(--accent); font-size: 26px; font-weight: 700; }
@@ -1438,6 +1447,8 @@ button.icon-btn:hover, button.icon-btn:focus-visible {
 .flt-group { border: 0; margin: 0 0 12px; padding: 0; }
 .flt-group legend { font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 0; margin-bottom: 6px; }
 .flt-opt { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13.5px; cursor: pointer; }
+.flt-menu.flt-menu-right { left: auto; right: 0; }
+.flt-scroll { max-height: 160px; overflow-y: auto; }
 .flt-foot { border-top: 1px solid var(--line, #e3e5ef); padding-top: 10px; }
 .flt-menu .flt-opt { display: flex; flex-direction: row; justify-content: flex-start; align-items: center; gap: 10px; margin: 0; font-weight: 400; text-align: left; }
 .flt-menu .flt-opt input { width: auto; flex: 0 0 auto; margin: 0; }
@@ -1452,3 +1463,19 @@ button.icon-btn:hover, button.icon-btn:focus-visible {
 .pw-toggle:hover { color: var(--text, inherit); background: rgba(120, 120, 160, .12); }
 .pw-toggle:focus-visible { outline: 2px solid var(--accent, #5046e5); outline-offset: 1px; }
 .pw-toggle[aria-pressed="true"] { color: var(--accent, #5046e5); }
+
+/* The protocol list opens inside the wizard — leave it room to show. */
+dialog.wizard .wiz-body.wiz-tall { min-height: 400px; }
+
+/* Room for "Confirm delete" on one line, so arming the trash icon doesn't reflow the row. */
+.remove-slot { display: inline-flex; justify-content: flex-end; min-width: 132px; }
+.remove-slot button { white-space: nowrap; }
+
+/* Status pills read as labels: first letter of each word capitalised. */
+.pill { text-transform: capitalize; }
+
+.setup-foot{display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:18px;padding-top:16px;border-top:1px solid var(--line, #e5e7eb)}
+
+.field-pair{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
+@media(max-width:560px){.field-pair{grid-template-columns:1fr}}
+.h2-split{display:flex;align-items:center;justify-content:space-between;gap:12px}

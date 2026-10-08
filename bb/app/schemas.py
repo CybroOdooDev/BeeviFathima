@@ -154,6 +154,25 @@ class LoginRequest(BaseModel):
 
 class VerifyEmailRequest(BaseModel):
     token: str
+    #: Required for an account registered on the website, which has no
+    #: password yet: confirming the address is also where it is chosen.
+    password: str | None = Field(default=None, min_length=10, max_length=128)
+
+
+class VerifyCheckOut(BaseModel):
+    email: str
+    needs_password: bool
+
+
+class VerifyEmailOut(BaseModel):
+    message: str
+    #: One-time code that signs the person straight in (POST /auth/signin-code),
+    #: so the "Sign in" button on the confirmation page lands on the dashboard.
+    signin_code: str | None = None
+
+
+class SignInCodeIn(BaseModel):
+    code: str = Field(min_length=10, max_length=200)
 
 
 class AlertOut(BaseModel):
@@ -226,7 +245,9 @@ class RegisterIn(BaseModel):
     """The website's registration form (POST /public/register)."""
 
     company_name: str = Field(min_length=2, max_length=120)
-    email: EmailStr
+    #: Plain text here; assert_genuine_email checks it and says what is wrong
+    #: in words (EmailStr would answer with a generic 422).
+    email: str = Field(min_length=1, max_length=254)
     full_name: str | None = Field(default=None, max_length=120)
     timezone: str = "UTC"
     #: A plan id, or its name — the site links to plans by name.
@@ -257,7 +278,9 @@ class ContactIn(BaseModel):
 
     topic: Literal["Demo", "Sales question"] = "Demo"
     name: str = Field(min_length=2, max_length=120)
-    email: EmailStr
+    #: Plain text here; assert_genuine_email checks it and says what is wrong
+    #: in words (EmailStr would answer with a generic 422).
+    email: str = Field(min_length=1, max_length=254)
     company: str = Field(min_length=2, max_length=160)
     phone: str | None = Field(default=None, max_length=40)
     employees: str | None = Field(default=None, max_length=40)
@@ -878,6 +901,11 @@ class MappingOut(ORMModel):
     source_name: str | None
     odoo_employee_id: int | None
     odoo_employee_name: str | None
+    odoo_company_id: int | None = None
+    odoo_company_name: str | None = None
+    odoo_department_name: str | None = None
+    odoo_manager_id: int | None = None
+    odoo_manager_name: str | None = None
     status: str
     match_method: str | None
     match_note: str | None
@@ -974,6 +1002,8 @@ class DashboardOut(BaseModel):
     unmapped_employees: int
     last_run: SyncRunOut | None
     connection_health: dict[str, str]
+    #: How many biometric connections there are, and in which state.
+    source_counts: dict[str, int] = {}
     schedule: ScheduleOut
     #: None right up until the subscription is genuinely close to lapsing —
     #: see app.services.scheduling.renewal_warning. The overview page is the

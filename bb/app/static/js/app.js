@@ -21,12 +21,12 @@ import { render as renderMailAdmin } from './pages/mail.js';
 import { render as renderPaymentsAdmin } from './pages/payments.js';
 import { render as renderClosures } from './pages/closures.js';
 import { render as renderLeads } from './pages/leads.js';
-import { renderSetPassword, renderVerifyEmail, renderForgotPassword, renderResetPassword } from './pages/account.js';
+import { renderSetPassword, renderVerifyEmail, renderSignInCode, renderForgotPassword, renderResetPassword } from './pages/account.js';
 import { renderConsoleOverview } from './pages/console.js';
 
 const PUBLIC = new Set(['/login', '/signup', '/staff/login', '/plans', '/forgot-password']);
 // Doors that render the same whether or not someone is signed in.
-const ANYONE = new Set(['/verify-email', '/reset-password']);
+const ANYONE = new Set(['/verify-email', '/reset-password', '/signin']);
 
 /** Where an unauthenticated visitor lands, by path.
  *
@@ -46,6 +46,8 @@ const DOORS = {
   // Where the confirmation email's link lands when there is no marketing
   // site to send it to (SITE_URL unset). Works signed in or out.
   '/verify-email': renderVerifyEmail,
+  // The confirmation page's "Sign in" button: one-time code in, dashboard out.
+  '/signin': renderSignInCode,
   // Forgot password: ask for a link, then choose a new password from it.
   '/forgot-password': renderForgotPassword,
   '/reset-password': renderResetPassword,
@@ -104,8 +106,8 @@ const NAV = [
           { path: '/settings/general', title: 'General' },
           { path: '/settings/pairing', title: 'Pairing' },
           { path: '/settings/billing', title: 'Billing' },
-          { path: '/settings/odoo', title: 'Odoo connection' },
-          { path: '/settings/biometric', title: 'Biometric connections' },
+          { path: '/settings/odoo', title: 'Odoo Connection' },
+          { path: '/settings/biometric', title: 'Biometric Connections' },
         ],
       },
     ],
@@ -118,11 +120,11 @@ const NAV = [
     staffOnly: true,
     items: [
       { path: '/console', title: 'Overview', icon: 'overview' },
-      { path: '/platform', title: 'All accounts', icon: 'platform', activeFor: ['/platform'] },
+      { path: '/platform', title: 'All Accounts', icon: 'platform', activeFor: ['/platform'] },
       { path: '/platform/plans', title: 'Plans', icon: 'plans' },
       { path: '/platform/leads', title: 'Leads', icon: 'mail' },
-      { path: '/platform/closed', title: 'Closed accounts', icon: 'closed' },
-      { path: '/platform/email', title: 'Email server', icon: 'mail' },
+      { path: '/platform/closed', title: 'Closed Accounts', icon: 'closed' },
+      { path: '/platform/email', title: 'Email Server', icon: 'mail' },
       { path: '/platform/payments', title: 'Payments', icon: 'card' },
     ],
   },
@@ -149,24 +151,24 @@ const REDIRECTS = {
 
 /* Each screen's title, and one line under it saying what the screen is for. */
 const ROUTES = {
-  '/': { title: 'Overview', sub: 'Sync status and anything that needs your attention', render: renderOverview },
+  '/': { title: 'Overview', sub: 'Sync Status And Anything That Needs Your Attention', render: renderOverview },
   '/attendance': { title: 'Attendance', sub: 'Shifts written to Odoo, in your timezone', render: renderAttendance },
   '/activity': { title: 'Activity', sub: 'Every punch pulled, and every sync run', render: renderActivity },
-  '/employees': { title: 'Employees', sub: 'Badges matched to Odoo employees', render: renderEmployees },
-  '/terminals': { title: 'Terminals', sub: 'Every device your biometric connections bring in', render: renderTerminals },
-  '/get-started': { title: 'Get set up', sub: 'Connect Odoo and your biometric system, set your pairing rules, one step at a time', render: renderGetStarted },
+  '/employees': { title: 'Employees', sub: 'Badges Matched To Odoo Employees', render: renderEmployees },
+  '/terminals': { title: 'Terminals', sub: 'Every Device Your Biometric Connections Bring In', render: renderTerminals },
+  '/get-started': { title: 'BioBridge Setup', sub: 'Connect Odoo and your biometric system, set your pairing rules, one step at a time', render: renderGetStarted },
   '/settings/general': { title: 'General', sub: 'Company, timezone and sync schedule', render: renderSettings },
-  '/settings/pairing': { title: 'Pairing', sub: 'How raw punches become shifts', render: renderSettings },
+  '/settings/pairing': { title: 'Pairing', sub: 'How Raw Punches Become Shifts', render: renderSettings },
   '/settings/billing': { title: 'Billing', sub: 'Your plan, renewals, payment method and invoices', render: renderSettings },
-  '/settings/billing/choose': { title: 'Choose a plan', sub: 'Compare plans and switch', render: renderSettings },
-  '/settings/odoo': { title: 'Odoo connection', sub: 'Odoo connection, and badges waiting for a match', render: renderSettings },
-  '/settings/biometric': { title: 'Biometric connections', sub: 'Biometric connections — where punches come from', render: renderSettings },
-  '/console': { title: 'Platform overview', sub: 'Every account at a glance — health, growth and what needs a person', render: renderConsoleOverview },
-  '/platform': { title: 'All accounts', sub: 'Every customer account on this platform', render: renderPlatform },
-  '/platform/leads': { title: 'Leads', sub: 'Contact and demo requests from the website', render: renderLeads },
-  '/platform/closed': { title: 'Closed accounts', sub: 'Deleted accounts — who closed them, and why', render: renderClosures },
+  '/settings/billing/choose': { title: 'Choose A Plan', sub: 'Compare Plans And Switch', render: renderSettings },
+  '/settings/odoo': { title: 'Odoo Connection', sub: 'Odoo connection, and badges waiting for a match', render: renderSettings },
+  '/settings/biometric': { title: 'Biometric Connections', sub: 'Biometric connections — where punches come from', render: renderSettings },
+  '/console': { title: 'Platform Overview', sub: 'Every account at a glance — health, growth and what needs a person', render: renderConsoleOverview },
+  '/platform': { title: 'All Accounts', sub: 'Every Customer Account On This Platform', render: renderPlatform },
+  '/platform/leads': { title: 'Leads', sub: 'Contact And Demo Requests From The Website', render: renderLeads },
+  '/platform/closed': { title: 'Closed Accounts', sub: 'Deleted accounts — who closed them, and why', render: renderClosures },
   '/platform/payments': { title: 'Payments (Stripe)', sub: 'The Stripe keys, webhook and prices online billing runs on', render: renderPaymentsAdmin },
-  '/platform/email': { title: 'Email server', sub: 'Where signup confirmations and login details are sent from', render: renderMailAdmin },
+  '/platform/email': { title: 'Email Server', sub: 'Where signup confirmations and login details are sent from', render: renderMailAdmin },
   '/platform/plans': { title: 'Plans', sub: 'The tiers accounts are sold under, and the limits each one enforces', render: renderPlanAdmin },
 };
 
@@ -202,7 +204,7 @@ function mountShell() {
         <div class="side-foot">
           <div class="side-user" id="sideUser"></div>
           <div class="theme-toggle" id="themeSwitch" role="group" aria-label="Theme"></div>
-          <button class="link" id="signOut" style="padding-left:0">Sign out</button>
+          <button class="link" id="signOut" style="padding-left:0">Sign Out</button>
         </div>
       </aside>
       <div class="main">
@@ -249,7 +251,7 @@ function mountShell() {
         + `${result.attendances_created} created, ${result.attendances_closed} closed`,
       result.status === 'failed' ? 'bad' : 'ok');
     } catch (error) {
-      if (error.status !== 401) toast(error.message || 'Sync failed', 'bad');
+      if (error.status !== 401) toast(error.message || 'Sync Failed', 'bad');
     }
     button.disabled = false;
     button.classList.remove('spinning');
@@ -294,7 +296,7 @@ function paintThemeSwitch() {
   const active = currentTheme();
   holder.innerHTML = THEMES.map((t) => `
     <button type="button" data-theme-choice="${t.value}" aria-pressed="${t.value === active}"
-            title="${t.value === 'system' ? 'Follow this computer’s setting' : `Always ${t.label.toLowerCase()}`}">
+            title="${t.value === 'system' ? 'Follow This Computer’s Setting' : `Always ${t.label.toLowerCase()}`}">
       ${t.label}</button>`).join('');
 }
 
@@ -337,13 +339,13 @@ function renderChrome(path) {
   const run = syncState.lastRun;
   $('#topActions').innerHTML = auth.tenant && !auth.isStaffSession ? `
     ${bellHtml()}
-    <span class="last-sync" title="${esc(run ? `Last sync ${run.status}` : 'No sync has run yet')}">
+    <span class="last-sync" title="${esc(run ? `Last sync ${run.status}` : 'No Sync Has Run Yet')}">
       ${run ? `<span class="dot ${run.status === 'success' ? 'ok' : run.status === 'failed' ? 'bad' : 'warn'}"></span>
-        Synced ${esc(fmtAgo(run.started_at))}` : 'Never synced'}
+        Synced ${esc(fmtAgo(run.started_at))}` : 'Never Synced'}
     </span>
-    ${auth.canWrite ? `<button class="sm" id="topSync" aria-label="Sync now" ${syncState.needsSetup ? 'disabled title="Connect Odoo and a biometric source first"' : ''}>
+    ${auth.canWrite ? `<button class="sm" id="topSync" aria-label="Sync Now" ${syncState.needsSetup ? 'disabled title="Connect Odoo and a biometric source first"' : ''}>
       <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5"/></svg>
-      <span class="sync-label">Sync now</span></button>` : ''}` : '';
+      <span class="sync-label">Sync Now</span></button>` : ''}` : '';
 
   const sideUser = $('#sideUser');
   sideUser.textContent = auth.user?.email || '';
@@ -373,7 +375,7 @@ const BELL = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke
 
 function bellHtml() {
   const n = alertState.count;
-  const label = n ? `${n} alert${n === 1 ? '' : 's'} need attention` : 'No alerts';
+  const label = n ? `${n} alert${n === 1 ? '' : 's'} need attention` : 'No Alerts';
   return `<button class="sm bell ${n ? alertState.worst : ''}" id="alertBell" aria-haspopup="true"
       aria-label="${esc(label)}" title="${esc(label)}">${BELL}${n ? `<span class="bell-count">${n > 9 ? '9+' : n}</span>` : ''}</button>`;
 }
@@ -533,13 +535,13 @@ async function resolve() {
     const entry = ROUTES[route.path];
     mountShell();
     renderChrome(route.path);
-    $('#pageTitle').textContent = entry ? entry.title : 'Not found';
+    $('#pageTitle').textContent = entry ? entry.title : 'Not Found';
     $('#pageSub').textContent = entry?.sub || '';
 
     const content = $('#content');
     if (!entry) {
-      content.innerHTML = '<div class="empty"><strong>Page not found</strong>'
-        + '<a href="#/">Back to the overview</a></div>';
+      content.innerHTML = '<div class="empty"><strong>Page Not Found</strong>'
+        + '<a href="#/">Back To The Overview</a></div>';
       return;
     }
 
@@ -549,8 +551,8 @@ async function resolve() {
       shown = { hash: window.location.hash || '#/', path: route.path };
     } catch (error) {
       if (error.status === 401) return; // api.js already signalled sign-out
-      content.innerHTML = `<div class="banner bad"><strong>Could not load this page</strong>${
-        esc(error.message || 'Unknown error')}</div>`;
+      content.innerHTML = `<div class="banner bad"><strong>Could Not Load This Page</strong>${
+        esc(error.message || 'Unknown Error')}</div>`;
     }
 
     await refreshBadges();

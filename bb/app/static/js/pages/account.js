@@ -38,32 +38,98 @@ async function post(path, body, token) {
       : Array.isArray(detail) && detail.length
         ? detail.map((d) => String(d.msg || '').replace(/^Value error, /, '')).filter(Boolean).join(' ')
         : `Request failed (HTTP ${response.status})`;
-    throw new Error(message || 'Something went wrong');
+    throw new Error(message || 'Something Went Wrong');
   }
   return payload;
 }
 
+const BRAND = '<div class="brand"><span class="brand-mark">B</span><span class="brand-word"><b>Bio</b><span>Bridge</span></span></div>';
+
 /** #/verify-email?token=… — where the confirmation link lands when the
- * deployment has no marketing site (SITE_URL unset). */
+ * deployment has no marketing site (SITE_URL unset). An account registered
+ * from the website has no password yet, so this page also asks for one;
+ * "Sign in" afterwards opens the dashboard directly. */
 export async function renderVerifyEmail(route = {}) {
-  const root = authShell('<h1>Confirming your email…</h1><p class="sub">One moment.</p>');
-  try {
-    const result = await post('/auth/verify-email', { token: route.query?.token || '' });
-    root.querySelector('.auth-card').innerHTML = `
-      <div class="brand"><span class="brand-mark">B</span><span class="brand-word"><b>Bio</b><span>Bridge</span></span></div>
-      <h1>Email confirmed</h1>
+  const root = authShell('<h1>Confirming Your Email…</h1><p class="sub">One moment.</p>');
+  const card = () => root.querySelector('.auth-card');
+  const token = route.query?.token || '';
+  const failed = (message) => {
+    card().innerHTML = `
+      ${BRAND}
+      <h1>That Link Didn’t Work</h1>
+      <p class="sub">${esc(message)} Links last a limited time and work once — ask for a new one from the page you registered on.</p>
+      <a class="btn" style="width:100%;text-align:center" href="#/login">Go To Sign In</a>`;
+  };
+  const confirmed = (result) => {
+    card().innerHTML = `
+      ${BRAND}
+      <h1>Email Confirmed</h1>
       <p class="sub">${esc(result.message)}</p>
-      <a class="btn primary" style="width:100%;text-align:center" href="#/login">Go to sign in</a>`;
+      ${result.signin_code
+        ? `<p class="sub">Your login is your email address and the password you just chose.</p>
+           <a class="btn primary" style="width:100%;text-align:center" href="#/signin?code=${encodeURIComponent(result.signin_code)}">Sign In</a>`
+        : '<a class="btn primary" style="width:100%;text-align:center" href="#/login">Go To Sign In</a>'}`;
+  };
+
+  let info;
+  try {
+    info = await post('/auth/verify-email/check', { token });
+  } catch (error) {
+    failed(error.message);
+    return;
+  }
+  if (!info.needs_password) {
+    try { confirmed(await post('/auth/verify-email', { token })); } catch (error) { failed(error.message); }
+    return;
+  }
+
+  card().innerHTML = `
+    ${BRAND}
+    <h1>Choose Your Password</h1>
+    <p class="sub">Confirming <b>${esc(info.email)}</b>. Choose a password — you'll sign in with this email address and that password.</p>
+    <form id="pwForm">
+      ${field({ name: 'new_password', label: 'Password', type: 'password', required: true, help: 'At least 10 characters.' })}
+      ${field({ name: 'confirm', label: 'Confirm Password', type: 'password', required: true })}
+      <button class="primary" style="width:100%" id="pwGo">Confirm And Set Password</button>
+    </form>
+    <p class="err" id="authError"></p>`;
+  $('#pwForm', root).addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const error = $('#authError', root);
+    const button = $('#pwGo', root);
+    const values = readForm(event.target);
+    error.textContent = '';
+    if (values.new_password !== values.confirm) { error.textContent = 'The passwords don’t match.'; return; }
+    if (values.new_password.length < 10) { error.textContent = 'Use at least 10 characters.'; return; }
+    button.disabled = true;
+    try {
+      confirmed(await post('/auth/verify-email', { token, password: values.new_password }));
+    } catch (exc) {
+      error.textContent = exc.message;
+      button.disabled = false;
+    }
+  });
+}
+
+/** #/signin?code=… — the confirmation page's "Sign in" button: trades the
+ * one-time code for a session and opens the dashboard. */
+export async function renderSignInCode(route = {}) {
+  const root = authShell('<h1>Signing You In…</h1><p class="sub">One moment.</p>');
+  try {
+    const tokens = await post('/auth/signin-code', { code: route.query?.code || '' });
+    auth.persist(tokens);
+    auth.user = null;
+    window.dispatchEvent(new CustomEvent('bb:signed-in', { detail: { next: '#/' } }));
   } catch (error) {
     root.querySelector('.auth-card').innerHTML = `
-      <div class="brand"><span class="brand-mark">B</span><span class="brand-word"><b>Bio</b><span>Bridge</span></span></div>
-      <h1>That link didn’t work</h1>
-      <p class="sub">${esc(error.message)} Links last a limited time and work once — ask for a new one from the page you registered on.</p>
-      <a class="btn" style="width:100%;text-align:center" href="#/login">Go to sign in</a>`;
+      ${BRAND}
+      <h1>Sign In</h1>
+      <p class="sub">${esc(error.message)}</p>
+      <a class="btn primary" style="width:100%;text-align:center" href="#/login">Go To Sign In</a>`;
   }
 }
 
-function passwordFields({ current = 'Current password' } = {}) {
+function passwordFields({ current = 'Current Password' } = {}) {
   return `
     ${current ? field({ name: 'current_password', label: current, type: 'password', required: true }) : ''}
     ${field({ name: 'new_password', label: 'New Password', type: 'password', required: true,
@@ -82,13 +148,13 @@ function check(values) {
 /** Shown instead of the app after signing in with the emailed password. */
 export function renderSetPassword() {
   const root = authShell(`
-    <h1>Choose your password</h1>
+    <h1>Choose Your Password</h1>
     <p class="sub">Welcome! Choose your own password to continue — the one we emailed you stops working once you do.</p>
     <form id="pwForm">
       ${passwordFields({ current: null })}
-      <button class="primary" style="width:100%" id="pwGo">Set password and continue</button>
+      <button class="primary" style="width:100%" id="pwGo">Set Password And Continue</button>
     </form>
-    <p class="auth-alt"><a href="#" id="pwOut">Sign out</a></p>`);
+    <p class="auth-alt"><a href="#" id="pwOut">Sign Out</a></p>`);
 
   $('#pwOut', root).addEventListener('click', (event) => {
     event.preventDefault();
@@ -134,7 +200,7 @@ export function openPasswordWizard() {
   dialog.style.width = 'min(480px, calc(100vw - 24px))';
   document.body.append(dialog);
 
-  const STEPS = ['Current password', 'New password'];
+  const STEPS = ['Current Password', 'New Password'];
   const state = { step: 1, current: '', error: '' };
 
   const close = () => { dialog.close(); dialog.remove(); };
@@ -142,7 +208,7 @@ export function openPasswordWizard() {
   function render() {
     dialog.innerHTML = `
       <div class="wiz-head">
-        <strong id="pwWizTitle">Change user password</strong>
+        <strong id="pwWizTitle">Change User Password</strong>
         <button type="button" class="link wiz-x" data-pw="cancel" aria-label="Close">&times;</button>
       </div>
       <ol class="wiz-steps">
@@ -168,7 +234,7 @@ export function openPasswordWizard() {
         <div class="wiz-foot">
           ${state.step === 1
             ? '<button type="button" data-pw="cancel">Cancel</button><button class="primary" type="submit">Next</button>'
-            : '<button type="button" data-pw="back">Back</button><button class="primary" type="submit" id="pwWizSave">Save new password</button>'}
+            : '<button type="button" data-pw="back">Back</button><button class="primary" type="submit" id="pwWizSave">Save New Password</button>'}
         </div>
       </form>`;
     dialog.querySelectorAll('[data-pw=cancel]').forEach((b) => b.addEventListener('click', close));
@@ -204,7 +270,7 @@ export function openPasswordWizard() {
     try {
       await api.post('/auth/change-password', body);
       close();
-      toast('Password changed', 'ok');
+      toast('Password Changed', 'ok');
     } catch (exc) {
       const message = exc.message || 'Could not change the password.';
       if (/current password/i.test(message)) {
@@ -245,9 +311,9 @@ export async function openDeleteAccountWizard({ companyName, billedByStripe }) {
   const close = () => { dialog.close(); dialog.remove(); };
 
   function render() {
-    const steps = ['Why are you leaving?', 'Confirm'];
+    const steps = ['Why Are You Leaving?', 'Confirm'];
     dialog.innerHTML = `
-      <div class="wiz-head"><strong id="delAccTitle">Delete account</strong>
+      <div class="wiz-head"><strong id="delAccTitle">Delete Account</strong>
         <button type="button" class="link wiz-x" data-x aria-label="Close">&times;</button></div>
       <ol class="wiz-steps">${steps.map((label, i) => {
         const n = i + 1;
@@ -270,7 +336,7 @@ export async function openDeleteAccountWizard({ companyName, billedByStripe }) {
             <div class="banner bad"><strong>This permanently deletes ${esc(companyName)}</strong>
               Your Odoo and biometric connections, devices, employee matches, every punch and attendance record BioBridge holds,
               and all users of this account. Attendance already written to Odoo stays in Odoo. This can't be undone.</div>
-            ${billedByStripe ? `<div class="banner warn"><strong>Your subscription ends now</strong>
+            ${billedByStripe ? `<div class="banner warn"><strong>Your Subscription Ends Now</strong>
               It is cancelled immediately — nothing more is charged, and the rest of the current period is not refunded.</div>` : ''}
             <div class="field"><label for="confirm_name">Type <strong>${esc(companyName)}</strong> to confirm</label>
               <input id="confirm_name" name="confirm_name" autocomplete="off"></div>
@@ -282,7 +348,7 @@ export async function openDeleteAccountWizard({ companyName, billedByStripe }) {
         <div class="wiz-foot">
           ${state.step === 1
             ? '<button type="button" data-x>Cancel</button><button type="submit" class="primary">Next</button>'
-            : '<button type="button" data-back>Back</button><button type="submit" class="danger" id="delAccGo" disabled>Delete account permanently</button>'}
+            : '<button type="button" data-back>Back</button><button type="submit" class="danger" id="delAccGo" disabled>Delete Account Permanently</button>'}
         </div>
       </form>`;
     dialog.querySelectorAll('[data-x]').forEach((b) => b.addEventListener('click', close));
@@ -355,11 +421,11 @@ export async function openDeleteAccountWizard({ companyName, billedByStripe }) {
  * address, so it never says whether an account exists. */
 export function renderForgotPassword() {
   const root = authShell(`
-    <h1>Forgot your password?</h1>
+    <h1>Forgot Your Password?</h1>
     <p class="sub">Enter the email you signed up with and we’ll send you a link to choose a new one.</p>
     <form id="fpForm">
       ${field({ name: 'email', label: 'Email', type: 'email', required: true })}
-      <button class="primary" style="width:100%" id="fpGo">Send reset link</button>
+      <button class="primary" style="width:100%" id="fpGo">Send Reset Link</button>
     </form>
     <p class="auth-alt"><a href="#/login">&larr; Back to sign in</a></p>`);
   $('#fpForm', root).addEventListener('submit', async (event) => {
@@ -372,9 +438,9 @@ export function renderForgotPassword() {
       const result = await post('/auth/forgot-password', readForm(event.target));
       root.querySelector('.auth-card').innerHTML = `
         <div class="brand"><span class="brand-mark">B</span><span class="brand-word"><b>Bio</b><span>Bridge</span></span></div>
-        <h1>Check your email</h1>
+        <h1>Check Your Email</h1>
         <p class="sub">${esc(result.message)} The link works once and expires in an hour.</p>
-        <a class="btn" style="width:100%;text-align:center" href="#/login">Back to sign in</a>`;
+        <a class="btn" style="width:100%;text-align:center" href="#/login">Back To Sign In</a>`;
     } catch (e) {
       error.textContent = e.message;
       button.disabled = false;
@@ -386,11 +452,11 @@ export function renderForgotPassword() {
 export function renderResetPassword(route = {}) {
   const token = route.query?.token || '';
   const root = authShell(`
-    <h1>Choose a new password</h1>
+    <h1>Choose A New Password</h1>
     <p class="sub">Pick a password you don’t use anywhere else. Signing in elsewhere will end once you save.</p>
     <form id="rpForm">
       ${passwordFields({ current: null })}
-      <button class="primary" style="width:100%" id="rpGo">Reset password</button>
+      <button class="primary" style="width:100%" id="rpGo">Reset Password</button>
     </form>
     <p class="auth-alt"><a href="#/login">&larr; Back to sign in</a></p>`);
   $('#rpForm', root).addEventListener('submit', async (event) => {
@@ -404,12 +470,12 @@ export function renderResetPassword(route = {}) {
       await post('/auth/reset-password', { token, new_password: body.new_password });
       root.querySelector('.auth-card').innerHTML = `
         <div class="brand"><span class="brand-mark">B</span><span class="brand-word"><b>Bio</b><span>Bridge</span></span></div>
-        <h1>Password changed</h1>
+        <h1>Password Changed</h1>
         <p class="sub">You’re all set — sign in with your new password. Any other signed-in devices have been signed out.</p>
-        <a class="btn primary" style="width:100%;text-align:center" href="#/login">Go to sign in</a>`;
+        <a class="btn primary" style="width:100%;text-align:center" href="#/login">Go To Sign In</a>`;
     } catch (e) {
       error.innerHTML = /invalid or has expired/.test(e.message)
-        ? `${esc(e.message)} <a href="#/forgot-password">Request a new link</a>` : esc(e.message);
+        ? `${esc(e.message)} <a href="#/forgot-password">Request A New Link</a>` : esc(e.message);
       button.disabled = false;
     }
   });

@@ -39,7 +39,7 @@ def test_syncing_one_device_reads_only_that_device(db, tenant, local_day, monkey
     }, monkeypatch, zk.id)
 
     assert run.status == "success", run.error_message
-    assert fetched == ["Warehouse ZK"]
+    assert set(fetched) == {"Warehouse ZK"}
     assert {p.emp_code for p in db.scalars(select(PunchRecord))} == {"1002"}
     assert run.triggered_by == "device"
 

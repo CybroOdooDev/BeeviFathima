@@ -6,7 +6,7 @@ import { banner, empty, esc, fmtAgo, loading, pill } from '../ui.js';
 
 export async function render(mount) {
   if (!auth.isPlatformAdmin) {
-    mount.innerHTML = banner('Not available', 'This section is for platform staff.', 'warn');
+    mount.innerHTML = banner('Not Available', 'This section is for platform staff.', 'warn');
     return;
   }
   mount.innerHTML = loading();
@@ -18,7 +18,7 @@ export async function render(mount) {
 
   mount.innerHTML = `
     ${top.length ? `<div class="card" style="margin-bottom:16px">
-      <div class="card-head"><h2>Why customers leave <span class="hint">${byCustomer.length} self-service closure${byCustomer.length === 1 ? '' : 's'}</span></h2></div>
+      <div class="card-head"><h2>Why Customers Leave <span class="hint">${byCustomer.length} self-service closure${byCustomer.length === 1 ? '' : 's'}</span></h2></div>
       <div class="row" style="gap:8px">${top.map(([label, n]) => `<span class="pill mute">${esc(label)} · ${n}</span>`).join('')}</div>
     </div>` : ''}
     <div class="card">
@@ -28,11 +28,11 @@ export async function render(mount) {
           <td title="${esc(r.closed_at || '')}">${esc(fmtAgo(r.closed_at))}</td>
           <td><strong>${esc(r.tenant_name)}</strong><div class="hint mono">${esc(r.tenant_slug || '')}</div></td>
           <td>${esc(r.owner_email || '—')}</td>
-          <td>${esc(r.plan_name || '—')}${r.stripe_subscription_cancelled ? '<div class="hint">Stripe subscription cancelled</div>' : ''}</td>
+          <td>${esc(r.plan_name || '—')}${r.stripe_subscription_cancelled ? '<div class="hint">Stripe Subscription Cancelled</div>' : ''}</td>
           <td>${r.closed_by === 'customer' ? pill('pending', 'customer') : pill('skipped', 'staff')}
             <div class="hint">${esc(r.closed_by_email || '')}</div></td>
           <td><strong>${esc(r.reason_label || '—')}</strong>${r.reason_text ? `<div class="hint" style="white-space:pre-wrap;max-width:420px">${esc(r.reason_text)}</div>` : ''}</td>
         </tr>`).join('')}</tbody></table></div>`
-        : empty('No closed accounts', 'Accounts deleted by their owner or by staff show up here with the reason.')}
+        : empty('No Closed Accounts', 'Accounts deleted by their owner or by staff show up here with the reason.')}
     </div>`;
 }

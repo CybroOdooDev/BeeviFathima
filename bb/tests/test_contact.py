@@ -63,7 +63,7 @@ def test_bots_and_floods_are_stopped(client, _mail, monkeypatch):  # noqa: F811
 
 
 def test_bad_input_is_refused(client):  # noqa: F811
-    assert client.post("/api/v1/public/contact", json={**FORM, "email": "nope"}).status_code == 422
+    assert client.post("/api/v1/public/contact", json={**FORM, "email": "nope"}).status_code == 400
     assert client.post("/api/v1/public/contact", json={**FORM, "preferred_date": "next week"}).status_code == 422
     assert client.post("/api/v1/public/contact", json={**FORM, "preferred_window": "Midnight"}).status_code == 422
 

@@ -48,10 +48,10 @@ function summaryHtml(p) {
   const rate = p.conversion == null ? '—' : `${Math.round(p.conversion * 100)}%`;
   return `
     <div class="grid cols-4" style="margin-bottom:16px">
-      ${stat({ label: 'Open leads', value: p.open, note: 'still in play' })}
+      ${stat({ label: 'Open Leads', value: p.open, note: 'still in play' })}
       ${stat({ label: 'Won', value: p.won, note: `${p.lost} lost` })}
       ${stat({ label: 'Conversion', value: rate, note: 'won ÷ (won + lost)' })}
-      ${stat({ label: 'Days to win', value: p.avg_days_to_win == null ? '—' : p.avg_days_to_win, note: 'average, new → won' })}
+      ${stat({ label: 'Days To Win', value: p.avg_days_to_win == null ? '—' : p.avg_days_to_win, note: 'average, new → won' })}
     </div>`;
 }
 
@@ -109,7 +109,7 @@ function eventLine(e) {
   if (e.kind === 'demo') {
     const text = e.to_stage
       ? `Demo ${e.from_stage ? `${esc(DEMO_LABEL[e.from_stage] || e.from_stage).toLowerCase()} → ` : 'set to '}<strong>${esc(DEMO_LABEL[e.to_stage] || e.to_stage).toLowerCase()}</strong>`
-      : 'Demo status cleared';
+      : 'Demo Status Cleared';
     return `<li><div>${text}</div><div class="hint">${who} · ${when}</div></li>`;
   }
   if (e.kind === 'note') return `<li><div>${esc(e.note)}</div><div class="hint">${who} · ${when}</div></li>`;
@@ -168,18 +168,18 @@ function panelHtml(r, events) {
             <h4>Request</h4>
             <div class="wiz-facts">
               <div><span class="hint">Topic</span><span class="pill mute">${esc(r.topic)}</span></div>
-              ${r.preferred_date ? `<div><span class="hint">Wants a demo</span><strong>${demoWhen(r)}</strong></div>` : ''}
+              ${r.preferred_date ? `<div><span class="hint">Wants A Demo</span><strong>${demoWhen(r)}</strong></div>` : ''}
               ${setup(r) ? `<div><span class="hint">Setup</span><span>${setup(r)}</span></div>` : ''}
             </div>
             ${r.message ? `<p class="wiz-msg">${esc(r.message)}</p>` : ''}
             <div id="wLostWrap" class="${r.status === 'lost' ? '' : 'hidden'}" style="margin-top:12px">
-              <label for="wLost">Why was it lost? <span class="opt">optional</span></label>
+              <label for="wLost">Why Was It Lost? <span class="opt">optional</span></label>
               <input id="wLost" type="text" maxlength="160" value="${esc(r.lost_reason || '')}"
                 placeholder="Too expensive, chose a competitor, no response…">
             </div>
             <label for="wNotes" style="margin-top:12px">Notes</label>
             <textarea id="wNotes" rows="4" placeholder="What matters about this lead…">${esc(r.notes || '')}</textarea>
-            <div class="row" style="margin-top:10px"><button class="primary" id="wSave">Save notes</button></div>
+            <div class="row" style="margin-top:10px"><button class="primary" id="wSave">Save Notes</button></div>
           </section>
           <section>
             <h4>History</h4>
@@ -199,7 +199,7 @@ function panelHtml(r, events) {
  * page). Empty = no filter on that field, so everything shows. */
 const FILTERS = { stage: new Set(), demo: new Set() };
 let filterOpen = false;
-const DEMO_FILTERS = [...DEMOS, ['none', 'No demo']];
+const DEMO_FILTERS = [...DEMOS, ['none', 'No Demo']];
 const activeFilters = () => FILTERS.stage.size + FILTERS.demo.size;
 const matches = (r) =>
   (!FILTERS.stage.size || FILTERS.stage.has(r.status))
@@ -215,13 +215,13 @@ function filterMenu() {
   return `
     ${group('Stage', 'stage', STAGES)}
     ${group('Demo', 'demo', DEMO_FILTERS)}
-    <div class="flt-foot"><button type="button" class="sm" data-flt-clear ${activeFilters() ? '' : 'disabled'}>Clear all filters</button></div>`;
+    <div class="flt-foot"><button type="button" class="sm" data-flt-clear ${activeFilters() ? '' : 'disabled'}>Clear All Filters</button></div>`;
 }
 
 /* ---- the page ------------------------------------------------------------ */
 export async function render(mount) {
   if (!auth.isPlatformAdmin) {
-    mount.innerHTML = banner('Not available', 'This section is for platform staff.', 'warn');
+    mount.innerHTML = banner('Not Available', 'This section is for platform staff.', 'warn');
     return;
   }
   const view = getView();
@@ -288,7 +288,7 @@ export async function render(mount) {
           paintDemo();
           refreshBehind();
           await refreshHistory();
-        }, to ? `Demo ${DEMO_LABEL[to].toLowerCase()}` : 'Demo status cleared');
+        }, to ? `Demo ${DEMO_LABEL[to].toLowerCase()}` : 'Demo Status Cleared');
       }));
     };
     const bindBar = () => host.querySelectorAll('.wiz-step').forEach((b) =>
@@ -341,9 +341,9 @@ export async function render(mount) {
     const shown = rows.filter(matches);
     host.innerHTML = shown.length ? shown.map(listCard).join('')
       : `<div class="card">${activeFilters()
-        ? empty('No leads match these filters', 'Try removing a filter.')
-        : empty('No leads yet', 'Requests from the website’s Contact / Book a demo form appear here.')}
-        ${activeFilters() ? '<div style="text-align:center;margin-top:8px"><button class="sm" data-flt-clear>Clear all filters</button></div>' : ''}</div>`;
+        ? empty('No Leads Match These Filters', 'Try removing a filter.')
+        : empty('No Leads Yet', 'Requests from the website’s Contact / Book a demo form appear here.')}
+        ${activeFilters() ? '<div style="text-align:center;margin-top:8px"><button class="sm" data-flt-clear>Clear All Filters</button></div>' : ''}</div>`;
     host.querySelectorAll('.lead').forEach((card) => {
       // The e-mail link inside a row still opens the mail client, not the wizard.
       card.addEventListener('click', (e) => { if (!e.target.closest('a')) openPanel(card.dataset.id); });

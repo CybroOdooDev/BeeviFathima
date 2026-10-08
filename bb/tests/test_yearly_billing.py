@@ -84,12 +84,10 @@ def test_a_trial_remembers_yearly_and_later_checkout_uses_it(yearly, stripe, mai
     s.close()
 
     # Checkout from inside the app follows the interval the account chose.
-    from tests.test_website_onboarding import login, password_from, token_from
-    yearly.post("/api/v1/auth/verify-email", json={"token": token_from(mail[0])})
-    tokens = login(yearly, "hr@kerala.example.com", password_from(mail[-1])).json()
+    from tests.test_website_onboarding import login, token_from
+    yearly.post("/api/v1/auth/verify-email", json={"token": token_from(mail[0]), "password": "my-own-long-password"})
+    tokens = login(yearly, "hr@kerala.example.com", "my-own-long-password").json()
     head = {"Authorization": f"Bearer {tokens['access_token']}"}
-    yearly.post("/api/v1/auth/change-password", headers=head, json={
-        "current_password": password_from(mail[-1]), "new_password": "my-own-long-password"})
     r = yearly.post("/api/v1/billing/checkout", headers=head, json={"plan_id": _plan(yearly, "Growth")})
     assert r.status_code == 200, r.text
     assert _checkout_call(stripe)["line_items"][0]["price"] == "price_growth_year"

@@ -13,21 +13,21 @@
 <link rel="stylesheet" href="assets/styles.css">
 </head>
 <body>
-<a class="skip" href="#main">Skip to content</a>
+<a class="skip" href="#main">Skip To Content</a>
 
 <header class="site-header">
   <div class="wrap">
     <a class="brand" href="index.html" aria-label="BioBridge home"><span class="brand-mark">B</span><span>Bio<b>Bridge</b></span></a>
     <nav class="nav" aria-label="Main">
-      <a href="index.html#how">How it works</a>
+      <a href="index.html#how">How It Works</a>
       <a href="index.html#features">Features</a>
       <a href="pricing.html">Pricing</a>
-      <a href="setup.html">Setup guide</a>
+      <a href="setup.html">Setup Guide</a>
       <a href="contact.html">Contact</a>
     </nav>
     <div class="header-cta">
-      <a class="btn btn-ghost btn-sm" data-app="signin" href="#">Sign in</a>
-      <a class="btn btn-primary btn-sm" href="signup.html">Start free trial</a>
+      <a class="btn btn-ghost btn-sm" data-app="signin" href="#">Sign In</a>
+      <a class="btn btn-primary btn-sm" href="signup.html">Start Free Trial</a>
     </div>
     <button class="menu-btn" type="button" aria-label="Menu" aria-expanded="false">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
@@ -38,14 +38,23 @@
 <main id="main" class="wrap notice-page">
   <div class="notice-card" id="verifyCard">
     <div class="notice-icon" aria-hidden="true"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.8 2.8L16.5 9.5"/></svg></div>
-    <h1 id="verifyTitle">Confirming your email…</h1>
+    <h1 id="verifyTitle">Confirming Your Email…</h1>
     <p class="lead" id="verifyLead">One moment.</p>
+    <form id="verifyPassword" class="inline-form" hidden>
+      <label class="field">Password
+        <input type="password" name="password" required minlength="10" autocomplete="new-password">
+        <span class="field-note" style="margin:0">At least 10 characters. You'll sign in with your email address and this password.</span></label>
+      <label class="field">Confirm Password
+        <input type="password" name="confirm" required minlength="10" autocomplete="new-password"></label>
+      <button type="submit" class="btn btn-primary" id="verifyGo">Confirm And Set Password</button>
+      <p class="form-status" role="status" aria-live="polite"></p>
+    </form>
     <div class="notice-actions" id="verifyActions" hidden>
-      <a class="btn btn-primary" data-app="signin" href="#">Go to sign in</a>
+      <a class="btn btn-primary" id="verifySignin" data-app="signin" href="#">Sign In</a>
     </div>
     <form id="verifyResend" class="inline-form" hidden>
       <label class="field">Email Address
-        <span class="field-note" style="margin:0">Didn't get the login email? Enter your address to send it again.</span>
+        <span class="field-note" style="margin:0">Need a new confirmation link? Enter your address to send it again.</span>
         <span class="inline-row"><input type="email" name="email" required placeholder="you@yourcompany.com">
         <button type="submit" class="btn btn-ghost">Resend</button></span></label>
       <p class="form-status" role="status" aria-live="polite"></p>
@@ -61,8 +70,8 @@
       <p class="about">Biometric attendance, synced into Odoo. Built by [COMPANY NAME].</p>
       <p class="copy">© <span data-year></span> [COMPANY NAME]</p>
     </div>
-    <nav aria-label="Product"><b>Product</b><a href="index.html#features">Features</a><a href="pricing.html">Pricing</a><a href="setup.html">Setup guide</a></nav>
-    <nav aria-label="Company"><b>Company</b><a href="contact.html">Contact sales</a><a href="contact.html">Book a demo</a><a data-app="signin" href="#">Sign in</a></nav>
+    <nav aria-label="Product"><b>Product</b><a href="index.html#features">Features</a><a href="pricing.html">Pricing</a><a href="setup.html">Setup Guide</a></nav>
+    <nav aria-label="Company"><b>Company</b><a href="contact.html">Contact Sales</a><a href="contact.html">Book A Demo</a><a data-app="signin" href="#">Sign In</a></nav>
     <nav aria-label="Legal"><b>Legal</b><a href="[TERMS URL]">Terms</a><a href="[PRIVACY URL]">Privacy</a></nav>
   </div>
 </footer>

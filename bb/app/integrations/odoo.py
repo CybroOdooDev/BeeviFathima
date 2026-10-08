@@ -820,6 +820,7 @@ class OdooClient:
     def list_employees(self, limit: int = 0) -> list[dict[str, Any]]:
         available = self.fields_of("hr.employee")
         wanted = ["id", "name", "active", "department_id"]
+        wanted += [f for f in ("company_id", "parent_id") if f in available]
         wanted += [f for f, _ in MATCH_FIELDS if f in available]
         domain = [("active", "in", [True, False]), *self._company_domain(available)]
         return self.execute(

@@ -332,3 +332,12 @@ def local_day():
     """A fixed local day, recent enough to sit inside the backfill window."""
     base = datetime.utcnow() - timedelta(days=1)
     return base.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+@pytest.fixture(autouse=True)
+def _no_background_roster_import(monkeypatch):
+    """The save/test hooks import device users on a best-effort basis; keep the
+    API tests off the network. test_roster_import drives the service directly."""
+    import app.api.v1.connections as connections_api
+
+    monkeypatch.setattr(connections_api, "auto_import", lambda db, tenant: 0)
