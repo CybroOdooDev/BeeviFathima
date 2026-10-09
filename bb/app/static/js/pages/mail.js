@@ -50,11 +50,11 @@ export async function render(mount) {
       </div>
       ${gmail ? `<div class="hint" style="margin:0 0 14px">${esc(gmail.help)}</div>` : ''}
       <div class="grid cols-2" style="gap:0 16px">
-        ${field({ name: 'host', label: 'SMTP Host', value: cfg.host, required: true, placeholder: 'smtp.gmail.com' })}
+        ${field({ name: 'host', label: 'SMTP host', value: cfg.host, required: true, placeholder: 'smtp.gmail.com' })}
         ${field({ name: 'port', label: 'Port', type: 'number', value: cfg.port || 587, required: true })}
         ${field({ name: 'security', label: 'Security', value: cfg.security || 'starttls', options: SECURITY, required: true,
                   help: 'Has to match the port: STARTTLS on 587, SSL/TLS on 465.' })}
-        ${field({ name: 'enabled', label: 'Use These Settings', boolean: true, required: true,
+        ${field({ name: 'enabled', label: 'Use these settings', boolean: true, required: true,
                   value: String(cfg.enabled !== false),
                   options: [{ value: 'true', label: 'On — Send Through This Server' },
                             { value: 'false', label: 'Off — Fall Back To .env' }] })}
@@ -64,12 +64,12 @@ export async function render(mount) {
           <label for="password">Password ${cfg.has_password ? '<span class="pill ok">saved</span>' : '<span class="opt">optional</span>'}</label>
           <input type="password" name="password" id="password" autocomplete="new-password"
                  placeholder="${cfg.has_password ? 'Leave blank to keep the saved one' : 'App Password for Gmail'}">
-          ${cfg.has_password ? '<label class="hint" style="display:inline-flex;gap:8px;align-items:center;margin-top:8px;font-weight:400;cursor:pointer"><input type="checkbox" name="clear_password" style="width:auto;margin:0"> Remove The Saved Password</label>' : ''}
+          ${cfg.has_password ? '<label class="hint" style="display:inline-flex;gap:8px;align-items:center;margin-top:8px;font-weight:400;cursor:pointer"><input type="checkbox" name="clear_password" style="width:auto;margin:0"> Remove the saved password</label>' : ''}
         </div>
-        ${field({ name: 'from_email', label: 'From Address', type: 'email', value: cfg.from_email, required: true,
+        ${field({ name: 'from_email', label: 'From address', type: 'email', value: cfg.from_email, required: true,
                   placeholder: 'no-reply@yourcompany.com',
                   help: 'For Gmail this must be the signed-in account or one of its verified "Send mail as" aliases.' })}
-        ${field({ name: 'from_name', label: 'From Name', value: cfg.from_name || 'BioBridge', placeholder: 'BioBridge' })}
+        ${field({ name: 'from_name', label: 'From name', value: cfg.from_name || 'BioBridge', placeholder: 'BioBridge' })}
         ${field({ name: 'reply_to', label: 'Reply-To', type: 'email', value: cfg.reply_to, placeholder: 'support@yourcompany.com',
                   help: 'Where customer replies go, if not the From address.' })}
       </div>
@@ -78,7 +78,7 @@ export async function render(mount) {
     </form>
 
     <form id="mailTest" class="card" style="margin-top:16px" novalidate>
-      <div class="card-head"><h2>Send A Test Email <span class="hint">Uses The Settings In Use Right Now</span></h2></div>
+      <div class="card-head"><h2>Send A Test Email <span class="hint">Uses the settings in use right now</span></h2></div>
       <div class="row">
         <input type="email" name="to" required value="${esc(auth.user?.email || '')}" style="max-width:320px" aria-label="Send the test to">
         <button class="primary" id="mailTestGo" type="submit" ${cfg.active_source === 'none' ? 'disabled' : ''}>Send Test Email</button>

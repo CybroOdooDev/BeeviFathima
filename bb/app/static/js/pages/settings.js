@@ -12,7 +12,7 @@ import { openDeleteAccountWizard, openPasswordWizard } from './account.js';
 import { render as renderBilling } from './billing.js';
 import { needsMatch, unmappedCard, wireUnmapped } from './data.js';
 import {
-  $, $$, banner, busy, empty, esc, field as baseField, fmtAgo, fmtIn, guard, loading, pill, pricingCards, readForm,
+  $, $$, banner, busy, empty, esc, field as baseField, INFO_ICON, fmtAgo, fmtIn, guard, loading, pill, pricingCards, readForm,
   timezoneNames, toast, wirePricingCards,
 } from '../ui.js';
 import { setGuard } from '../nav-guard.js';
@@ -132,7 +132,7 @@ function cardHead(title, hint, actions = '') {
 }
 
 const saveButton = (readonly) =>
-  readonly ? '' : '<button class="primary" id="save" type="submit">Save Settings</button>';
+  readonly ? '' : '<button class="primary" id="save" type="submit" hidden>Save Settings</button>';
 
 /** Tell the router this form has unsaved changes whenever it differs from
  * what was on screen when it was drawn, so leaving the page can ask first.
@@ -147,10 +147,10 @@ function trackDirty(form, save, touched = () => false) {
       if (!form.reportValidity()) return false;
       try {
         await save();
-        toast('Settings Saved', 'ok');
+        toast('Settings saved', 'ok');
         return true;
       } catch (error) {
-        if (error.status !== 401) toast(error.message || 'Could Not Save', 'bad');
+        if (error.status !== 401) toast(error.message || 'Could not save', 'bad');
         return false;
       }
     },
@@ -161,6 +161,14 @@ function saveTenantForm(mount, formId, buttonId, reRender) {
   if (!auth.canWrite) return;
   const form = $(`#${formId}`, mount);
   trackDirty(form, () => api.patch('/tenant', readForm(form)));
+  // Save Settings only appears once the form differs from what was loaded.
+  const saveBtn = $(`#${buttonId}`, mount);
+  if (saveBtn) {
+    const baseline = JSON.stringify(readForm(form));
+    const sync = () => { saveBtn.hidden = JSON.stringify(readForm(form)) === baseline; };
+    form.addEventListener('input', sync);
+    form.addEventListener('change', sync);
+  }
   form.addEventListener('submit', (event) => {
     event.preventDefault();
     const values = readForm(event.target);
@@ -173,61 +181,170 @@ function saveTenantForm(mount, formId, buttonId, reRender) {
   });
 }
 
+const infoTip = (text, strong = false) =>
+  `<span class="field-tip${strong ? ' strong' : ''}" tabindex="0" role="note" aria-label="${esc(text)}" data-tip="${esc(text)}">${INFO_ICON}</span>`;
+
 async function renderGeneral(mount) {
   mount.innerHTML = loading();
   const ctx = await tenantContext();
-  const { tenant, readonly, intervalHelp, schedule } = ctx;
+  const { tenant, readonly, intervalHelp, schedule, floor } = ctx;
+  const intervalWarn = Boolean(schedule && !schedule.running) || tenant.syncable === false;
+  const intervalPresets = [5, 15, 30, 60].filter((m) => !floor || m >= floor);
+
+  const accountButtons = '<button type="button" id="pwOpen">Change User Password</button>'
+    + (auth.user?.role === 'owner'
+      ? `<button type="button" class="danger-outline" id="delAccount" title="Permanently delete this account and everything BioBridge holds for it">${TRASH_ICON} Delete Account</button>` : '');
 
   mount.innerHTML = `
     ${topBanners(ctx)}
     <div class="card">
       <form id="form" ${readonly ? 'inert' : ''}>
-        ${cardHead('General', '', saveButton(readonly))}
+        ${cardHead('General', '', accountButtons + saveButton(readonly))}
         ${field({ name: 'name', label: 'Company', value: tenant.name, required: true })}
         ${field({
-          name: 'timezone', label: 'Display Timezone', value: tenant.timezone, required: true,
+          name: 'timezone', label: 'Timezone', value: tenant.timezone, required: true,
           help: 'Used to render attendance for your team. Separate from each biometric connection’s own device timezone.',
-          datalist: timezoneNames(),
+          datalist: timezoneNames(), tip: true,
         })}
-        ${field({
-          name: 'sync_interval_minutes', label: 'Sync Every (Minutes)', type: 'number',
-          value: tenant.sync_interval_minutes, required: true,
-          help: intervalHelp, strongHelp: schedule ? !schedule.running : false,
-        })}
-        ${field({
-          name: 'sync_enabled', label: 'Automatic Sync', boolean: true, required: true,
-          value: String(Boolean(tenant.sync_enabled)),
-          options: [
-            { value: 'true', label: 'On — pull punches on the interval above' },
-            { value: 'false', label: 'Off — only sync when someone asks' },
-          ],
-          help: 'Turning this off stops the schedule for this account only. '
-              + 'Nothing is lost: the cursor stays where it is and the next run '
-              + 'picks up from there.',
-        })}
-        ${field({
-          name: 'alert_emails_enabled', label: 'Alert Emails', boolean: true, required: true,
-          value: String(tenant.alert_emails_enabled !== false),
-          options: [
-            { value: 'true', label: 'On — email the owner and admins about serious problems' },
-            { value: 'false', label: 'Off — show alerts in the app only' },
-          ],
-          help: 'Sent when a serious alert (like Odoo rejecting the API key) has lasted '
-              + 'about 15 minutes, then once a day while it is unresolved.',
-        })}
+        <div class="field" id="intervalField">
+          <label id="intervalLabel">Sync Every ${infoTip(intervalHelp, intervalWarn)}</label>
+          <div class="chips" role="radiogroup" aria-labelledby="intervalLabel">
+            ${intervalPresets.map((m) => `<button type="button" class="chip" role="radio" data-min="${m}">${m < 60 ? `${m} min` : `${m / 60} hr`}</button>`).join('')}
+            <button type="button" class="chip" role="radio" data-min="custom">Custom</button>
+          </div>
+          <input type="number" name="sync_interval_minutes" id="sync_interval_minutes" class="chip-custom"
+                 min="${floor || 1}" max="1440" value="${esc(tenant.sync_interval_minutes)}" aria-label="Minutes between syncs" hidden>
+          ${intervalWarn ? `<div class="help strong">${esc(intervalHelp)}</div>` : ''}
+        </div>
+        <div class="field-pair">
+        <div class="field">
+          <label for="sync_enabled">Automatic Sync ${infoTip('When on, BioBridge pulls punches on the interval above (live scheduler). When off, it only syncs when someone clicks Sync Now (manual). Nothing is lost either way: the next sync picks up where the last one stopped.')}</label>
+          <label class="switch-row">
+            <span class="switch">
+              <input type="checkbox" name="sync_enabled" id="sync_enabled" role="switch" ${tenant.sync_enabled ? 'checked' : ''}>
+              <span class="switch-track" aria-hidden="true"></span>
+            </span>
+            <span class="switch-text" id="syncState"></span>
+          </label>
+        </div>
+        <div class="field">
+          <label for="alert_emails_enabled">Alert Emails ${infoTip('Sent to the owner and admins when a serious alert (like Odoo rejecting the API key) has lasted about 15 minutes, then once a day while it is unresolved. When off, alerts show in the app only.')}</label>
+          <label class="switch-row">
+            <span class="switch">
+              <input type="checkbox" name="alert_emails_enabled" id="alert_emails_enabled" role="switch" ${tenant.alert_emails_enabled !== false ? 'checked' : ''}>
+              <span class="switch-track" aria-hidden="true"></span>
+            </span>
+            <span class="switch-text" id="alertState"></span>
+          </label>
+        </div>
+        </div>
       </form>
-      <div class="row" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--rule-soft)">
-        <button type="button" id="pwOpen">Change User Password</button>
-        ${auth.user?.role === 'owner'
-          ? '<button type="button" class="danger-outline" id="delAccount" style="border-color:var(--bad)" title="Permanently delete this account and everything BioBridge holds for it">Delete Account</button>' : ''}
-      </div>
     </div>
     `;
+
+  const form = $('#form', mount);
+  const syncBox = $('#sync_enabled', mount);
+  const syncState = $('#syncState', mount);
+  const paintSync = () => {
+    syncState.textContent = syncBox.checked ? 'On — live scheduler' : 'Off — manual only';
+  };
+  paintSync();
+  syncBox.addEventListener('change', paintSync);
+  // Sync Every: preset chips plus a Custom number box; greyed out while
+  // Automatic Sync is off, since the interval then does nothing.
+  const intervalInput = $('#sync_interval_minutes', mount);
+  const intervalField = $('#intervalField', mount);
+  const chips = [...intervalField.querySelectorAll('.chip')];
+  let customOpen = !intervalPresets.includes(Number(intervalInput.value));
+  const paintInterval = () => {
+    const current = Number(intervalInput.value);
+    chips.forEach((chip) => {
+      const on = chip.dataset.min === 'custom' ? customOpen : (!customOpen && Number(chip.dataset.min) === current);
+      chip.classList.toggle('on', on);
+      chip.setAttribute('aria-checked', String(on));
+    });
+    intervalInput.hidden = !customOpen;
+    const off = !syncBox.checked;
+    intervalField.classList.toggle('is-off', off);
+    chips.forEach((chip) => { chip.disabled = off; });
+    intervalInput.disabled = off;
+  };
+  chips.forEach((chip) => chip.addEventListener('click', () => {
+    if (chip.dataset.min === 'custom') {
+      customOpen = true;
+      paintInterval();
+      intervalInput.focus();
+    } else {
+      customOpen = false;
+      intervalInput.value = chip.dataset.min;
+      paintInterval();
+      form.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  }));
+  intervalInput.addEventListener('input', paintInterval);
+  syncBox.addEventListener('change', paintInterval);
+  paintInterval();
+
+  const alertBox = $('#alert_emails_enabled', mount);
+  const alertState = $('#alertState', mount);
+  const paintAlert = () => {
+    alertState.textContent = alertBox.checked ? 'On — email owner and admins' : 'Off — in-app alerts only';
+  };
+  paintAlert();
+  alertBox.addEventListener('change', paintAlert);
 
   saveTenantForm(mount, 'form', 'save', renderGeneral);
   $('#pwOpen', mount).addEventListener('click', openPasswordWizard);
   $('#delAccount', mount)?.addEventListener('click', () =>
     guard(() => openDeleteAccountWizard({ companyName: tenant.name, billedByStripe: tenant.billed_by_stripe })));
+}
+
+/** A number setting as preset chips plus a Custom box. The real input
+ * (name=``name``) always carries the value, so readForm and the dirty check
+ * work unchanged; chips just set it. */
+function chipField({ name, label, help, presets, value, min, max, unit, fmt }) {
+  const chipLabel = fmt || ((m) => `${m} ${unit}`);
+  return `
+    <div class="field" data-chipfield="${esc(name)}">
+      <label id="${esc(name)}Label">${esc(label)} ${help ? infoTip(help) : ''}</label>
+      <div class="chips" role="radiogroup" aria-labelledby="${esc(name)}Label">
+        ${presets.map((m) => `<button type="button" class="chip" role="radio" data-min="${m}">${esc(chipLabel(m))}</button>`).join('')}
+        <button type="button" class="chip" role="radio" data-min="custom">Custom</button>
+      </div>
+      <input type="number" name="${esc(name)}" id="${esc(name)}" class="chip-custom"
+             min="${min}" max="${max}" value="${esc(value)}" aria-label="${esc(label)}" hidden>
+    </div>`;
+}
+
+function wireChipField(mount, form, name, presets) {
+  const box = mount.querySelector(`[data-chipfield="${name}"]`);
+  if (!box) return;
+  const input = box.querySelector('input');
+  const chips = [...box.querySelectorAll('.chip')];
+  let customOpen = !presets.includes(Number(input.value));
+  const paint = () => {
+    const current = Number(input.value);
+    chips.forEach((chip) => {
+      const on = chip.dataset.min === 'custom' ? customOpen : (!customOpen && Number(chip.dataset.min) === current);
+      chip.classList.toggle('on', on);
+      chip.setAttribute('aria-checked', String(on));
+    });
+    input.hidden = !customOpen;
+  };
+  chips.forEach((chip) => chip.addEventListener('click', () => {
+    if (chip.dataset.min === 'custom') {
+      customOpen = true;
+      paint();
+      input.focus();
+    } else {
+      customOpen = false;
+      input.value = chip.dataset.min;
+      paint();
+      form.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  }));
+  input.addEventListener('input', paint);
+  paint();
 }
 
 async function renderPairing(mount) {
@@ -239,7 +356,7 @@ async function renderPairing(mount) {
     ${topBanners(ctx)}
     <form id="form" ${readonly ? 'inert' : ''}>
       <div class="card">
-        ${cardHead('Pairing', 'how raw punches become shifts', saveButton(readonly))}
+        ${cardHead('Pairing', '', saveButton(readonly))}
         ${field({
           name: 'pairing_mode', label: 'Mode', value: tenant.pairing_mode, required: true,
           options: [
@@ -249,14 +366,15 @@ async function renderPairing(mount) {
           ],
           help: 'Alternating suits devices with no IN/OUT keys, which is most of the field. State based needs those keys configured correctly; it falls back automatically when a device stamps everything "Check In".',
         })}
-        ${field({
-          name: 'min_punch_interval_seconds', label: 'Ignore Repeat Punches Within (Seconds)',
-          type: 'number', value: tenant.min_punch_interval_seconds, required: true,
-          help: 'Drops double-taps. A punch in the opposite direction is always kept — "in then straight out" is a real, if brief, visit.',
+        ${chipField({
+          name: 'min_punch_interval_seconds', label: 'Ignore Repeat Punches Within',
+          value: tenant.min_punch_interval_seconds, presets: [0, 30, 60, 120, 300], min: 0, max: 3600,
+          fmt: (m) => (m === 0 ? 'Off' : m < 60 ? `${m} sec` : `${m / 60} min`),
+          help: 'Drops double-taps within this time. A punch in the opposite direction is always kept — "in then straight out" is a real, if brief, visit.',
         })}
-        ${field({
-          name: 'max_shift_hours', label: 'Maximum Shift Length (Hours)', type: 'number',
-          value: tenant.max_shift_hours, required: true,
+        ${chipField({
+          name: 'max_shift_hours', label: 'Maximum Shift Length',
+          value: tenant.max_shift_hours, presets: [8, 12, 16, 24], min: 1, max: 48, unit: 'hr',
           help: 'Anything longer is capped and flagged, so one forgotten badge-out cannot write a 300-hour attendance.',
         })}
         <div id="dayBoundary" ${tenant.pairing_mode === 'first_last' ? '' : 'hidden'}>
@@ -274,6 +392,7 @@ async function renderPairing(mount) {
             { value: 'create', label: 'Create — infer a check-in 8 hours earlier' },
             { value: 'ignore', label: 'Ignore — Drop It' },
           ],
+          help: 'What to do with a check-out that has no matching check-in: flag it for review, infer a check-in 8 hours earlier, or drop it.',
         })}
       </div>
     </form>`;
@@ -282,6 +401,10 @@ async function renderPairing(mount) {
   const modeSel = mount.querySelector('[name=pairing_mode]');
   const dayBox = mount.querySelector('#dayBoundary');
   modeSel?.addEventListener('change', () => { dayBox.hidden = modeSel.value !== 'first_last'; });
+
+  const pairForm = mount.querySelector('#form');
+  wireChipField(mount, pairForm, 'min_punch_interval_seconds', [0, 30, 60, 120, 300]);
+  wireChipField(mount, pairForm, 'max_shift_hours', [8, 12, 16, 24]);
 
   saveTenantForm(mount, 'form', 'save', renderPairing);
 }
@@ -338,7 +461,7 @@ async function renderPlan(mount, route) {
             : 'Changing plans here does not change that date — contact support to renew.'),
         renewalWarning.urgent ? 'bad' : 'warn') : ''}
       ${retired ? banner(
-        `${tenant.plan_name || 'Your Plan'} is no longer offered`,
+        `${tenant.plan_name || 'Your plan'} is no longer offered`,
         'You stay on it until you choose another.',
         'warn', !readonly ? { href: '#/settings/billing/choose', label: 'Choose A Plan' } : null) : ''}
       ${!activePlans.length ? empty('No Plans Available', '') : ''}
@@ -505,7 +628,7 @@ async function renderOdoo(mount, route) {
   const inSetup = Boolean(mount.closest('#setupBody'));
   const removeControls = odoo && !readonly && !inSetup ? (
     odooConfirmDelete
-      ? '<span class="hint">Remove This Connection?</span>'
+      ? '<span class="hint">Remove this connection?</span>'
         + '<button type="button" class="sm danger" id="odooRemoveCommit">Remove</button>'
         + '<button type="button" class="sm link" id="odooRemoveCancel">Cancel</button>'
       : '<button type="button" class="sm link" id="odooRemove">Remove Connection</button>'
@@ -547,7 +670,7 @@ async function renderOdoo(mount, route) {
       </form>
       ${inSetup && actions ? `<div class="setup-foot actions">${actions}</div>` : ''}
     </div>
-    ${odoo && biometricUp ? unmappedCard(mappings.filter(needsMatch)) : ''}`;
+    ${odoo && biometricUp && mappings.some(needsMatch) ? unmappedCard(mappings.filter(needsMatch)) : ''}`;
 
   if (odoo && biometricUp) wireUnmapped(mount, () => renderOdoo(mount));
   // "Show unmapped employees" on the Employees page lands here.
@@ -728,7 +851,7 @@ async function renderOdoo(mount, route) {
         : null;
     } else {
       await api.post('/odoo-connections', values);
-      toast('Odoo Connected', 'ok');
+      toast('Odoo connected', 'ok');
     }
   };
 
@@ -813,7 +936,7 @@ function testResultHtml(result, stale) {
   if (!result) return '';
   return `
     <div class="test-result ${result.ok ? 'ok' : 'bad'}${stale ? ' stale' : ''}">
-      <strong>${result.ok ? 'Connection Works' : 'Connection Failed'}</strong>
+      <strong>${result.ok ? 'Connection Works' : 'Connection failed'}</strong>
       <span>${esc(result.message)}</span>
       ${stale ? '<span class="hint">The form has changed since this test — test again.</span>' : ''}
     </div>`;
@@ -913,7 +1036,7 @@ function companyScopeRow(odoo, companies) {
     return `
     <div class="row" style="margin-bottom:14px">
       ${pill('active', 'Scoped')}
-      <span style="color:var(--muted);font-size:12.5px">${off} compan${off === 1 ? 'y' : 'ies'} switched off</span>
+      <span style="color:var(--muted);font-size:12.5px">${off} compan${off === 1 ? 'y' : 'ies'} disabled</span>
     </div>`;
   }
   if (!known) return '';   // not yet known to be multi-company
@@ -944,7 +1067,7 @@ function savedDisabled(odoo, companies) {
 function updateCompanyCount(mount) {
   const boxes = [...mount.querySelectorAll('[data-company]')];
   const label = mount.querySelector('#companyCount');
-  if (label) label.textContent = `${boxes.filter((b) => b.checked).length} of ${boxes.length} on`;
+  if (label) label.textContent = `${boxes.filter((b) => b.checked).length} of ${boxes.length} enabled`;
 }
 
 /** The company switches. The list comes from Odoo itself — every company
@@ -970,11 +1093,11 @@ function companyFieldHtml(odoo, companies, off) {
   const on = companies.filter((c) => !off.has(String(c.id))).length;
   return `
     <div class="field">
-      <div class="co-heading">Odoo Companies <span class="opt" id="companyCount">${on} of ${companies.length} on</span></div>
+      <div class="co-heading">Odoo Companies <span class="opt" id="companyCount">${on} of ${companies.length} enabled</span></div>
       <div class="company-list">${rows}</div>
-      <div class="help">Employees of the companies switched on are synced and shown in BioBridge. Switched-off
+      <div class="help">Employees of the enabled companies are synced and shown in BioBridge. Disabled
         companies are left alone — their employees are hidden and their attendance is not written. A company
-        added in Odoo later starts switched on.</div>
+        added in Odoo later starts enabled.</div>
     </div>`;
 }
 
@@ -989,7 +1112,7 @@ function companyFieldHtml(odoo, companies, off) {
 let editingSourceId = null;
 let confirmDeleteId = null; // a source id pending removal confirmation
 
-const PROVIDER_LABEL = { zk_device: 'ZKTeco Protocol', zk_adms: 'Cloud Push', hik_isapi: 'Hikvision', biostar2: 'Suprema BioStar 2', cosec: 'Matrix COSEC', cosec_centra: 'COSEC CENTRA', crosschex: 'Anviz CrossChex', hikconnect: 'Hik-Connect', hikcentral: 'HikCentral', cams: 'Cams Biometrics', dahua: 'Dahua' };
+const PROVIDER_LABEL = { zk_device: 'ZKTeco protocol', zk_adms: 'Cloud push', hik_isapi: 'Hikvision', biostar2: 'Suprema BioStar 2', cosec: 'Matrix COSEC', cosec_centra: 'COSEC CENTRA', crosschex: 'Anviz CrossChex', hikconnect: 'Hik-Connect', hikcentral: 'HikCentral', cams: 'Cams biometrics', dahua: 'Dahua' };
 /** Which direct-device protocol is offered first. */
 const DIRECT_ORDER = { zk_device: 0, hik_isapi: 1, dahua: 2, cosec: 3, cams: 4, biotime: 0, biostar2: 1, hikcentral: 2, hikconnect: 3, cosec_centra: 4, crosschex: 5 };
 /** Where push devices send to — from /providers (setup), for the forms. */
@@ -1102,7 +1225,7 @@ function openAddWizard({ providersFor, onDone, canProvision = new Set() }) {
   // Every protocol is one kind of connection only.
   const kind = () => (metaOf()?.kinds || ['platform'])[0];
   const isDevice = () => kind() === 'device';
-  const KIND_HINT = { platform: 'Platform Server', device: 'Standalone Device' };
+  const KIND_HINT = { platform: 'Platform server', device: 'Standalone device' };
   const hintOf = (p) => (p.pushes ? 'Cloud Push Device' : KIND_HINT[(p.kinds || ['platform'])[0]]);
   const commitLabel = () => (isDevice() ? 'Connect Device' : 'Connect Platform');
 
@@ -1291,7 +1414,7 @@ function openAddWizard({ providersFor, onDone, canProvision = new Set() }) {
         try {
           created = await api.post('/sources', payload());
         } catch (error) {
-          if (error.status !== 401) $('#wizError', dialog).textContent = error.message || 'Could Not Connect';
+          if (error.status !== 401) $('#wizError', dialog).textContent = error.message || 'Could not connect';
           return;
         }
         close();
@@ -1431,7 +1554,7 @@ function openEditWizard({ source, onDone, canProvision = new Set() }) {
         toast(outcome.message, outcome.ok ? 'ok' : 'bad');
         if (outcome.ok && canProvision.has(provider)) await provisionAfterTest(source.id);
       } catch (e) {
-        if (e.status !== 401) error.textContent = e.message || 'Could Not Save';
+        if (e.status !== 401) error.textContent = e.message || 'Could not save';
         return;
       }
       await onDone();
@@ -1548,10 +1671,6 @@ function sourceCard(source, devices, readonly, canProvision = false, canImport =
           </div>
           <div class="hint mono" style="margin-top:2px">${esc(source.provider === 'zk_adms'
             ? `serial ${source.base_url.replace(/^adms:\/\//i, '')}` : source.base_url)}</div>
-          <div class="hint">
-            checked ${esc(fmtAgo(source.last_checked_at))}
-            · ${devices.length} terminal${devices.length === 1 ? '' : 's'}
-          </div>
         </div>
         ${!readonly ? `
           <div class="actions">
@@ -1592,7 +1711,7 @@ function sourceCard(source, devices, readonly, canProvision = false, canImport =
                   </td>
                   <td class="mono">${esc(d.serial_number)}</td>
                   <td class="mono">${esc(d.ip_address || '—')}</td>
-                  <td class="num">${esc(d.punch_count)}</td>
+                  <td class="num">${esc(d.matched_punch_count ?? d.punch_count)}</td>
                   <td>${esc(fmtAgo(d.last_seen_at))}</td>
                   <td>${esc(d.pairing_override || 'account default')}</td>
                   <td style="text-align:right">
@@ -1709,7 +1828,7 @@ function sourceFieldsHtml(source, kind, providers, provider) {
         placeholder: 'https://hcp.example.com',
         help: 'The HikCentral server, reachable from wherever BioBridge runs (VPN or forwarded port). Add :port if it isn’t 443.',
       })}
-      ${field({ name: 'username', label: 'Partner Key (AK)', required: true, value: source?.username || '',
+      ${field({ name: 'username', label: 'Partner key (AK)', required: true, value: source?.username || '',
                 help: 'The API key of the OpenAPI partner created for BioBridge.' })}
       ${field({
         name: 'password', label: 'Partner Secret (SK)', type: 'password', required: !source,
@@ -1761,7 +1880,7 @@ function sourceFieldsHtml(source, kind, providers, provider) {
         value: saved || regions[0].value, options: regions,
         help: 'Where your Hik-Connect for Teams account lives — the region you picked when signing up.',
       })}
-      ${field({ name: 'username', label: 'App Key', required: true, value: source?.username || '',
+      ${field({ name: 'username', label: 'App key', required: true, value: source?.username || '',
                 help: 'Hik-Connect for Teams → Team Management → API Integration.' })}
       ${field({
         name: 'password', label: 'Secret Key', type: 'password', required: !source,
@@ -1797,7 +1916,7 @@ function sourceFieldsHtml(source, kind, providers, provider) {
         value: source?.base_url || regions[0].value, options: regions,
         help: 'The one in your CrossChex Cloud address (us., eu. or ap.crosschexcloud.com).',
       })}
-      ${field({ name: 'username', label: 'API Key', required: true, value: source?.username || '',
+      ${field({ name: 'username', label: 'API key', required: true, value: source?.username || '',
                 help: 'CrossChex Cloud → Settings → API → API key.' })}
       ${field({
         name: 'password', label: 'API Secret', type: 'password', required: !source,
@@ -1833,7 +1952,7 @@ function sourceFieldsHtml(source, kind, providers, provider) {
         placeholder: 'https://…',
         help: 'The RESTful endpoint URL in your Cams API Monitor account (without the ?stgid part).',
       })}
-      ${field({ name: 'username', label: 'Service Tag ID', required: true, value: source?.username || '',
+      ${field({ name: 'username', label: 'Service tag ID', required: true, value: source?.username || '',
                 help: 'This device’s stgid in API Monitor.' })}
       ${field({
         name: 'password', label: 'AuthToken', type: 'password', required: !source,
@@ -1965,7 +2084,7 @@ function sourceFieldsHtml(source, kind, providers, provider) {
       })}
       ${!isZk && !isBioStar ? '<div class="field-pair">' : ''}
       ${field({
-        name: 'server_timezone', label: isBioStar ? 'Site Timezone' : isDevice ? 'Device Timezone' : 'Server Timezone',
+        name: 'server_timezone', label: isBioStar ? 'Site Timezone' : isDevice ? 'Device Timezone' : 'Server timezone',
         required: true, value: source?.server_timezone || auth.tenant?.timezone || 'UTC',
         help: isBioStar
           ? 'BioStar 2 reports punch times in UTC; this is the zone they are shown in on this connection.'
@@ -1999,7 +2118,7 @@ export async function syncSource(sourceId) {
     run.status === 'failed' ? 'bad' : 'ok');
     return run;
   } catch (error) {
-    if (error.status !== 401) toast(error.message || 'Sync Failed', 'bad');
+    if (error.status !== 401) toast(error.message || 'Sync failed', 'bad');
     return null;
   }
 }
@@ -2077,7 +2196,7 @@ function wireBiometric(mount, canProvision = new Set(), sources = [], providersF
         guard(async () => {
           const sourceId = button.dataset.discover;
           await api.post(`/sources/${sourceId}/discover-devices`);
-          toast('Terminals Imported', 'ok');
+          toast('Terminals imported', 'ok');
           await renderBiometric(mount);
         })
       )
@@ -2143,7 +2262,7 @@ function wireBiometric(mount, canProvision = new Set(), sources = [], providersF
             if (result.ok && form.dataset.provision) await provisionAfterTest(editing);
           } else {
             await api.post('/sources', values);
-            toast('Connection Added', 'ok');
+            toast('Connection added', 'ok');
           }
           editingSourceId = null;
           await renderBiometric(mount);

@@ -91,7 +91,7 @@ function rowFor(p) {
       <td class="num">${cap(p.max_employees, '')}</td>
       <td class="num">${cap(p.max_devices, '')}</td>
       <td class="num">${p.min_sync_interval_minutes ? `${esc(p.min_sync_interval_minutes)} min` : '<span class="hint">Any</span>'}</td>
-      <td>${p.stripe_price_id ? `<span class="mono hint">${esc(p.stripe_price_id)}</span>` : '<span class="hint">Not Sold Online</span>'}</td>
+      <td>${p.stripe_price_id ? `<span class="mono hint">${esc(p.stripe_price_id)}</span>` : '<span class="hint">Not sold online</span>'}</td>
       <td class="num">${esc(p.tenants)}</td>
       <td>${pill(p.is_active ? 'active' : 'skipped', p.is_active ? 'active' : 'retired')}</td>
       <td class="actions-cell"><div class="row-actions">
@@ -118,12 +118,12 @@ function openPlanDialog(plan, onSaved) {
       <form id="planForm">
         <div class="grid cols-2">
           ${field({ name: 'name', label: 'Name', value: p.name || '', required: true, placeholder: 'Growth' })}
-          ${field({ name: 'price', label: 'Price Per Month (USD)', type: 'number',
+          ${field({ name: 'price', label: 'Price per month (USD)', type: 'number',
                     value: p.monthly_price_cents != null ? p.monthly_price_cents / 100 : '',
                     help: 'What pricing pages show. Leave empty for "Custom". What a customer is '
                         + 'actually charged is the Stripe Price below — keep the two in step.' })}
         </div>
-        ${field({ name: 'yearly_price', label: 'Price Per Year (USD)', type: 'number',
+        ${field({ name: 'yearly_price', label: 'Price per year (USD)', type: 'number',
                   value: p.yearly_price_cents != null ? p.yearly_price_cents / 100 : '',
                   help: 'Shown when a visitor switches the pricing page to yearly. Empty = no yearly option. '
                       + 'Charged through the yearly Stripe Price below.' })}
@@ -136,26 +136,26 @@ function openPlanDialog(plan, onSaved) {
           ${field({ name: 'max_devices', label: 'Devices', type: 'number', value: p.max_devices ?? '',
                     help: 'Terminals the account has added; the oldest fill the allowance. Punches from '
                         + 'terminals beyond it are held, and released when the limit covers them.' })}
-          ${field({ name: 'min_sync_interval_minutes', label: 'Fastest Sync (Min)', type: 'number',
+          ${field({ name: 'min_sync_interval_minutes', label: 'Fastest sync (min)', type: 'number',
                     value: p.min_sync_interval_minutes ?? '',
                     help: 'The fastest interval a customer on this plan can choose. Assigning the plan '
                         + 'raises a faster interval to this.' })}
         </div>
         <h3 style="margin:6px 0 10px;font-size:13px">Selling</h3>
         <div class="grid cols-2">
-          ${field({ name: 'stripe_yearly_price_id', label: 'Stripe Yearly Price', value: p.stripe_yearly_price_id || '',
+          ${field({ name: 'stripe_yearly_price_id', label: 'Stripe yearly price', value: p.stripe_yearly_price_id || '',
                     placeholder: 'price_…',
                     help: 'A recurring yearly Price. Empty = yearly payment cannot be bought online.' })}
         </div>
         <div class="grid cols-3">
-          ${field({ name: 'stripe_price_id', label: 'Stripe Price', value: p.stripe_price_id || '',
+          ${field({ name: 'stripe_price_id', label: 'Stripe price', value: p.stripe_price_id || '',
                     placeholder: 'price_…',
                     help: 'The monthly Price customers are charged. Empty = cannot be bought online; '
                         + 'staff assign it. Changing it affects new checkouts and switches only.' })}
           ${field({ name: 'is_active', label: 'Status', value: String(p.is_active), boolean: true, required: true,
                     options: [{ value: 'true', label: 'Active — Can Be Chosen' },
                               { value: 'false', label: 'Retired — kept for accounts on it' }] })}
-          ${field({ name: 'is_default', label: 'Default For New Accounts', value: String(p.is_default),
+          ${field({ name: 'is_default', label: 'Default for new accounts', value: String(p.is_default),
                     boolean: true, required: true,
                     options: [{ value: 'false', label: 'No' }, { value: 'true', label: 'Yes' }],
                     help: 'Given to a signup or a staff-created account that picks nothing. Only one plan can be default.' })}

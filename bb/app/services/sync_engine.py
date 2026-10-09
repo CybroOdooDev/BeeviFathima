@@ -62,6 +62,7 @@ from app.services.pairing import (
     PairingMode,
     Punch,
     close_stale_at,
+    day_of,
     pair_punches,
 )
 from app.services.timeutils import local_to_utc, utc_to_local, utcnow_naive
@@ -141,6 +142,7 @@ class SyncEngine:
         return PairingConfig(
             mode=PairingMode(mode or self.tenant.pairing_mode),
             day_boundary_hour=self.tenant.day_boundary_hour,
+            timezone=self.tenant.timezone or "UTC",
             min_punch_interval_seconds=self.tenant.min_punch_interval_seconds,
             max_shift_hours=self.tenant.max_shift_hours,
             orphan_out_policy=self.tenant.orphan_out_policy,
@@ -947,8 +949,27 @@ class SyncEngine:
         open_shift = self._current_open_shift(odoo, mapping)
 
         by_id = {p.id: p for p in punches}
+        pending_ids = set(by_id)
         mode = self._mode_for(punches)
         config = self.pairing_config(mode)
+        used_mode = config.mode.value
+
+        # First/last is "the first and last punch of the *day*", so a punch that
+        # arrives in a later cycle has to be weighed against the ones already
+        # pushed earlier that day — otherwise every cycle opens its own record.
+        # The day's already-synced punches are brought back in (they are only
+        # inputs: they are never re-marked or re-skipped), and the day's one
+        # record is then updated in place.
+        day_record: dict[object, int] = {}
+        pairing_input = list(punches)
+        if config.mode is PairingMode.first_last:
+            earlier = self._synced_punches_for_days(punches, config)
+            for p in earlier:
+                by_id[p.id] = p
+            pairing_input += earlier
+            for p in sorted(earlier, key=lambda x: x.punch_time_utc):
+                if p.odoo_attendance_id:
+                    day_record.setdefault(day_of(p.punch_time_utc, config), p.odoo_attendance_id)
 
         result = pair_punches(
             [
@@ -959,7 +980,7 @@ class SyncEngine:
                     direction=PairDirection(p.direction),
                     terminal_sn=p.terminal_sn,
                 )
-                for p in punches
+                for p in pairing_input
             ],
             config,
             open_shift=open_shift,
@@ -967,7 +988,7 @@ class SyncEngine:
 
         for punch_id in result.skipped_punch_ids:
             punch = by_id.get(punch_id)
-            if punch is not None:
+            if punch is not None and punch_id in pending_ids:
                 punch.process_state = PunchState.skipped.value
                 punch.error_message = "Duplicate punch within the minimum interval"
 
@@ -978,14 +999,31 @@ class SyncEngine:
             if interval.closes_attendance_id is not None:
                 # Closes a shift opened in an earlier cycle. No new record is
                 # created — this is the case a naive engine turns into a phantom.
-                odoo.close_attendance(interval.closes_attendance_id, interval.check_out)
+                odoo.close_attendance(
+                    interval.closes_attendance_id, interval.check_out, pairing_mode=used_mode,
+                    auto_closed=interval.auto_closed,
+                )
                 self.run.attendances_closed += 1
                 attendance_id = interval.closes_attendance_id
+            elif (
+                config.mode is PairingMode.first_last
+                and (day_id := day_record.get(day_of(interval.check_in, config)))
+            ):
+                # The day already has its record from an earlier cycle: move its
+                # check-in / check-out to the day's current first and last punch.
+                odoo.update_attendance(
+                    day_id, interval.check_in, interval.check_out, pairing_mode=used_mode,
+                    auto_closed=interval.auto_closed,
+                )
+                attendance_id = day_id
             else:
                 existing = odoo.attendance_exists(employee_id, interval.check_in)
                 if existing:
                     if interval.check_out:
-                        odoo.close_attendance(existing, interval.check_out)
+                        odoo.close_attendance(
+                            existing, interval.check_out, pairing_mode=used_mode,
+                            auto_closed=interval.auto_closed,
+                        )
                         self.run.attendances_closed += 1
                     attendance_id = existing
                 elif recovered_id := self._recover_from_lost_close(
@@ -1010,13 +1048,15 @@ class SyncEngine:
                         device_id=self._odoo_device_id(
                             odoo, odoo_conn, self._terminal_for(interval, by_id)
                         ),
+                        pairing_mode=used_mode,
+                        auto_closed=interval.auto_closed,
                     )
                     self.run.attendances_created += 1
                     if interval.check_out:
                         self.run.attendances_closed += 1
 
             self._mark(by_id, interval, attendance_id)
-            self._record_interval(mapping, interval, attendance_id, by_id)
+            self._record_interval(mapping, interval, attendance_id, by_id, used_mode)
 
             # Carry the open shift forward for the next cycle. This is the state
             # that makes a later lone check-out resolvable.
@@ -1027,9 +1067,57 @@ class SyncEngine:
                 mapping.open_attendance_id = None
                 mapping.open_check_in = None
 
+        if config.mode is PairingMode.first_last:
+            self._settle_covered_punches(punches, result.intervals, by_id)
+
         mapping.last_synced_at = datetime.now(timezone.utc)
         if punches:
             mapping.last_punch_at = max(p.punch_time_utc for p in punches)
+
+    def _synced_punches_for_days(
+        self, pending: list[PunchRecord], config: PairingConfig
+    ) -> list[PunchRecord]:
+        """Punches already pushed for the same employee on the same shift days
+        as ``pending`` — the other half of a first/last day."""
+        if not pending:
+            return []
+        days = {day_of(p.punch_time_utc, config) for p in pending}
+        lo = min(p.punch_time_utc for p in pending) - timedelta(hours=48)
+        hi = max(p.punch_time_utc for p in pending) + timedelta(hours=48)
+        rows = self.db.scalars(
+            select(PunchRecord).where(
+                PunchRecord.tenant_id == self.tenant.id,
+                PunchRecord.emp_code == pending[0].emp_code,
+                PunchRecord.process_state == PunchState.synced.value,
+                PunchRecord.punch_time_utc >= lo,
+                PunchRecord.punch_time_utc <= hi,
+            )
+        ).all()
+        have = {p.id for p in pending}
+        return [
+            p for p in rows
+            if p.id not in have and day_of(p.punch_time_utc, config) in days
+        ]
+
+    def _settle_covered_punches(
+        self, punches: list[PunchRecord], intervals, by_id: dict[str, PunchRecord]
+    ) -> None:
+        """First/last ignores the punches between the day's first and last. They
+        are covered by that day's record, so they are done — left pending they
+        would be fed back into pairing every cycle."""
+        for punch in punches:
+            if punch.process_state in (PunchState.synced.value, PunchState.skipped.value):
+                continue
+            for interval in intervals:
+                end = interval.check_out
+                if interval.check_in <= punch.punch_time_utc and (
+                    end is None or punch.punch_time_utc <= end
+                ):
+                    first = by_id.get(interval.check_in_punch_id or "")
+                    punch.process_state = PunchState.synced.value
+                    punch.odoo_attendance_id = first.odoo_attendance_id if first else None
+                    punch.error_message = None
+                    break
 
     def _recover_from_lost_close(
         self,
@@ -1182,7 +1270,12 @@ class SyncEngine:
                 punch.error_message = None
 
     def _record_interval(
-        self, mapping: EmployeeMapping, interval, attendance_id: int, by_id: dict
+        self,
+        mapping: EmployeeMapping,
+        interval,
+        attendance_id: int,
+        by_id: dict,
+        pairing_mode: str | None = None,
     ) -> None:
         """Mirror the interval locally, so reports never call Odoo.
 
@@ -1214,7 +1307,7 @@ class SyncEngine:
             "check_in_local": check_in_local,
             "check_out_local": check_out_local,
             "device_serial": punch.terminal_sn if punch else None,
-            "pairing_mode": self.tenant.pairing_mode,
+            "pairing_mode": pairing_mode or self.tenant.pairing_mode,
             "is_auto_closed": interval.auto_closed,
             "is_orphan_out": interval.orphan_out,
             "notes": "; ".join(interval.notes) or None,
@@ -1362,7 +1455,7 @@ def close_stale_attendances(db: Session, tenant: Tenant) -> int:
                 continue
             auto_close = close_stale_at(check_in, utcnow_naive(), config)
             if auto_close:
-                odoo.close_attendance(live["id"], auto_close)
+                odoo.close_attendance(live["id"], auto_close, auto_closed=True)
                 mapping.open_attendance_id = None
                 mapping.open_check_in = None
                 closed += 1

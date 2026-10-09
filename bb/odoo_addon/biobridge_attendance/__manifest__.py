@@ -24,11 +24,18 @@ registers itself against the terminal's serial number the first time a punch
 from that device is pushed. There is nothing to configure here by hand,
 though you are free to rename a device or set its location for a clearer
 Attendance report.
+
+Pairing method
+--------------
+Every attendance record is also stamped with the **Pairing Method** BioBridge
+used to build it (State Based, Alternating, or First In / Last Out), so if an
+account changes its method part-way through, the records from before and
+after the change can be told apart.
 """,
     # Deliberately no Odoo-series prefix (no "17.0.x") — nothing here uses a
     # version-specific API, so it installs unchanged on any Odoo release
     # BioBridge itself supports (14 through 19). Bump the last segment only.
-    "version": "1.0.1",
+    "version": "1.1.0",
     # View syntax targets Odoo 17+ specifically (the `invisible="<expr>"`
     # attribute form, not the pre-17 `attrs="{...}"` dialect) — the XML-RPC
     # side of BioBridge itself is version-agnostic back to 14, but this
@@ -43,6 +50,7 @@ Attendance report.
     "data": [
         "security/ir.model.access.csv",
         "security/biobridge_device_security.xml",
+        "data/biobridge_pairing_method_data.xml",
         "views/biobridge_device_views.xml",
         "views/hr_attendance_views.xml",
     ],

@@ -32,3 +32,12 @@ class HrAttendance(models.Model):
         help="The device's own location field, copied here so Attendance "
         "reports can group or filter by it without following the link.",
     )
+    pairing_method_id = fields.Many2one(
+        "biobridge.pairing.method",
+        string="Pairing Method",
+        copy=False,
+        index=True,
+        help="Which pairing method BioBridge used to build this record from "
+        "the raw punches. If the account's method was changed part-way "
+        "through, this tells the records before and after apart.",
+    )

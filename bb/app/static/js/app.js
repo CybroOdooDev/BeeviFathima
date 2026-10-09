@@ -151,25 +151,25 @@ const REDIRECTS = {
 
 /* Each screen's title, and one line under it saying what the screen is for. */
 const ROUTES = {
-  '/': { title: 'Overview', sub: 'Sync Status And Anything That Needs Your Attention', render: renderOverview },
-  '/attendance': { title: 'Attendance', sub: 'Shifts written to Odoo, in your timezone', render: renderAttendance },
-  '/activity': { title: 'Activity', sub: 'Every punch pulled, and every sync run', render: renderActivity },
-  '/employees': { title: 'Employees', sub: 'Badges Matched To Odoo Employees', render: renderEmployees },
-  '/terminals': { title: 'Terminals', sub: 'Every Device Your Biometric Connections Bring In', render: renderTerminals },
-  '/get-started': { title: 'BioBridge Setup', sub: 'Connect Odoo and your biometric system, set your pairing rules, one step at a time', render: renderGetStarted },
-  '/settings/general': { title: 'General', sub: 'Company, timezone and sync schedule', render: renderSettings },
-  '/settings/pairing': { title: 'Pairing', sub: 'How Raw Punches Become Shifts', render: renderSettings },
-  '/settings/billing': { title: 'Billing', sub: 'Your plan, renewals, payment method and invoices', render: renderSettings },
-  '/settings/billing/choose': { title: 'Choose A Plan', sub: 'Compare Plans And Switch', render: renderSettings },
-  '/settings/odoo': { title: 'Odoo Connection', sub: 'Odoo connection, and badges waiting for a match', render: renderSettings },
-  '/settings/biometric': { title: 'Biometric Connections', sub: 'Biometric connections — where punches come from', render: renderSettings },
-  '/console': { title: 'Platform Overview', sub: 'Every account at a glance — health, growth and what needs a person', render: renderConsoleOverview },
-  '/platform': { title: 'All Accounts', sub: 'Every Customer Account On This Platform', render: renderPlatform },
-  '/platform/leads': { title: 'Leads', sub: 'Contact And Demo Requests From The Website', render: renderLeads },
-  '/platform/closed': { title: 'Closed Accounts', sub: 'Deleted accounts — who closed them, and why', render: renderClosures },
-  '/platform/payments': { title: 'Payments (Stripe)', sub: 'The Stripe keys, webhook and prices online billing runs on', render: renderPaymentsAdmin },
-  '/platform/email': { title: 'Email Server', sub: 'Where signup confirmations and login details are sent from', render: renderMailAdmin },
-  '/platform/plans': { title: 'Plans', sub: 'The tiers accounts are sold under, and the limits each one enforces', render: renderPlanAdmin },
+  '/': { title: 'Overview', render: renderOverview },
+  '/attendance': { title: 'Attendance', render: renderAttendance },
+  '/activity': { title: 'Activity', render: renderActivity },
+  '/employees': { title: 'Employees', render: renderEmployees },
+  '/terminals': { title: 'Terminals', render: renderTerminals },
+  '/get-started': { title: 'BioBridge Setup', render: renderGetStarted },
+  '/settings/general': { title: 'General', render: renderSettings },
+  '/settings/pairing': { title: 'Pairing', render: renderSettings },
+  '/settings/billing': { title: 'Billing', render: renderSettings },
+  '/settings/billing/choose': { title: 'Choose A Plan', render: renderSettings },
+  '/settings/odoo': { title: 'Odoo Connection', render: renderSettings },
+  '/settings/biometric': { title: 'Biometric Connections', render: renderSettings },
+  '/console': { title: 'Platform Overview', render: renderConsoleOverview },
+  '/platform': { title: 'All Accounts', render: renderPlatform },
+  '/platform/leads': { title: 'Leads', render: renderLeads },
+  '/platform/closed': { title: 'Closed Accounts', render: renderClosures },
+  '/platform/payments': { title: 'Payments (Stripe)', render: renderPaymentsAdmin },
+  '/platform/email': { title: 'Email Server', render: renderMailAdmin },
+  '/platform/plans': { title: 'Plans', render: renderPlanAdmin },
 };
 
 const badges = { unmapped: 0 };
@@ -212,7 +212,6 @@ function mountShell() {
           <button id="menuToggle" class="sm">Menu</button>
           <div class="title-block">
             <h1 id="pageTitle"></h1>
-            <div class="page-sub" id="pageSub"></div>
           </div>
           <div class="spacer"></div>
           <div class="top-actions" id="topActions"></div>
@@ -251,7 +250,7 @@ function mountShell() {
         + `${result.attendances_created} created, ${result.attendances_closed} closed`,
       result.status === 'failed' ? 'bad' : 'ok');
     } catch (error) {
-      if (error.status !== 401) toast(error.message || 'Sync Failed', 'bad');
+      if (error.status !== 401) toast(error.message || 'Sync failed', 'bad');
     }
     button.disabled = false;
     button.classList.remove('spinning');
@@ -296,7 +295,7 @@ function paintThemeSwitch() {
   const active = currentTheme();
   holder.innerHTML = THEMES.map((t) => `
     <button type="button" data-theme-choice="${t.value}" aria-pressed="${t.value === active}"
-            title="${t.value === 'system' ? 'Follow This Computer’s Setting' : `Always ${t.label.toLowerCase()}`}">
+            title="${t.value === 'system' ? 'Follow this computer’s setting' : `Always ${t.label.toLowerCase()}`}">
       ${t.label}</button>`).join('');
 }
 
@@ -339,7 +338,7 @@ function renderChrome(path) {
   const run = syncState.lastRun;
   $('#topActions').innerHTML = auth.tenant && !auth.isStaffSession ? `
     ${bellHtml()}
-    <span class="last-sync" title="${esc(run ? `Last sync ${run.status}` : 'No Sync Has Run Yet')}">
+    <span class="last-sync" title="${esc(run ? `Last sync ${run.status}` : 'No sync has run yet')}">
       ${run ? `<span class="dot ${run.status === 'success' ? 'ok' : run.status === 'failed' ? 'bad' : 'warn'}"></span>
         Synced ${esc(fmtAgo(run.started_at))}` : 'Never Synced'}
     </span>
@@ -536,12 +535,11 @@ async function resolve() {
     mountShell();
     renderChrome(route.path);
     $('#pageTitle').textContent = entry ? entry.title : 'Not Found';
-    $('#pageSub').textContent = entry?.sub || '';
 
     const content = $('#content');
     if (!entry) {
       content.innerHTML = '<div class="empty"><strong>Page Not Found</strong>'
-        + '<a href="#/">Back To The Overview</a></div>';
+        + '<a href="#/">Back to the overview</a></div>';
       return;
     }
 
@@ -552,7 +550,7 @@ async function resolve() {
     } catch (error) {
       if (error.status === 401) return; // api.js already signalled sign-out
       content.innerHTML = `<div class="banner bad"><strong>Could Not Load This Page</strong>${
-        esc(error.message || 'Unknown Error')}</div>`;
+        esc(error.message || 'Unknown error')}</div>`;
     }
 
     await refreshBadges();

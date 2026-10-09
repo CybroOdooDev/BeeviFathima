@@ -142,7 +142,7 @@ export async function render(mount) {
     ${checklist || scheduleCard(data.schedule)}
 
     <div class="grid cols-4" style="margin-bottom:14px">
-      ${stat({ label: 'Punches Today', value: data.punches_today, href: `#/activity?date_from=${today}` })}
+      ${stat({ label: 'Punches today', value: data.punches_today, href: `#/activity?date_from=${today}` })}
       ${stat({
         label: 'Pending', value: data.punches_pending,
         tone: data.punches_pending > 0 ? 'warn' : '',
@@ -179,9 +179,9 @@ export async function render(mount) {
           <table>
             <tbody>
               <tr><td>Result</td><td style="text-align:right">${pill(run.status)}</td></tr>
-              <tr><td>New Punches</td><td class="num" style="text-align:right">${esc(run.punches_new)}</td></tr>
-              <tr><td>Attendance Created</td><td class="num" style="text-align:right">${esc(run.attendances_created)}</td></tr>
-              <tr><td>Attendance Closed</td><td class="num" style="text-align:right">${esc(run.attendances_closed)}</td></tr>
+              <tr><td>New punches</td><td class="num" style="text-align:right">${esc(run.punches_new)}</td></tr>
+              <tr><td>Attendance created</td><td class="num" style="text-align:right">${esc(run.attendances_created)}</td></tr>
+              <tr><td>Attendance closed</td><td class="num" style="text-align:right">${esc(run.attendances_closed)}</td></tr>
             </tbody>
           </table>
           ${run.error_message ? banner('Last Error', run.error_message, 'bad') : ''}

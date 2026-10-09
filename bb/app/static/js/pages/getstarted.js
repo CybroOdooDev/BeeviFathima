@@ -52,7 +52,7 @@ const STEPS = [
     done: (s) => s.pairing || s.run,
   },
   {
-    key: 'sync', title: 'Run The First Sync', short: 'First Sync',
+    key: 'sync', title: 'Run The First Sync', short: 'First sync',
     intro: 'Pull the punches recorded so far and write them to Odoo as attendance. '
       + 'After this, BioBridge syncs on its own every few minutes.',
     help: 'The first sync reads up to the last few weeks of punches, so it can take a minute.',

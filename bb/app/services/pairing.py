@@ -28,7 +28,7 @@ import enum
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from app.services.timeutils import shift_day
+from app.services.timeutils import shift_day, utc_to_local
 
 
 class PairingMode(str, enum.Enum):
@@ -93,10 +93,18 @@ class Interval:
 class PairingConfig:
     mode: PairingMode = PairingMode.alternating
     day_boundary_hour: int = 4
+    #: The account's timezone: "a day" is a local-time idea, so first/last
+    #: groups punches by their *local* shift day, not by the UTC date.
+    timezone: str = "UTC"
     min_punch_interval_seconds: int = 60
     max_shift_hours: int = 16
     orphan_out_policy: str = "flag"        # flag | create | ignore
     orphan_out_default_minutes: int = 480  # used when policy == "create"
+
+
+def day_of(moment_utc: datetime, config: PairingConfig):
+    """The local shift day a punch (naive UTC) belongs to."""
+    return shift_day(utc_to_local(moment_utc, config.timezone), config.day_boundary_hour)
 
 
 @dataclass
@@ -169,7 +177,7 @@ def pair_punches(
         # that groups. day_boundary_hour decides which day a punch belongs to.
         days: dict[object, list[Punch]] = {}
         for punch in clean:
-            days.setdefault(shift_day(punch.time_utc, config.day_boundary_hour), []).append(punch)
+            days.setdefault(day_of(punch.time_utc, config), []).append(punch)
         carried = open_shift
         for day in sorted(days):
             same_day = sorted(days[day], key=lambda p: p.time_utc)
@@ -273,7 +281,17 @@ def _pair_state_based(
                     intervals.append(closing)
                 open_shift = None
             if current is not None:
-                current.notes.append("Missing check-out before next check-in")
+                # Two check-ins in a row, no check-out between them. Close the
+                # first where the second starts — the same as an open shift
+                # from an earlier cycle above — rather than leave it open
+                # (Odoo refuses a second open record for one employee). No
+                # punch made this check-out, so it is flagged auto-closed.
+                if punch.time_utc > current.check_in:
+                    current.check_out = punch.time_utc
+                    current.auto_closed = True
+                    current.notes.append("Auto-closed: no check-out before the next check-in")
+                else:
+                    current.notes.append("Missing check-out before next check-in")
                 intervals.append(current)
             current = Interval(emp_code, punch.time_utc, check_in_punch_id=punch.punch_id)
             continue

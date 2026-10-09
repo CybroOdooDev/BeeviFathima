@@ -48,7 +48,7 @@ export async function render(mount) {
           'Stripe Dashboard → Developers → API keys. A restricted key (rk_…) works too if it can read prices and write customers, Checkout sessions, subscriptions and portal sessions.')}
         ${secretField('webhook_secret', 'Webhook Signing Secret', cfg.has_webhook_secret ? 'saved' : null, 'whsec_…',
           'Shown on the webhook endpoint in Stripe (Developers → Webhooks → your endpoint → Signing secret).')}
-        ${field({ name: 'enabled', label: 'Use These Keys', boolean: true, required: true, value: String(cfg.enabled !== false),
+        ${field({ name: 'enabled', label: 'Use these keys', boolean: true, required: true, value: String(cfg.enabled !== false),
           options: [{ value: 'true', label: 'On — Bill Through These Keys' }, { value: 'false', label: 'Off — Fall Back To .env' }] })}
       </div>
       ${cfg.environment_key_hint && cfg.active_source !== 'environment' ? `<div class="hint">.env also has a key (${esc(cfg.environment_key_hint)}); it's used only while these are off or empty.</div>` : ''}
@@ -95,7 +95,7 @@ export async function render(mount) {
   });
 
   $('#copyWh', mount).addEventListener('click', () => {
-    navigator.clipboard?.writeText(cfg.webhook_url).then(() => toast('Webhook URL Copied', 'ok'));
+    navigator.clipboard?.writeText(cfg.webhook_url).then(() => toast('Webhook URL copied', 'ok'));
   });
 
   $('#stripeTest', mount).addEventListener('click', (event) => busy(event.currentTarget, async () => {
@@ -123,6 +123,6 @@ function secretField(name, label, hint, placeholder, help) {
       <input type="password" name="${name}" id="${name}" autocomplete="new-password" spellcheck="false"
              placeholder="${hint ? 'Leave blank to keep the saved one' : esc(placeholder)}">
       ${hint ? `<label class="hint" style="display:inline-flex;gap:8px;align-items:center;margin-top:8px;font-weight:400;cursor:pointer">
-        <input type="checkbox" name="clear_${name}" style="width:auto;margin:0"> Remove The Saved One</label>` : ''}
+        <input type="checkbox" name="clear_${name}" style="width:auto;margin:0"> Remove the saved one</label>` : ''}
     </div>`;
 }

@@ -72,7 +72,7 @@ function usageTile(used, limit, label) {
 }
 
 function usageHtml(u) {
-  if (!u) return '<div class="usage-strip"><div class="u"><span>Loading Usage…</span></div></div>';
+  if (!u) return '<div class="usage-strip"><div class="u"><span>Loading usage…</span></div></div>';
   return `<div class="usage-strip">
     ${usageTile(u.employees_mapped, u.max_employees, 'employees matched')}
     ${usageTile(u.devices, u.max_devices, 'devices')}
@@ -149,7 +149,7 @@ export async function render(mount, route) {
                      health.running ? 'running' : 'not running')}</td></tr>
             <tr><td>Mode</td><td style="text-align:right">${esc(health.mode || '—')}</td></tr>
             <tr><td>Host</td><td style="text-align:right" class="mono">${esc(health.owner || '—')}</td></tr>
-            <tr><td>Last Tick</td><td style="text-align:right">${esc(fmtAgo(health.last_tick_at))}</td></tr>
+            <tr><td>Last tick</td><td style="text-align:right">${esc(fmtAgo(health.last_tick_at))}</td></tr>
           </tbody>
         </table>` : '<div class="hint">Could not read the scheduler state.</div>'}
     </div>
@@ -171,7 +171,7 @@ export async function render(mount, route) {
           <table class="accounts-table">
             <thead><tr>
               <th>Account</th><th>Status</th><th class="num">Every</th>
-              <th>Sync</th><th>Automatic</th><th></th>
+              <th>Sync</th><th>Sync Status</th><th>Automatic</th><th></th>
             </tr></thead>
             <tbody>
               ${tenants.map((t) => rowFor(t)).join('')}
@@ -245,7 +245,7 @@ function backoffTag(t) {
 function notConnected(t) {
   if (t.last_run_at || !t.sync_enabled || !t.syncable) return '';
   return !t.odoo_connected || !t.source_connected
-    ? '<span class="hint">Incomplete Initial Set Up</span>' : '';
+    ? '<span class="hint">Incomplete initial set up</span>' : '';
 }
 
 function rowFor(t) {
@@ -264,11 +264,12 @@ function rowFor(t) {
       </td>
       <td class="sync-cell">
         <div>${notConnected(t) || (t.next_run_at ? `next ${esc(fmtIn(t.next_run_at))}`
-              : '<span class="hint">Not Scheduled</span>')}</div>
+              : '<span class="hint">Not scheduled</span>')}</div>
         <div class="hint">${t.last_run_at
-              ? `last ${pill(t.last_run_status)} ${esc(fmtAgo(t.last_run_at))}`
+              ? `latest sync ${esc(fmtAgo(t.last_run_at))}`
               : 'never synced'}</div>
       </td>
+      <td>${t.last_run_at ? pill(t.last_run_status) : '<span class="hint">—</span>'}</td>
       <td>
         <select class="enabled" aria-label="Automatic sync">
           <option value="true"${t.sync_enabled ? ' selected' : ''}>On</option>
@@ -331,12 +332,12 @@ function diagnosticsHtml(d) {
       <table>
         <tbody>
           <tr><td>Pending</td><td class="num" style="text-align:right">${esc(d.punches_pending)}</td></tr>
-          <tr><td>In Error</td><td class="num" style="text-align:right">${esc(d.punches_error)}</td></tr>
+          <tr><td>In error</td><td class="num" style="text-align:right">${esc(d.punches_error)}</td></tr>
           <tr><td>At the 5-attempt cap <span class="hint">never retried again
             until reset</span></td>
             <td class="num" style="text-align:right">${esc(d.punches_at_attempt_cap)}</td></tr>
-          <tr><td>Unmapped Punches</td><td class="num" style="text-align:right">${esc(d.punches_unmapped)}</td></tr>
-          <tr><td>Badges With No Odoo Employee</td><td class="num" style="text-align:right">${esc(d.unmapped_badges)}</td></tr>
+          <tr><td>Unmapped punches</td><td class="num" style="text-align:right">${esc(d.punches_unmapped)}</td></tr>
+          <tr><td>Badges with no Odoo employee</td><td class="num" style="text-align:right">${esc(d.unmapped_badges)}</td></tr>
         </tbody>
       </table>
       ${d.last_run_error ? `<div class="banner bad" style="margin-top:12px">
@@ -413,7 +414,7 @@ function openConfigDialog(tenant, { plans, onChange }) {
                         options: STATUSES,
                         help: 'Suspended and cancelled stop this account syncing, '
                             + 'whatever its own settings say.' })}
-              ${field({ name: 'timezone', label: 'Display Timezone', value: t.timezone,
+              ${field({ name: 'timezone', label: 'Display timezone', value: t.timezone,
                         required: true, datalist: timezoneNames() })}
             </div>
             <div>
@@ -425,14 +426,14 @@ function openConfigDialog(tenant, { plans, onChange }) {
               ${field({ name: 'min_punch_interval_seconds',
                         label: 'Ignore Repeats Within (Seconds)', type: 'number',
                         value: t.min_punch_interval_seconds, required: true })}
-              ${field({ name: 'max_shift_hours', label: 'Maximum Shift (Hours)',
+              ${field({ name: 'max_shift_hours', label: 'Maximum shift (hours)',
                         type: 'number', value: t.max_shift_hours, required: true })}
               <div id="dayBoundary" ${t.pairing_mode === 'first_last' ? '' : 'hidden'}>
-              ${field({ name: 'day_boundary_hour', label: 'Shift Day Starts At (Hour)',
+              ${field({ name: 'day_boundary_hour', label: 'Shift day starts at (hour)',
                         type: 'number', value: t.day_boundary_hour, required: true,
                         help: 'Only used by first/last mode.' })}
               </div>
-              ${field({ name: 'orphan_out_policy', label: 'Check-Out With No Check-In',
+              ${field({ name: 'orphan_out_policy', label: 'Check-out with no check-in',
                         value: t.orphan_out_policy, required: true, options: ORPHAN })}
             </div>
           </div>
@@ -444,7 +445,7 @@ function openConfigDialog(tenant, { plans, onChange }) {
                       help: 'Sets this account’s employee, device and sync-speed limits. Assigning a '
                           + 'plan raises a faster sync interval to the plan’s floor. Lowering a plan '
                           + 'never unmaps anyone already matched — only new badges wait.' })}
-            ${field({ name: 'subscription_renews_at', label: 'Renews / Paid Through',
+            ${field({ name: 'subscription_renews_at', label: 'Renews / paid through',
                       type: 'date', value: toDateInput(t.subscription_renews_at),
                       help: 'Past this date, an active account moves itself to past '
                           + 'due and stops syncing — no grace period. Leave empty to '
@@ -460,7 +461,7 @@ function openConfigDialog(tenant, { plans, onChange }) {
             ${field({ tip: true, name: 'limit_max_devices', label: 'Devices', type: 'number',
                       value: t.limit_max_devices ?? '', placeholder: planLimitText(planById(t.plan_id), 'max_devices', ''),
                       help: 'Raising it releases held punches from the newly covered terminals on the next sync.' })}
-            ${field({ tip: true, name: 'limit_min_sync_interval_minutes', label: 'Fastest Sync (Min)', type: 'number',
+            ${field({ tip: true, name: 'limit_min_sync_interval_minutes', label: 'Fastest sync (min)', type: 'number',
                       value: t.limit_min_sync_interval_minutes ?? '',
                       placeholder: planLimitText(planById(t.plan_id), 'min_sync_interval_minutes', ' min'),
                       help: 'The fastest interval the customer can pick themselves.' })}
@@ -596,14 +597,14 @@ function openNewAccountDialog(plans, onCreated) {
         <div class="grid cols-2">
           ${field({ name: 'company_name', label: 'Company', required: true,
                     placeholder: 'Muscat Traders' })}
-          ${field({ name: 'owner_email', label: 'Owner Email', type: 'email',
+          ${field({ name: 'owner_email', label: 'Owner email', type: 'email',
                     required: true, placeholder: 'boss@muscat.com' })}
           ${field({ name: 'plan_id', label: 'Plan', value: defaultPlanId,
                     options: planOptions(plans), tip: true,
                     help: 'Sets the account’s employee, device and sync-speed limits — a faster '
                         + 'interval than the plan allows is raised to it. The renewal date starts '
                         + 'as a standard trial from today.' })}
-          ${field({ name: 'sync_interval_minutes', label: 'Sync Every (Minutes)',
+          ${field({ name: 'sync_interval_minutes', label: 'Sync every (minutes)',
                     type: 'number', required: true, value: 15 })}
           ${field({ name: 'timezone', label: 'Timezone', required: true,
                     value: 'Asia/Dubai', datalist: timezoneNames(), tip: true,

@@ -48,10 +48,10 @@ function summaryHtml(p) {
   const rate = p.conversion == null ? '—' : `${Math.round(p.conversion * 100)}%`;
   return `
     <div class="grid cols-4" style="margin-bottom:16px">
-      ${stat({ label: 'Open Leads', value: p.open, note: 'still in play' })}
+      ${stat({ label: 'Open leads', value: p.open, note: 'still in play' })}
       ${stat({ label: 'Won', value: p.won, note: `${p.lost} lost` })}
       ${stat({ label: 'Conversion', value: rate, note: 'won ÷ (won + lost)' })}
-      ${stat({ label: 'Days To Win', value: p.avg_days_to_win == null ? '—' : p.avg_days_to_win, note: 'average, new → won' })}
+      ${stat({ label: 'Days to win', value: p.avg_days_to_win == null ? '—' : p.avg_days_to_win, note: 'average, new → won' })}
     </div>`;
 }
 
@@ -168,7 +168,7 @@ function panelHtml(r, events) {
             <h4>Request</h4>
             <div class="wiz-facts">
               <div><span class="hint">Topic</span><span class="pill mute">${esc(r.topic)}</span></div>
-              ${r.preferred_date ? `<div><span class="hint">Wants A Demo</span><strong>${demoWhen(r)}</strong></div>` : ''}
+              ${r.preferred_date ? `<div><span class="hint">Wants a demo</span><strong>${demoWhen(r)}</strong></div>` : ''}
               ${setup(r) ? `<div><span class="hint">Setup</span><span>${setup(r)}</span></div>` : ''}
             </div>
             ${r.message ? `<p class="wiz-msg">${esc(r.message)}</p>` : ''}

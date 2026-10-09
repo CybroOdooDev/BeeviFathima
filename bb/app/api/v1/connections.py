@@ -30,6 +30,7 @@ from app.models import (
     MappingStatus,
     OdooConnection,
     PunchRecord,
+    PunchState,
     SyncRun,
 )
 from app.schemas import (
@@ -1184,6 +1185,24 @@ def provision_employees(
     }
 
 
+def _set_matched_counts(db: Session, tenant_id: str, devices: list[Device]) -> None:
+    """Fill ``matched_punch_count`` (read by DeviceOut) for these terminals."""
+    ids = [d.id for d in devices]
+    counts = dict(db.execute(
+        select(PunchRecord.device_id, func.count())
+        .where(
+            PunchRecord.tenant_id == tenant_id,
+            PunchRecord.device_id.in_(ids),
+            PunchRecord.process_state.not_in([
+                PunchState.unmapped.value, PunchState.deleted.value, PunchState.held.value,
+            ]),
+        )
+        .group_by(PunchRecord.device_id)
+    ).all()) if ids else {}
+    for d in devices:
+        d.matched_punch_count = counts.get(d.id, 0)
+
+
 @router.get("/devices", response_model=list[DeviceOut])
 def list_devices(
     principal: Principal = Depends(get_principal), db: Session = Depends(get_db)
@@ -1198,6 +1217,7 @@ def list_devices(
     over = over_limit_device_ids(db, principal.tenant)
     for device in devices:
         device.over_plan_limit = device.id in over  # read by DeviceOut
+    _set_matched_counts(db, principal.tenant.id, devices)
     return devices
 
 
@@ -1248,4 +1268,5 @@ def update_device(
         setattr(device, key, value)
     db.commit()
     db.refresh(device)
+    _set_matched_counts(db, principal.tenant.id, [device])
     return device

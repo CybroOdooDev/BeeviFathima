@@ -24,8 +24,8 @@ const day = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, { year: 
 
 const INVOICE_TONE = { paid: 'active', open: 'pending', uncollectible: 'failed', void: 'skipped' };
 const SUB_LABEL = {
-  active: 'Active', trialing: 'Active', past_due: 'Payment Overdue', unpaid: 'Unpaid',
-  canceled: 'Cancelled', incomplete: 'Awaiting Payment', incomplete_expired: 'Expired',
+  active: 'Active', trialing: 'Active', past_due: 'Payment overdue', unpaid: 'Unpaid',
+  canceled: 'Cancelled', incomplete: 'Awaiting payment', incomplete_expired: 'Expired',
 };
 const SUB_TONE = { active: 'active', trialing: 'active', past_due: 'failed', unpaid: 'failed', canceled: 'skipped' };
 
@@ -64,7 +64,7 @@ export async function render(mount, route) {
 
   mount.innerHTML = `
     ${data.error ? banner('Stripe Could Not Be Reached', data.error, 'bad') : ''}
-    ${open ? `<div class="banner bad"><strong>${overdue ? 'Your Renewal Payment Failed' : 'An Invoice Is Waiting For Payment'}</strong>
+    ${open ? `<div class="banner bad"><strong>${overdue ? 'Your Renewal Payment Failed' : 'An invoice is waiting for payment'}</strong>
         ${esc(money(open.amount_remaining ?? open.amount_due, open.currency))} is due${
           open.next_payment_attempt ? ` — Stripe will retry the saved card on ${esc(day(open.next_payment_attempt))}` : ''}.
         Pay now with any card to keep syncing.
@@ -77,10 +77,10 @@ export async function render(mount, route) {
           <table><tbody>
             <tr><td>Plan</td><td style="text-align:right"><strong>${esc(data.plan_name || '—')}</strong></td></tr>
             <tr><td>Price</td><td style="text-align:right">${esc(money((sub.unit_amount ?? 0) * (sub.quantity || 1), sub.currency))} / ${esc(sub.interval)}</td></tr>
-            <tr><td>${sub.cancel_at_period_end ? 'Ends On' : 'Next Renewal'}</td>
+            <tr><td>${sub.cancel_at_period_end ? 'Ends On' : 'Next renewal'}</td>
                 <td style="text-align:right">${esc(day(sub.cancel_at || sub.current_period_end))}</td></tr>
             <tr><td>Renewal</td><td style="text-align:right">${sub.cancel_at_period_end
-              ? '<span class="pill warn">Won’t Renew</span>'
+              ? '<span class="pill warn">Won’t renew</span>'
               : `Charged automatically${card?.last4 ? ` to ${esc(cardName(card))}` : ''}`}</td></tr>
           </tbody></table>
           ${sub.cancel_at_period_end ? `<div class="hint" style="margin-top:10px">Cancelled — the account keeps working until ${esc(day(sub.cancel_at || sub.current_period_end))}, then syncing stops.</div>` : ''}

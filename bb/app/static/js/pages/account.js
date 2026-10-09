@@ -38,7 +38,7 @@ async function post(path, body, token) {
       : Array.isArray(detail) && detail.length
         ? detail.map((d) => String(d.msg || '').replace(/^Value error, /, '')).filter(Boolean).join(' ')
         : `Request failed (HTTP ${response.status})`;
-    throw new Error(message || 'Something Went Wrong');
+    throw new Error(message || 'Something went wrong');
   }
   return payload;
 }
@@ -89,7 +89,7 @@ export async function renderVerifyEmail(route = {}) {
     <p class="sub">Confirming <b>${esc(info.email)}</b>. Choose a password — you'll sign in with this email address and that password.</p>
     <form id="pwForm">
       ${field({ name: 'new_password', label: 'Password', type: 'password', required: true, help: 'At least 10 characters.' })}
-      ${field({ name: 'confirm', label: 'Confirm Password', type: 'password', required: true })}
+      ${field({ name: 'confirm', label: 'Confirm password', type: 'password', required: true })}
       <button class="primary" style="width:100%" id="pwGo">Confirm And Set Password</button>
     </form>
     <p class="err" id="authError"></p>`;
@@ -132,9 +132,9 @@ export async function renderSignInCode(route = {}) {
 function passwordFields({ current = 'Current Password' } = {}) {
   return `
     ${current ? field({ name: 'current_password', label: current, type: 'password', required: true }) : ''}
-    ${field({ name: 'new_password', label: 'New Password', type: 'password', required: true,
+    ${field({ name: 'new_password', label: 'New password', type: 'password', required: true,
               help: 'At least 10 characters.' })}
-    ${field({ name: 'confirm', label: 'Confirm Password', type: 'password', required: true })}`;
+    ${field({ name: 'confirm', label: 'Confirm password', type: 'password', required: true })}`;
 }
 
 function check(values) {
@@ -154,7 +154,7 @@ export function renderSetPassword() {
       ${passwordFields({ current: null })}
       <button class="primary" style="width:100%" id="pwGo">Set Password And Continue</button>
     </form>
-    <p class="auth-alt"><a href="#" id="pwOut">Sign Out</a></p>`);
+    <p class="auth-alt"><a href="#" id="pwOut">Sign out</a></p>`);
 
   $('#pwOut', root).addEventListener('click', (event) => {
     event.preventDefault();
@@ -222,11 +222,11 @@ export function openPasswordWizard() {
         <div class="wiz-body">
           ${state.step === 1 ? `
             <p class="hint" style="margin:0 0 12px">Signed in as <b>${esc(auth.user?.email || '')}</b>. Enter your current password to continue.</p>
-            ${field({ name: 'current_password', label: 'Current Password', type: 'password', required: true })}
+            ${field({ name: 'current_password', label: 'Current password', type: 'password', required: true })}
           ` : `
-            ${field({ name: 'new_password', label: 'New Password', type: 'password', required: true,
+            ${field({ name: 'new_password', label: 'New password', type: 'password', required: true,
                       help: 'At least 10 characters.' })}
-            ${field({ name: 'confirm', label: 'Confirm Password', type: 'password', required: true })}
+            ${field({ name: 'confirm', label: 'Confirm password', type: 'password', required: true })}
             <p class="hint" style="margin:4px 0 0">Saving signs you out everywhere else.</p>
           `}
           <p class="err" id="pwWizError">${esc(state.error)}</p>
@@ -270,7 +270,7 @@ export function openPasswordWizard() {
     try {
       await api.post('/auth/change-password', body);
       close();
-      toast('Password Changed', 'ok');
+      toast('Password changed', 'ok');
     } catch (exc) {
       const message = exc.message || 'Could not change the password.';
       if (/current password/i.test(message)) {
@@ -340,7 +340,7 @@ export async function openDeleteAccountWizard({ companyName, billedByStripe }) {
               It is cancelled immediately — nothing more is charged, and the rest of the current period is not refunded.</div>` : ''}
             <div class="field"><label for="confirm_name">Type <strong>${esc(companyName)}</strong> to confirm</label>
               <input id="confirm_name" name="confirm_name" autocomplete="off"></div>
-            <div class="field"><label for="del_password">Your Password</label>
+            <div class="field"><label for="del_password">Your password</label>
               <input id="del_password" name="password" type="password" autocomplete="current-password"></div>
           `}
           <p class="err" id="delAccErr">${esc(state.error)}</p>
@@ -475,7 +475,7 @@ export function renderResetPassword(route = {}) {
         <a class="btn primary" style="width:100%;text-align:center" href="#/login">Go To Sign In</a>`;
     } catch (e) {
       error.innerHTML = /invalid or has expired/.test(e.message)
-        ? `${esc(e.message)} <a href="#/forgot-password">Request A New Link</a>` : esc(e.message);
+        ? `${esc(e.message)} <a href="#/forgot-password">Request a new link</a>` : esc(e.message);
       button.disabled = false;
     }
   });

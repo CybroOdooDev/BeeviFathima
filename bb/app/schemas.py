@@ -877,6 +877,9 @@ class DeviceOut(ORMModel):
     pairing_override: str | None
     last_seen_at: datetime | None
     punch_count: int
+    #: Punches matched to an Odoo employee (not waiting on a badge match,
+    #: removed, or held) — what the Punches column shows.
+    matched_punch_count: int = 0
     missing_since: datetime | None
     #: Beyond the plan's device allowance: its punches are held, not pushed.
     over_plan_limit: bool = False

@@ -146,7 +146,8 @@ class FakeOdoo:
         return None
 
     def create_attendance(
-        self, employee_id, check_in, check_out=None, biotime_ref=None, device_id=None
+        self, employee_id, check_in, check_out=None, biotime_ref=None, device_id=None,
+        pairing_mode=None, auto_closed=False,
     ):
         # Odoo allows at most one open record per employee.
         if check_out is None:
@@ -164,13 +165,37 @@ class FakeOdoo:
             "check_out": check_out,
             "ref": biotime_ref,
             "device_id": device_id,
+            "pairing_mode": pairing_mode,
+            "auto_closed": auto_closed,
         }
         self.calls.append(f"create:{self._next_id}")
         return self._next_id
 
-    def close_attendance(self, attendance_id, check_out):
+    def close_attendance(self, attendance_id, check_out, pairing_mode=None, auto_closed=False):
         self.attendances[attendance_id]["check_out"] = check_out
+        self.attendances[attendance_id]["auto_closed"] = auto_closed
+        if pairing_mode:
+            self.attendances[attendance_id]["pairing_mode"] = pairing_mode
         self.calls.append(f"close:{attendance_id}")
+        return True
+
+    def attendance_pairing_methods(self, attendance_ids):
+        return {i: self.attendances[i].get("pairing_mode") for i in attendance_ids if i in self.attendances}
+
+    def update_attendance(
+        self, attendance_id, check_in=None, check_out=None, reopen=False, pairing_mode=None,
+        auto_closed=False,
+    ):
+        rec = self.attendances[attendance_id]
+        if pairing_mode:
+            rec["pairing_mode"] = pairing_mode
+        if check_in is not None:
+            rec["check_in"] = check_in
+        if check_out is not None:
+            rec["check_out"] = check_out
+        elif reopen:
+            rec["check_out"] = None
+        self.calls.append(f"update:{attendance_id}")
         return True
 
     def create_employee(self, name, emp_code):  # pragma: no cover

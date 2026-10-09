@@ -1472,10 +1472,56 @@ dialog.wizard .wiz-body.wiz-tall { min-height: 400px; }
 .remove-slot button { white-space: nowrap; }
 
 /* Status pills read as labels: first letter of each word capitalised. */
-.pill { text-transform: capitalize; }
+.pill { text-transform: none; }
+.pill::first-letter { text-transform: uppercase; }
 
 .setup-foot{display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:18px;padding-top:16px;border-top:1px solid var(--line, #e5e7eb)}
 
 .field-pair{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
 @media(max-width:560px){.field-pair{grid-template-columns:1fr}}
 .h2-split{display:flex;align-items:center;justify-content:space-between;gap:12px}
+
+/* Icon + label buttons (e.g. Delete Account) */
+button.danger-outline { display: inline-flex; align-items: center; gap: 6px; }
+button.danger-outline svg { flex: none; }
+button.danger-outline#delAccount { border-color: var(--bad); }
+
+/* On/off switch (Automatic Sync) */
+.switch-row { display: inline-flex; align-items: center; gap: 12px; cursor: pointer; font-weight: 500; }
+.switch { position: relative; display: inline-block; width: 42px; height: 24px; flex: none; }
+.switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; z-index: 1; }
+.switch-track { position: absolute; inset: 0; border-radius: 999px; background: var(--rule, #cbd0dc); transition: background .15s; }
+.switch-track::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: transform .15s; }
+.switch input:checked + .switch-track { background: var(--accent, #5046e5); }
+.switch input:checked + .switch-track::after { transform: translateX(18px); }
+.switch input:focus-visible + .switch-track { outline: 2px solid var(--accent, #5046e5); outline-offset: 2px; }
+
+/* Sync Every: preset chips (segmented control) + Custom */
+.field .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; }
+.field .chip { padding: 7px 16px; border-radius: 999px; font-weight: 500; }
+.field .chip.on { background: var(--accent, #5046e5); border-color: var(--accent, #5046e5); color: #fff; }
+.chip-custom { margin-top: 10px; max-width: 180px; }
+#intervalField.is-off .chips, #intervalField.is-off .chip-custom { opacity: .45; }
+#intervalField.is-off .chip { cursor: not-allowed; }
+
+/* Filter bars: everything on one row, with a compact search box. */
+.filter-row { flex-wrap: nowrap; }
+.filter-row .inline-field.grow { flex: 0 1 260px; min-width: 150px; }
+@media (max-width: 760px) { .filter-row { flex-wrap: wrap; } .filter-row .inline-field.grow { flex: 1 1 100%; } }
+
+/* Filter bars: label sits inline, before its field, with a colon. */
+.filter-row .inline-field { display: flex; align-items: center; gap: 8px; }
+.filter-row .inline-field > span { white-space: nowrap; }
+.filter-row .inline-field > span::after { content: ":"; }
+.filter-row .inline-field.grow input { flex: 1; min-width: 0; }
+.filter-row .inline-field.grow { flex: 0 1 300px; }
+@media (max-width: 760px) { .filter-row .inline-field { flex: 1 1 100%; } .filter-row .inline-field input, .filter-row .inline-field select { flex: 1; width: auto; } }
+
+/* Attendance filter: dates, search box and a separate search button, on the right. */
+.filter-end { justify-content: flex-end; align-items: center; }
+.filter-row .search-box { flex: 0 1 280px; min-width: 150px; }
+.filter-row .search-box input { width: 100%; height: 40px; }
+.icon-btn { width: 40px; height: 40px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: 10px; flex: none; }
+@media (max-width: 760px) { .filter-end { justify-content: flex-start; } .filter-row .search-box { flex: 1 1 100%; } }
+.filter-row .icon-btn, .filter-row .icon-btn:hover { background: var(--accent); border-color: var(--accent); color: var(--accent-ink, #fff); }
+.filter-row .icon-btn:hover { filter: brightness(1.08); }

@@ -1,3 +1,5 @@
 id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
 access_biobridge_device_user,biobridge.device.user,model_biobridge_device,base.group_user,1,0,0,0
 access_biobridge_device_manager,biobridge.device.manager,model_biobridge_device,hr_attendance.group_hr_attendance_manager,1,1,1,1
+access_biobridge_pairing_method_user,biobridge.pairing.method.user,model_biobridge_pairing_method,base.group_user,1,0,0,0
+access_biobridge_pairing_method_manager,biobridge.pairing.method.manager,model_biobridge_pairing_method,hr_attendance.group_hr_attendance_manager,1,1,1,1

@@ -28,7 +28,7 @@ export async function render(mount) {
           <td title="${esc(r.closed_at || '')}">${esc(fmtAgo(r.closed_at))}</td>
           <td><strong>${esc(r.tenant_name)}</strong><div class="hint mono">${esc(r.tenant_slug || '')}</div></td>
           <td>${esc(r.owner_email || '—')}</td>
-          <td>${esc(r.plan_name || '—')}${r.stripe_subscription_cancelled ? '<div class="hint">Stripe Subscription Cancelled</div>' : ''}</td>
+          <td>${esc(r.plan_name || '—')}${r.stripe_subscription_cancelled ? '<div class="hint">Stripe subscription cancelled</div>' : ''}</td>
           <td>${r.closed_by === 'customer' ? pill('pending', 'customer') : pill('skipped', 'staff')}
             <div class="hint">${esc(r.closed_by_email || '')}</div></td>
           <td><strong>${esc(r.reason_label || '—')}</strong>${r.reason_text ? `<div class="hint" style="white-space:pre-wrap;max-width:420px">${esc(r.reason_text)}</div>` : ''}</td>

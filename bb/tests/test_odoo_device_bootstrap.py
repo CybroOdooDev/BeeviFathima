@@ -45,6 +45,7 @@ class FakeXmlRpcModels:
         self.x_biobridge_device_records: dict[int, dict] = {}
         self.biobridge_device_records: dict[int, dict] = {}
         self.hr_attendance_records: dict[int, dict] = {}
+        self.x_biobridge_pairing_method_records: dict[int, dict] = {}
         self.settings_access = True
 
     def _new_id(self) -> int:
@@ -146,6 +147,24 @@ class FakeXmlRpcModels:
                 new_id = self._new_id()
                 self.x_biobridge_device_records[new_id] = {"id": new_id, **vals}
                 return new_id
+
+        if model == "x_biobridge_pairing_method":
+            if method == "search_read":
+                return [
+                    {"id": r["id"]}
+                    for r in self.x_biobridge_pairing_method_records.values()
+                    if all(r.get(f, False) == v for f, op, v in args[0] if op == "=")
+                ][:1]
+            if method == "create":
+                new_id = self._new_id()
+                self.x_biobridge_pairing_method_records[new_id] = {"id": new_id, **args[0]}
+                return new_id
+
+        if model == "hr.attendance" and method == "read":
+            return [
+                {"id": i, **{f: self.hr_attendance_records[i].get(f, False) for f in kwargs["fields"]}}
+                for i in args[0]
+            ]
 
         if model == "biobridge.device" and method == "biobridge_upsert":
             serial_number, vals = args
@@ -264,7 +283,9 @@ def test_bootstrap_is_idempotent():
     calls_after_first = list(fake.calls)
     client.ensure_device_tracking_bootstrap()
 
-    assert fake.calls.count("ir.model.create") == 1, "must not create the model twice"
+    assert fake.calls.count("ir.model.create") == calls_after_first.count("ir.model.create") == 2, (
+        "one model each for devices and pairing methods, and none created twice"
+    )
     assert fake.calls.count("ir.model.fields.create") == len(
         [c for c in calls_after_first if c == "ir.model.fields.create"]
     ), "must not create any field twice"
@@ -613,4 +634,48 @@ def test_bootstrap_on_odoo_20_is_idempotent():
     client = make_client(fake)
     client.ensure_device_tracking_bootstrap()
     client.ensure_device_tracking_bootstrap()
-    assert len(fake.ir_access_rows) == 2
+    assert len(fake.ir_access_rows) == 3  # device crud + device company rule + pairing-method crud
+
+
+
+# --------------------------------------------------------------------------- #
+# Which pairing method wrote a record
+# --------------------------------------------------------------------------- #
+def test_bootstrap_creates_the_pairing_method_model_field_and_records():
+    fake = FakeXmlRpcModels()
+    client = make_client(fake)
+    client.ensure_device_tracking_bootstrap()
+
+    assert "x_biobridge_pairing_method" in fake.model_name_to_id
+    assert "x_pairing_method_id" in fake.model_fields["hr.attendance"]
+    assert {r["x_code"] for r in fake.x_biobridge_pairing_method_records.values()} == {
+        "state_based", "alternating", "first_last",
+    }
+    assert client.has_pairing_tracking()
+
+
+def test_pairing_bootstrap_is_idempotent():
+    fake = FakeXmlRpcModels()
+    client = make_client(fake)
+    client.ensure_device_tracking_bootstrap()
+    first = dict(fake.x_biobridge_pairing_method_records)
+    client.ensure_device_tracking_bootstrap()
+    assert fake.x_biobridge_pairing_method_records == first
+
+
+def test_create_attendance_is_stamped_with_the_pairing_method():
+    fake = FakeXmlRpcModels()
+    client = make_client(fake)
+    client.ensure_device_tracking_bootstrap()
+    att_id = client.create_attendance(11, datetime(2026, 10, 8, 8), pairing_mode="first_last")
+    method_id = client.pairing_method_id("first_last")
+    assert fake.hr_attendance_records[att_id]["x_pairing_method_id"] == method_id
+    assert client.attendance_pairing_methods([att_id]) == {att_id: "first_last"}
+
+
+def test_nothing_is_stamped_when_pairing_is_not_tracked():
+    fake = FakeXmlRpcModels()
+    client = make_client(fake)
+    att_id = client.create_attendance(11, datetime(2026, 10, 8, 8), pairing_mode="first_last")
+    assert "x_pairing_method_id" not in fake.hr_attendance_records[att_id]
+    assert not client.has_pairing_tracking()

@@ -1198,5 +1198,525 @@
     "terminal_sn": "MOCK-C4-GATE-01",
     "first_name": "",
     "last_name": ""
+  },
+  {
+    "id": 1791515408,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 08:40:08",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791516008,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 08:50:08",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791516608,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 09:00:08",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791517208,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 09:10:08",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791517807,
+    "emp_code": "5",
+    "punch_time": "2026-10-09 09:20:07",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791518407,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 09:30:07",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791519007,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 09:40:07",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791519607,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 09:50:07",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791520207,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 10:00:07",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791520807,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 10:10:07",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791521407,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 10:20:07",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791522007,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 10:30:07",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791522607,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 10:40:07",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791523207,
+    "emp_code": "5",
+    "punch_time": "2026-10-09 10:50:07",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791523807,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 11:00:07",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791524407,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 11:10:07",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791525007,
+    "emp_code": "5",
+    "punch_time": "2026-10-09 11:20:07",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791525607,
+    "emp_code": "5",
+    "punch_time": "2026-10-09 11:30:07",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791526207,
+    "emp_code": "5",
+    "punch_time": "2026-10-09 11:40:07",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791526807,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 11:50:07",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791527407,
+    "emp_code": "5",
+    "punch_time": "2026-10-09 12:00:07",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791528007,
+    "emp_code": "5",
+    "punch_time": "2026-10-09 12:10:07",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791528607,
+    "emp_code": "5",
+    "punch_time": "2026-10-09 12:20:07",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791529207,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 12:30:07",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791529807,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 12:40:07",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791530407,
+    "emp_code": "5",
+    "punch_time": "2026-10-09 12:50:07",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791531007,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 13:00:07",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791531607,
+    "emp_code": "5",
+    "punch_time": "2026-10-09 13:10:07",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791532207,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 13:20:07",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791532807,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 13:30:07",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791533407,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 13:40:07",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791534007,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 13:50:07",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791534607,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 14:00:07",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791535207,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 14:10:07",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791535807,
+    "emp_code": "5",
+    "punch_time": "2026-10-09 14:20:07",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791536407,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 14:30:07",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791537007,
+    "emp_code": "5",
+    "punch_time": "2026-10-09 14:40:07",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791537607,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 14:50:07",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791538207,
+    "emp_code": "5",
+    "punch_time": "2026-10-09 15:00:07",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791538807,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 15:10:07",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791539407,
+    "emp_code": "5",
+    "punch_time": "2026-10-09 15:20:07",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791540007,
+    "emp_code": "5",
+    "punch_time": "2026-10-09 15:30:07",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791540607,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 15:40:07",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791541207,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 15:50:07",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791541807,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 16:00:07",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791542407,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 16:10:07",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791543007,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 16:20:07",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791543607,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 16:30:07",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791544207,
+    "emp_code": "5",
+    "punch_time": "2026-10-09 16:40:07",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791544807,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 16:50:07",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791545407,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 17:00:07",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791546007,
+    "emp_code": "6001",
+    "punch_time": "2026-10-09 17:10:07",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-01",
+    "first_name": "",
+    "last_name": ""
   }
 ]

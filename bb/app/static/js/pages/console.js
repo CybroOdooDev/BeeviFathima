@@ -122,14 +122,14 @@ export async function renderConsoleOverview(mount) {
     </div>
 
     <div class="grid cols-4" style="margin-bottom:18px">
-      ${stat({ label: 'Punches Today', value: n(o.activity.punches_today), note: `${n(o.activity.punches_period)} in ${o.punches_by_day.length} days` })}
+      ${stat({ label: 'Punches today', value: n(o.activity.punches_today), note: `${n(o.activity.punches_period)} in ${o.punches_by_day.length} days` })}
       ${stat({
         label: 'Syncs, last 24 h', value: n(runs.success + runs.partial + runs.failed),
         tone: runs.failed ? 'warn' : '',
         note: runs.failed ? `${n(runs.failed)} failed · ${n(runs.success)} succeeded` : `${n(runs.success)} succeeded`,
       })}
-      ${stat({ label: 'Punches Stuck In Error', value: n(o.activity.error_punches), tone: o.activity.error_punches ? 'bad' : '' })}
-      ${stat({ label: 'Badges Not Matched', value: n(o.activity.unmatched_badges), tone: o.activity.unmatched_badges ? 'warn' : '' })}
+      ${stat({ label: 'Punches stuck in error', value: n(o.activity.error_punches), tone: o.activity.error_punches ? 'bad' : '' })}
+      ${stat({ label: 'Badges not matched', value: n(o.activity.unmatched_badges), tone: o.activity.unmatched_badges ? 'warn' : '' })}
     </div>
 
     <div class="grid console-grid" style="margin-bottom:18px">
@@ -209,7 +209,7 @@ export async function renderConsoleOverview(mount) {
       </div>
 
       <div class="card">
-        <h2>Recent Failed Syncs <span class="hint">Employee Names Removed</span></h2>
+        <h2>Recent Failed Syncs <span class="hint">Employee names removed</span></h2>
         ${o.failed_runs.length ? `
           <ul class="item-list">
             ${o.failed_runs.map((r) => `

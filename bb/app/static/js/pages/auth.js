@@ -32,7 +32,7 @@ async function submit(button, fn) {
   try {
     await fn();
   } catch (exc) {
-    error.textContent = exc.message || 'Something Went Wrong';
+    error.textContent = exc.message || 'Something went wrong';
   } finally {
     button.disabled = false;
   }
@@ -91,7 +91,7 @@ export function renderLogin(route = {}) {
   const admin = route.path === '/staff/login' && !reauth;
   const foot = reauth ? '' : admin
     ? '<a href="#/login">&larr; Back to customer sign-in</a>'
-    : '<a href="#/staff/login">Log In As Admin</a>';
+    : '<a href="#/staff/login">Log in as admin</a>';
   const root = shell(`
     <h1>${reauth ? 'Confirm It’s You' : admin ? 'Admin Sign In' : 'Sign In'}</h1>
     <p class="sub">${reauth
@@ -102,12 +102,12 @@ export function renderLogin(route = {}) {
     <form id="form">
       ${field({ name: 'email', label: 'Email', type: 'email', required: true, value: reauth })}
       ${field({ name: 'password', label: 'Password', type: 'password', required: true })}
-      ${reauth ? '' : '<p class="auth-alt" style="text-align:right;margin:-4px 0 12px"><a href="#/forgot-password">Forgot Password?</a></p>'}
+      ${reauth ? '' : '<p class="auth-alt" style="text-align:right;margin:-4px 0 12px"><a href="#/forgot-password">Forgot password?</a></p>'}
       <button class="primary" style="width:100%" id="go">${reauth ? 'Continue' : admin ? 'Sign In To Console' : 'Sign In'}</button>
     </form>
     ${reauth ? '<p class="auth-alt"><a href="#/">Cancel</a></p>'
       : admin ? ''
-      : '<p class="auth-alt">No account yet? <a href="#/signup">Create One</a></p>'}`,
+      : '<p class="auth-alt">No account yet? <a href="#/signup">Create one</a></p>'}`,
     { staff: admin, foot });
 
   if (reauth) {
@@ -182,7 +182,7 @@ export async function renderSignup(route = {}) {
             ? `$${(chosenPlan.monthly_price_cents / 100).toFixed(0)}/mo`
             : 'Custom Pricing'}</span>
         </div>
-        <a href="#/plans">Explore Plans</a>
+        <a href="#/plans">Explore plans</a>
       </div>
       <input type="hidden" name="plan_id" value="${esc(chosenId)}">
     </div>` : '';
@@ -192,7 +192,7 @@ export async function renderSignup(route = {}) {
     <p class="sub">The first user becomes the owner of the workspace.</p>
     <form id="form">
       ${field({ name: 'company_name', label: 'Company', required: true })}
-      ${field({ name: 'full_name', label: 'Your Name' })}
+      ${field({ name: 'full_name', label: 'Your name' })}
       ${field({ name: 'email', label: 'Email', type: 'email', required: true })}
       ${field({
         name: 'password', label: 'Password', type: 'password', required: true,
@@ -207,7 +207,7 @@ export async function renderSignup(route = {}) {
       ${planField}
       <button class="primary" style="width:100%" id="go">Create Account</button>
     </form>
-    <p class="auth-alt">Already have one? <a href="#/login">Sign In</a></p>`);
+    <p class="auth-alt">Already have one? <a href="#/login">Sign in</a></p>`);
 
   $('#form', root).addEventListener('submit', (event) => {
     event.preventDefault();

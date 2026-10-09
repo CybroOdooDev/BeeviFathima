@@ -108,7 +108,7 @@ export const banner = (title, body, kind = '', action = null) => `
 
 export const loading = () => '<div class="skeleton">Loading…</div>';
 
-const INFO_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">'
+export const INFO_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">'
   + '<circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.4"/>'
   + '<path d="M8 7.2v3.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>'
   + '<circle cx="8" cy="5" r=".85" fill="currentColor"/></svg>';
@@ -167,7 +167,7 @@ export function field({ name, label, type = 'text', value = '', help, required, 
          ${placeholder ? `placeholder="${esc(placeholder)}"` : ''}>`;
   return `
     <div class="field">
-      <label for="${esc(name)}">${esc(titleCase(label))}${required ? '' : ' <span class="opt">optional</span>'}${
+      <label for="${esc(name)}">${esc(label)}${required ? '' : ' <span class="opt">optional</span>'}${
         help && tip ? `<span class="field-tip${strongHelp ? ' strong' : ''}" tabindex="0" role="note"
           aria-label="${esc(help)}" data-tip="${esc(help)}">${INFO_ICON}</span>` : ''}</label>
       ${control}
@@ -233,7 +233,7 @@ export function wireSearchSelects() {
     list.innerHTML = matches.length
       ? matches.map((i) => `<li role="option" data-value="${esc(i.value)}">${esc(i.label)}${
           i.hint ? `<span class="picker-hint">${esc(i.hint)}</span>` : ''}</li>`).join('')
-      : `<li class="picker-note">${esc(box.dataset.empty || 'No Matching Timezone')}</li>`;
+      : `<li class="picker-note">${esc(box.dataset.empty || 'No matching timezone')}</li>`;
     list.classList.remove('hidden');
     box.querySelector('.ss-input').setAttribute('aria-expanded', 'true');
   };
@@ -370,8 +370,8 @@ export function planCards({
   }).join('');
   return `
     <div class="field"${id ? ` id="${esc(id)}"` : ''}>
-      <label>${esc(titleCase(label))}${required ? '' : ' <span class="opt">optional</span>'}</label>
-      <div class="plan-grid" role="radiogroup" aria-label="${esc(titleCase(label))}">${cards}</div>
+      <label>${esc(label)}${required ? '' : ' <span class="opt">optional</span>'}</label>
+      <div class="plan-grid" role="radiogroup" aria-label="${esc(label)}">${cards}</div>
       ${help ? `<div class="help">${esc(help)}</div>` : ''}
     </div>`;
 }
@@ -415,7 +415,7 @@ export function pricingCards({ plans, tags = {}, showRecommended = true, ctaLabe
         <div class="pricing-card-name">${esc(p.name)}</div>
         <div class="pricing-card-price">${p.monthly_price_cents != null
           ? `<span class="amt">$${(p.monthly_price_cents / 100).toFixed(0)}</span><span class="per">/mo</span>`
-          : '<span class="amt custom">Custom Pricing</span>'}</div>
+          : '<span class="amt custom">Custom pricing</span>'}</div>
         <p class="pricing-card-desc">${esc(p.description || '')}</p>
         <button type="button" class="pricing-cta"${locked ? ' disabled' : ''} data-pick="${esc(p.id)}">
           ${esc(label)}
@@ -474,7 +474,7 @@ export async function guard(fn, successMessage) {
     if (successMessage) toast(successMessage, 'ok');
     return result;
   } catch (error) {
-    if (error.status !== 401) toast(error.message || 'Something Went Wrong', 'bad');
+    if (error.status !== 401) toast(error.message || 'Something went wrong', 'bad');
     return undefined;
   }
 }

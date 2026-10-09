@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo noupdate="1">
+    <record id="pairing_method_state_based" model="biobridge.pairing.method">
+        <field name="name">State Based</field>
+        <field name="code">state_based</field>
+    </record>
+    <record id="pairing_method_alternating" model="biobridge.pairing.method">
+        <field name="name">Alternating</field>
+        <field name="code">alternating</field>
+    </record>
+    <record id="pairing_method_first_last" model="biobridge.pairing.method">
+        <field name="name">First In, Last Out</field>
+        <field name="code">first_last</field>
+    </record>
+</odoo>

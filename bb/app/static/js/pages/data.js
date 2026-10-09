@@ -32,7 +32,6 @@ export async function renderAttendance(mount, route) {
   const to = route.query.to || todayISO();
   const emp = route.query.emp || '';
   const q = route.query.q || '';
-  const presets = rangePresets();
   const linkFor = (overrides) => {
     const params = new URLSearchParams(Object.entries({ from, to, emp, q, ...overrides }).filter(([, v]) => v));
     return `#/attendance?${params}`;
@@ -40,17 +39,15 @@ export async function renderAttendance(mount, route) {
 
   mount.innerHTML = `
     <div class="card filter-bar" style="margin-bottom:14px">
-      <div class="chips" role="group" aria-label="Date range">
-        ${presets.map((p) => `
-          <a class="chip ${p.from === from && p.to === to ? 'on' : ''}" href="${esc(linkFor({ from: p.from, to: p.to }))}">
-            ${esc(p.label)}</a>`).join('')}
-      </div>
-      <form id="filters" class="filter-row">
+      <form id="filters" class="filter-row filter-end">
         <label class="inline-field"><span>From</span><input type="date" name="from" value="${esc(from)}"></label>
         <label class="inline-field"><span>To</span><input type="date" name="to" value="${esc(to)}"></label>
-        <label class="inline-field grow"><span>Find</span>
-          <input type="search" name="q" value="${esc(q || emp)}" placeholder="Name or badge" autocomplete="off"></label>
-        <button class="primary sm" type="submit">Show</button>
+        <div class="search-box">
+          <input type="search" name="q" value="${esc(q || emp)}" placeholder="Name or badge" autocomplete="off" aria-label="Search by name or badge">
+        </div>
+        <button type="submit" class="primary icon-btn" aria-label="Search" title="Search">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        </button>
       </form>
     </div>
     <div id="rows">${loading()}</div>`;
@@ -75,9 +72,9 @@ export async function renderAttendance(mount, route) {
     const open = rows.filter((r) => !r.check_out_local).length;
     $('#rows', mount).innerHTML = rows.length ? `
       <div class="grid cols-3" style="margin-bottom:14px">
-        ${stat({ label: 'People', value: people })}
-        ${stat({ label: 'Hours', value: hours.toFixed(1), note: 'punch to punch' })}
-        ${stat({ label: 'Still Open', value: open, tone: open ? 'warn' : '', note: 'no check-out yet' })}
+        ${stat({ label: 'Employees', value: people })}
+        ${stat({ label: 'Total Worked Hours', value: hours.toFixed(1) })}
+        ${stat({ label: 'Open Attendances', value: open, tone: open ? 'warn' : '' })}
       </div>
       <div class="card">
         <h2>Shifts <span class="hint">${rows.length}${n ? ` matching “${esc(needle.trim())}”` : ''}${
@@ -470,14 +467,16 @@ function wirePicker(box, mount, rerender) {
 /* --- Activity ------------------------------------------------------------- */
 
 const STATE_LABEL = {
-  pending: 'Pending', synced: 'Synced', unmapped: 'Unmatched Badge', error: 'Error',
-  skipped: 'Skipped', deleted: 'Deleted', held: 'Held (Device Limit)',
+  pending: 'Pending', synced: 'Synced', unmapped: 'Unmatched badge', error: 'Error',
+  skipped: 'Skipped', deleted: 'Deleted', held: 'Held (device limit)',
 };
 
 function wireRunLogs(mount) {
   mount.querySelectorAll('[data-log]').forEach((button) => {
     button.addEventListener('click', () => {
-      $(`#log-${button.dataset.log}`, mount).classList.toggle('hidden');
+      const open = $(`#log-${button.dataset.log}`, mount).classList.toggle('hidden') === false;
+      button.textContent = open ? 'Hide Log' : 'Open Log';
+      button.setAttribute('aria-expanded', String(open));
     });
   });
 }
@@ -529,7 +528,7 @@ export async function renderActivity(mount, route) {
   const viewTabs = `
     <div class="tabs">
       <a href="#/activity" class="${view === 'punches' ? 'active' : ''}">Punches</a>
-      <a href="#/activity?view=runs" class="${view === 'runs' ? 'active' : ''}">Sync Runs</a>
+      <a href="#/activity?view=runs" class="${view === 'runs' ? 'active' : ''}">Sync runs</a>
     </div>`;
 
   const runsCard = `
@@ -556,8 +555,8 @@ export async function renderActivity(mount, route) {
                           run_id: r.id, state: '', emp_code: '', view: '',
                           terminal_sn: '', date_from: '', date_to: '' })}"
                          >${esc(r.punches_new)} punch${r.punches_new === 1 ? '' : 'es'}</a>`
-                      : '<span class="hint">No New Punches</span>'}
-                    <button class="sm" data-log="${esc(r.id)}">Log</button>
+                      : '<span class="hint">No new punches</span>'}
+                    <button class="sm" data-log="${esc(r.id)}" aria-expanded="false">Open Log</button>
                   </div></td>
                 </tr>
                 <tr class="hidden" id="log-${esc(r.id)}">
@@ -597,7 +596,7 @@ export async function renderActivity(mount, route) {
                  late and their clocks drift. Those stay listed under the run
                  that first saw them.`
               : '.'}
-          <a href="${linkFor({ run_id: '' })}">Show The Whole Ledger</a>
+          <a href="${linkFor({ run_id: '' })}">Show the whole ledger</a>
         </div>` : ''}
       <div class="chips" role="group" aria-label="State">
         ${states.map((s) => `

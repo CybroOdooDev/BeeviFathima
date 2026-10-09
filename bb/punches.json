@@ -1658,5 +1658,525 @@
     "terminal_sn": "MOCK-C1-GATE-01",
     "first_name": "",
     "last_name": ""
+  },
+  {
+    "id": 1791461557,
+    "emp_code": "EMP20004",
+    "punch_time": "2026-10-08 17:42:37",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791515753,
+    "emp_code": "EMP20004",
+    "punch_time": "2026-10-09 08:45:53",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791516353,
+    "emp_code": "EMP20002",
+    "punch_time": "2026-10-09 08:55:53",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791516953,
+    "emp_code": "EMP20003",
+    "punch_time": "2026-10-09 09:05:53",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791517552,
+    "emp_code": "EMP20001",
+    "punch_time": "2026-10-09 09:15:52",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791518152,
+    "emp_code": "EMP20002",
+    "punch_time": "2026-10-09 09:25:52",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791518752,
+    "emp_code": "EMP20004",
+    "punch_time": "2026-10-09 09:35:52",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791519352,
+    "emp_code": "EMP20002",
+    "punch_time": "2026-10-09 09:45:52",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791519952,
+    "emp_code": "EMP20002",
+    "punch_time": "2026-10-09 09:55:52",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791520552,
+    "emp_code": "EMP20003",
+    "punch_time": "2026-10-09 10:05:52",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791521152,
+    "emp_code": "EMP20004",
+    "punch_time": "2026-10-09 10:15:52",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791521752,
+    "emp_code": "EMP20003",
+    "punch_time": "2026-10-09 10:25:52",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791522352,
+    "emp_code": "EMP20004",
+    "punch_time": "2026-10-09 10:35:52",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791522952,
+    "emp_code": "EMP20003",
+    "punch_time": "2026-10-09 10:45:52",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791523552,
+    "emp_code": "EMP20003",
+    "punch_time": "2026-10-09 10:55:52",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791524152,
+    "emp_code": "EMP20004",
+    "punch_time": "2026-10-09 11:05:52",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791524752,
+    "emp_code": "EMP20002",
+    "punch_time": "2026-10-09 11:15:52",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791525352,
+    "emp_code": "EMP20002",
+    "punch_time": "2026-10-09 11:25:52",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791525952,
+    "emp_code": "EMP20004",
+    "punch_time": "2026-10-09 11:35:52",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791526552,
+    "emp_code": "EMP20004",
+    "punch_time": "2026-10-09 11:45:52",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791527152,
+    "emp_code": "EMP20003",
+    "punch_time": "2026-10-09 11:55:52",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791527752,
+    "emp_code": "EMP20004",
+    "punch_time": "2026-10-09 12:05:52",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791528352,
+    "emp_code": "EMP20003",
+    "punch_time": "2026-10-09 12:15:52",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791528952,
+    "emp_code": "EMP20004",
+    "punch_time": "2026-10-09 12:25:52",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791529552,
+    "emp_code": "EMP20003",
+    "punch_time": "2026-10-09 12:35:52",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791530152,
+    "emp_code": "EMP20002",
+    "punch_time": "2026-10-09 12:45:52",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791530752,
+    "emp_code": "EMP20004",
+    "punch_time": "2026-10-09 12:55:52",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791531352,
+    "emp_code": "EMP20004",
+    "punch_time": "2026-10-09 13:05:52",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791531952,
+    "emp_code": "EMP20004",
+    "punch_time": "2026-10-09 13:15:52",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791532552,
+    "emp_code": "EMP20002",
+    "punch_time": "2026-10-09 13:25:52",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791533152,
+    "emp_code": "EMP20002",
+    "punch_time": "2026-10-09 13:35:52",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791533752,
+    "emp_code": "EMP20001",
+    "punch_time": "2026-10-09 13:45:52",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791534352,
+    "emp_code": "EMP20004",
+    "punch_time": "2026-10-09 13:55:52",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791534952,
+    "emp_code": "EMP20004",
+    "punch_time": "2026-10-09 14:05:52",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791535552,
+    "emp_code": "EMP20002",
+    "punch_time": "2026-10-09 14:15:52",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791536152,
+    "emp_code": "EMP20003",
+    "punch_time": "2026-10-09 14:25:52",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791536752,
+    "emp_code": "EMP20002",
+    "punch_time": "2026-10-09 14:35:52",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791537352,
+    "emp_code": "EMP20004",
+    "punch_time": "2026-10-09 14:45:52",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791537953,
+    "emp_code": "EMP20002",
+    "punch_time": "2026-10-09 14:55:53",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791538553,
+    "emp_code": "EMP20002",
+    "punch_time": "2026-10-09 15:05:53",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791539153,
+    "emp_code": "EMP20002",
+    "punch_time": "2026-10-09 15:15:53",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791539753,
+    "emp_code": "EMP20002",
+    "punch_time": "2026-10-09 15:25:53",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791540353,
+    "emp_code": "EMP20001",
+    "punch_time": "2026-10-09 15:35:53",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791540953,
+    "emp_code": "EMP20001",
+    "punch_time": "2026-10-09 15:45:53",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791541553,
+    "emp_code": "EMP20003",
+    "punch_time": "2026-10-09 15:55:53",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791542153,
+    "emp_code": "EMP20002",
+    "punch_time": "2026-10-09 16:05:53",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791542753,
+    "emp_code": "EMP20003",
+    "punch_time": "2026-10-09 16:15:53",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791543353,
+    "emp_code": "EMP20001",
+    "punch_time": "2026-10-09 16:25:53",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791543953,
+    "emp_code": "EMP20001",
+    "punch_time": "2026-10-09 16:35:53",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-02",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791544553,
+    "emp_code": "EMP20004",
+    "punch_time": "2026-10-09 16:45:53",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791545153,
+    "emp_code": "EMP20002",
+    "punch_time": "2026-10-09 16:55:53",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-01",
+    "first_name": "",
+    "last_name": ""
+  },
+  {
+    "id": 1791545753,
+    "emp_code": "EMP20003",
+    "punch_time": "2026-10-09 17:05:53",
+    "punch_state": "1",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C1-GATE-02",
+    "first_name": "",
+    "last_name": ""
   }
 ]

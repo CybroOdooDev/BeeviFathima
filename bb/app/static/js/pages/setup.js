@@ -22,7 +22,7 @@ export async function render(mount) {
     ${readonly ? banner('Read-only', 'Your role cannot change connections.', 'warn') : ''}
 
     <div class="card" style="margin-bottom:14px">
-      <h2>Odoo <span class="hint">Where Attendance Is Written</span></h2>
+      <h2>Odoo <span class="hint">Where attendance is written</span></h2>
       ${odoo ? statusRow(odoo) : ''}
       <form id="odooForm" ${readonly ? 'inert' : ''}>
         ${field({
@@ -52,7 +52,7 @@ export async function render(mount) {
     </div>
 
     <div class="card" style="margin-bottom:14px">
-      <h2>Device Platform <span class="hint">Where Punches Come From</span></h2>
+      <h2>Device Platform <span class="hint">Where punches come from</span></h2>
       ${source ? statusRow(source) : ''}
       <form id="sourceForm" ${readonly ? 'inert' : ''}>
         ${providers.length > 1 && !source ? field({
@@ -194,9 +194,6 @@ function statusRow(connection) {
   return `
     <div class="row" style="margin-bottom:14px">
       ${pill(connection.status)}
-      <span style="color:var(--muted);font-size:12.5px">
-        checked ${esc(fmtAgo(connection.last_checked_at))}
-      </span>
     </div>
     ${connection.status_message
       ? banner('Last Error', connection.status_message, 'bad') : ''}`;

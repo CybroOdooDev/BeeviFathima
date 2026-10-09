@@ -390,6 +390,8 @@ class OdooClient:
         #: "module" | "bootstrap" | None | _UNSET (not looked up this
         #: instance's lifetime yet) — see _device_tracking_mode.
         self._device_mode: str | None | object = _UNSET
+        #: pairing-method record ids by code, looked up once per client.
+        self._pairing_ids: dict[str, int] = {}
 
     def close(self) -> None:
         if self._http is not None:
@@ -900,6 +902,43 @@ class OdooClient:
         )
         return rows[0] if rows else None
 
+    # -- hr.attendance "mode" (who wrote the check-in / check-out) ---------
+    def _attendance_modes(self) -> set[str]:
+        """The values this Odoo's ``in_mode`` selection allows (empty when it
+        has no such field — Odoo before 17). Asked once per client."""
+        cached = getattr(self, "_modes_cache", None)
+        if cached is None:
+            cached = set()
+            try:
+                if "in_mode" in self.fields_of("hr.attendance"):
+                    data = self.execute("hr.attendance", "fields_get", [["in_mode"], ["selection"]])
+                    cached = {k for k, _label in (data or {}).get("in_mode", {}).get("selection", [])}
+            except OdooError as exc:
+                log.debug("attendance modes unavailable: %s", exc)
+            self._modes_cache = cached
+        return cached
+
+    def _mode_vals(
+        self, *, check_in: bool = False, check_out: bool = False,
+        auto_closed: bool = False, reopen: bool = False,
+    ) -> dict[str, Any]:
+        """Odoo's own "Mode" for what BioBridge writes: a time that came from a
+        device punch is ``technical`` (not ``manual``, Odoo's default for API
+        writes); a check-out BioBridge made up itself — a shift auto-closed
+        for running past the limit — is ``manual``. Nothing on an Odoo that
+        has no such field or no ``technical`` choice."""
+        modes = self._attendance_modes()
+        if "technical" not in modes:
+            return {}
+        vals: dict[str, Any] = {}
+        if check_in:
+            vals["in_mode"] = "technical"
+        if check_out:
+            vals["out_mode"] = "manual" if auto_closed and "manual" in modes else "technical"
+        elif reopen:
+            vals["out_mode"] = False
+        return vals
+
     def create_attendance(
         self,
         employee_id: int,
@@ -907,8 +946,12 @@ class OdooClient:
         check_out: datetime | None = None,
         biotime_ref: str | None = None,
         device_id: int | None = None,
+        pairing_mode: str | None = None,
+        auto_closed: bool = False,
     ) -> int:
         vals: dict[str, Any] = {"employee_id": employee_id, "check_in": fmt_dt(check_in)}
+        vals.update(self._pairing_vals(pairing_mode))
+        vals.update(self._mode_vals(check_in=True, check_out=check_out is not None, auto_closed=auto_closed))
         if check_out is not None:
             vals["check_out"] = fmt_dt(check_out)
         if biotime_ref and "biotime_ref" in self.fields_of("hr.attendance"):
@@ -919,6 +962,109 @@ class OdooClient:
                 vals[field] = device_id
         result = self.execute("hr.attendance", "create", [vals])
         return int(result if isinstance(result, int) else result[0])
+
+    # -- which pairing method produced a record ----------------------------
+    #: code -> label of the pairing methods, as BioBridge's own Pairing
+    #: settings name them.
+    PAIRING_METHODS = {
+        "state_based": "State Based",
+        "alternating": "Alternating",
+        "first_last": "First In, Last Out",
+    }
+
+    def _pairing_field(self) -> str | None:
+        """The hr.attendance field that links to the pairing method, if this
+        Odoo has one (add-on: ``pairing_method_id``; bootstrap:
+        ``x_pairing_method_id``). Found by asking, like device tracking."""
+        fields = self.fields_of("hr.attendance")
+        if "pairing_method_id" in fields:
+            return "pairing_method_id"
+        if "x_pairing_method_id" in fields:
+            return "x_pairing_method_id"
+        return None
+
+    def has_pairing_tracking(self) -> bool:
+        return self._pairing_field() is not None
+
+    def pairing_method_id(self, code: str) -> int | None:
+        """The Odoo record for a pairing method, created the first time it is
+        needed. None when this Odoo does not track pairing methods."""
+        field = self._pairing_field()
+        if field is None or code not in self.PAIRING_METHODS:
+            return None
+        if code in self._pairing_ids:
+            return self._pairing_ids[code]
+        module = field == "pairing_method_id"
+        model = "biobridge.pairing.method" if module else "x_biobridge_pairing_method"
+        code_f, name_f = ("code", "name") if module else ("x_code", "x_name")
+        found = self.execute(
+            model, "search_read", [[(code_f, "=", code)]], {"fields": ["id"], "limit": 1}
+        )
+        if found:
+            rec_id = int(found[0]["id"])
+        else:
+            made = self.execute(model, "create", [{code_f: code, name_f: self.PAIRING_METHODS[code]}])
+            rec_id = int(made if isinstance(made, int) else made[0])
+        self._pairing_ids[code] = rec_id
+        return rec_id
+
+    def _pairing_vals(self, code: str | None) -> dict[str, Any]:
+        """``{field: id}`` to merge into a create/write, or {} when there is
+        nothing to record — no code given, or this Odoo does not track it."""
+        if not code:
+            return {}
+        field = self._pairing_field()
+        rec_id = self.pairing_method_id(code) if field else None
+        return {field: rec_id} if field and rec_id else {}
+
+    def attendance_pairing_methods(self, attendance_ids: list[int]) -> dict[int, str | None]:
+        """attendance id -> pairing method code recorded on it (None when unset
+        or untracked)."""
+        field = self._pairing_field()
+        if field is None or not attendance_ids:
+            return {i: None for i in attendance_ids}
+        rows = self.execute(
+            "hr.attendance", "read", [attendance_ids], {"fields": [field]}
+        )
+        by_rec: dict[int, str] = {}
+        out: dict[int, str | None] = {}
+        for row in rows:
+            ref = row.get(field)
+            rec_id = ref[0] if isinstance(ref, (list, tuple)) and ref else (
+                ref if isinstance(ref, int) and not isinstance(ref, bool) else None
+            )
+            if rec_id is None:
+                out[row["id"]] = None
+                continue
+            if rec_id not in by_rec:
+                for code in self.PAIRING_METHODS:
+                    if self.pairing_method_id(code) == rec_id:
+                        by_rec[rec_id] = code
+                        break
+            out[row["id"]] = by_rec.get(rec_id)
+        return out
+
+    def ensure_pairing_tracking_bootstrap(self) -> None:
+        """Create the ``x_biobridge_pairing_method`` model, its three records,
+        and the ``x_pairing_method_id`` field on ``hr.attendance`` — through
+        ir.model / ir.model.fields, like the device-tracking bootstrap. A
+        no-op when the add-on's own ``pairing_method_id`` is already there."""
+        if "pairing_method_id" in self.fields_of("hr.attendance"):
+            return
+        self._assert_settings_access()
+        model_id = self._ensure_custom_model("x_biobridge_pairing_method", "BioBridge Pairing Method")
+        self._ensure_custom_field(model_id, "x_name", "Name", "char")
+        self._ensure_custom_field(model_id, "x_code", "Code", "char")
+        self._ensure_model_access(model_id, "x_biobridge_pairing_method")
+        self._ensure_custom_field(
+            self._model_id("hr.attendance"), "x_pairing_method_id", "Pairing Method",
+            "many2one", relation="x_biobridge_pairing_method",
+        )
+        self._field_cache.pop("hr.attendance", None)
+        self._field_cache.pop("x_biobridge_pairing_method", None)
+        self._pairing_ids.clear()
+        for code in self.PAIRING_METHODS:
+            self.pairing_method_id(code)
 
     def _attendance_device_field(self) -> str | None:
         """The hr.attendance field that links to the device, for whichever
@@ -1167,6 +1313,10 @@ class OdooClient:
         self._field_cache.pop("x_biobridge_device", None)
         self._device_mode = _UNSET
 
+        # The same set-up also records which pairing method produced each
+        # attendance, so a change of method part-way through stays visible.
+        self.ensure_pairing_tracking_bootstrap()
+
     def _assert_settings_access(self) -> None:
         if self.can("ir.model", "create") is False:
             raise OdooAuthError(
@@ -1383,12 +1533,43 @@ class OdooClient:
             vals["domain"] = domain
         self.execute("ir.access", "create", [vals])
 
-    def close_attendance(self, attendance_id: int, check_out: datetime) -> bool:
-        return bool(
-            self.execute(
-                "hr.attendance", "write", [[attendance_id], {"check_out": fmt_dt(check_out)}]
-            )
-        )
+    def update_attendance(
+        self,
+        attendance_id: int,
+        check_in: datetime | None = None,
+        check_out: datetime | None = None,
+        reopen: bool = False,
+        pairing_mode: str | None = None,
+        auto_closed: bool = False,
+    ) -> bool:
+        """Rewrite a record's times — used when a later punch moves the first
+        or last of the day (first/last pairing). ``reopen`` clears the
+        check-out, leaving the shift open."""
+        vals: dict[str, Any] = {}
+        if check_in is not None:
+            vals["check_in"] = fmt_dt(check_in)
+        if check_out is not None:
+            vals["check_out"] = fmt_dt(check_out)
+        elif reopen:
+            vals["check_out"] = False
+        if vals:
+            vals.update(self._pairing_vals(pairing_mode))
+            vals.update(self._mode_vals(
+                check_in=check_in is not None, check_out=check_out is not None,
+                auto_closed=auto_closed, reopen=reopen and check_out is None))
+        if not vals:
+            return True
+        return bool(self.execute("hr.attendance", "write", [[attendance_id], vals]))
+
+    def close_attendance(
+        self, attendance_id: int, check_out: datetime, pairing_mode: str | None = None,
+        auto_closed: bool = False,
+    ) -> bool:
+        vals = {
+            "check_out": fmt_dt(check_out), **self._pairing_vals(pairing_mode),
+            **self._mode_vals(check_out=True, auto_closed=auto_closed),
+        }
+        return bool(self.execute("hr.attendance", "write", [[attendance_id], vals]))
 
 
 def _check_url(raw: str) -> str:

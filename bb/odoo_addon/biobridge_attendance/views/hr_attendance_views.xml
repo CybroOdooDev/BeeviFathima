@@ -20,6 +20,7 @@
             <field name="check_out" position="after">
                 <field name="device_id" optional="show"/>
                 <field name="device_location" string="Location" optional="show"/>
+                <field name="pairing_method_id" optional="hide"/>
             </field>
         </field>
     </record>
@@ -32,6 +33,7 @@
             <field name="check_out" position="after">
                 <field name="device_id"/>
                 <field name="device_location" string="Location"/>
+                <field name="pairing_method_id"/>
             </field>
         </field>
     </record>
@@ -47,6 +49,8 @@
             <filter name="group_by_employee" position="after">
                 <filter name="group_by_device" string="Device"
                         context="{'group_by': 'device_id'}"/>
+                <filter name="group_by_pairing_method" string="Pairing Method"
+                        context="{'group_by': 'pairing_method_id'}"/>
             </filter>
         </field>
     </record>
