@@ -53,3 +53,19 @@ def test_state_based_two_check_ins_close_the_first_as_auto_closed():
     first, second = result.intervals
     assert first.check_out == datetime(2026, 10, 9, 12) and first.auto_closed
     assert second.check_out == datetime(2026, 10, 9, 17) and not second.auto_closed
+
+
+def test_list_employees_never_sends_a_zero_limit():
+    c = client_with(FULL)
+    c._field_cache["hr.employee"] = {"barcode", "pin", "company_id"}
+    seen = {}
+
+    def execute(model, method, args=None, kwargs=None, **_):
+        seen.update(kwargs or {})
+        return []
+
+    c.execute = execute
+    c.list_employees()
+    assert "limit" not in seen
+    c.list_employees(limit=5)
+    assert seen["limit"] == 5

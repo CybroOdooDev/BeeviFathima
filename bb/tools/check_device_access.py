@@ -25,12 +25,12 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from sqlalchemy import select  # noqa: E402
+from sqlalchemy import select
 
-from app.db.session import SessionLocal  # noqa: E402
-from app.integrations.odoo import OdooError  # noqa: E402
-from app.models import Device, OdooConnection, Tenant  # noqa: E402
-from app.services.connections import UnsafeTargetError, build_odoo_client  # noqa: E402
+from app.db.session import SessionLocal
+from app.integrations.odoo import OdooError
+from app.models import Device, OdooConnection, Tenant
+from app.services.connections import UnsafeTargetError, build_odoo_client
 
 MODEL = "x_biobridge_device"
 RULE_NAME = f"{MODEL}.biobridge_company"

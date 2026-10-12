@@ -18,13 +18,21 @@ automatically, and about the tier a tenant is sold under in the first place.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.models import EmployeeMapping, MappingStatus, SubscriptionPlan, Tenant, TenantStatus
+from app.models import (
+    EmployeeMapping,
+    MappingStatus,
+    SubscriptionPlan,
+    Tenant,
+    TenantStatus,
+)
 from app.services.scheduling import due_tenants, renewal_warning, sweep_subscriptions
+from datetime import timezone, datetime, timedelta
+
+UTC = timezone.utc
 
 # The console fixture and account helpers — "a customer" and "a staff
 # session" mean the same thing here as everywhere else in this suite.
@@ -144,7 +152,7 @@ def test_a_customer_can_assign_their_own_plan(api):
 def test_a_lapsed_trial_moves_to_past_due(api):
     customer, staff = a_customer_and_staff(api)
     set_tenant(api, status=TenantStatus.trialing.value,
-               subscription_renews_at=datetime.now(timezone.utc) - timedelta(days=1))
+               subscription_renews_at=datetime.now(UTC) - timedelta(days=1))
 
     db = api.session_factory()
     result = sweep_subscriptions(db)
@@ -158,7 +166,7 @@ def test_a_lapsed_active_account_moves_to_past_due_and_stops_syncing(api):
     customer, staff = a_customer_and_staff(api)
     give_it_a_device(api)
     set_tenant(api, status=TenantStatus.active.value,
-               subscription_renews_at=datetime.now(timezone.utc) - timedelta(minutes=1))
+               subscription_renews_at=datetime.now(UTC) - timedelta(minutes=1))
 
     db = api.session_factory()
     sweep_subscriptions(db)
@@ -177,10 +185,10 @@ def test_a_lapsed_active_account_moves_to_past_due_and_stops_syncing(api):
 def test_a_renewed_account_moves_back_to_active(api):
     customer, staff = a_customer_and_staff(api)
     set_tenant(api, status=TenantStatus.past_due.value,
-               subscription_renews_at=datetime.now(timezone.utc) - timedelta(days=40))
+               subscription_renews_at=datetime.now(UTC) - timedelta(days=40))
     # Someone — staff, or a future billing integration — pushes the date
     # forward. That is the only thing that changes.
-    set_tenant(api, subscription_renews_at=datetime.now(timezone.utc) + timedelta(days=30))
+    set_tenant(api, subscription_renews_at=datetime.now(UTC) + timedelta(days=30))
 
     db = api.session_factory()
     result = sweep_subscriptions(db)
@@ -196,7 +204,7 @@ def test_a_suspended_account_is_never_swept_either_direction(api):
     tid = tenant_id(api)
     api.post(f"/api/v1/admin/tenants/{tid}/deactivate", json={"reason": "unpaid"},
               headers=head(staff))
-    set_tenant(api, subscription_renews_at=datetime.now(timezone.utc) - timedelta(days=1))
+    set_tenant(api, subscription_renews_at=datetime.now(UTC) - timedelta(days=1))
 
     db = api.session_factory()
     result = sweep_subscriptions(db)
@@ -209,7 +217,7 @@ def test_a_suspended_account_is_never_swept_either_direction(api):
 def test_a_cancelled_account_is_never_swept_either_direction(api):
     customer, staff = a_customer_and_staff(api)
     set_tenant(api, status=TenantStatus.cancelled.value,
-               subscription_renews_at=datetime.now(timezone.utc) + timedelta(days=5))
+               subscription_renews_at=datetime.now(UTC) + timedelta(days=5))
 
     db = api.session_factory()
     result = sweep_subscriptions(db)
@@ -245,7 +253,7 @@ def test_an_account_with_no_renewal_date_is_never_touched(api):
 def test_the_sweep_is_a_safe_no_op_mid_subscription(api):
     customer, staff = a_customer_and_staff(api)
     set_tenant(api, status=TenantStatus.active.value,
-               subscription_renews_at=datetime.now(timezone.utc) + timedelta(days=20))
+               subscription_renews_at=datetime.now(UTC) + timedelta(days=20))
 
     db = api.session_factory()
     result = sweep_subscriptions(db)
@@ -260,14 +268,14 @@ def test_the_full_loop_lapse_then_renew_flips_syncing_off_then_on_automatically(
     customer, staff = a_customer_and_staff(api)
     give_it_a_device(api)
     set_tenant(api, status=TenantStatus.active.value,
-               subscription_renews_at=datetime.now(timezone.utc) + timedelta(minutes=1))
+               subscription_renews_at=datetime.now(UTC) + timedelta(minutes=1))
 
     db = api.session_factory()
     assert [t.slug for t in due_tenants(db)] == ["acme"]
     db.close()
 
     # The date passes with nobody touching the account.
-    set_tenant(api, subscription_renews_at=datetime.now(timezone.utc) - timedelta(minutes=1))
+    set_tenant(api, subscription_renews_at=datetime.now(UTC) - timedelta(minutes=1))
     db = api.session_factory()
     sweep_subscriptions(db)
     db.close()
@@ -279,7 +287,7 @@ def test_the_full_loop_lapse_then_renew_flips_syncing_off_then_on_automatically(
     assert api.post("/api/v1/sync/run", headers=head(customer)).status_code == 403
 
     # It is renewed — nothing but the date moves.
-    set_tenant(api, subscription_renews_at=datetime.now(timezone.utc) + timedelta(days=30))
+    set_tenant(api, subscription_renews_at=datetime.now(UTC) + timedelta(days=30))
     db = api.session_factory()
     sweep_subscriptions(db)
     db.close()
@@ -305,7 +313,7 @@ def test_a_fresh_signup_does_not_immediately_warn(api):
 
 def test_a_dashboard_shows_no_warning_when_renewal_is_far_off(api):
     customer, staff = a_customer_and_staff(api)
-    set_tenant(api, subscription_renews_at=datetime.now(timezone.utc) + timedelta(days=20))
+    set_tenant(api, subscription_renews_at=datetime.now(UTC) + timedelta(days=20))
 
     body = api.get("/api/v1/dashboard", headers=head(customer)).json()
     assert body["renewal_warning"] is None
@@ -313,7 +321,7 @@ def test_a_dashboard_shows_no_warning_when_renewal_is_far_off(api):
 
 def test_a_dashboard_warns_once_the_renewal_date_is_close(api):
     customer, staff = a_customer_and_staff(api)
-    set_tenant(api, subscription_renews_at=datetime.now(timezone.utc) + timedelta(days=3))
+    set_tenant(api, subscription_renews_at=datetime.now(UTC) + timedelta(days=3))
 
     body = api.get("/api/v1/dashboard", headers=head(customer)).json()
     assert body["renewal_warning"] is not None
@@ -323,7 +331,7 @@ def test_a_dashboard_warns_once_the_renewal_date_is_close(api):
 def test_a_lapsed_account_gets_no_warning_the_stopped_banner_already_covers_it(api):
     customer, staff = a_customer_and_staff(api)
     set_tenant(api, status=TenantStatus.past_due.value,
-               subscription_renews_at=datetime.now(timezone.utc) - timedelta(days=2))
+               subscription_renews_at=datetime.now(UTC) - timedelta(days=2))
 
     body = api.get("/api/v1/dashboard", headers=head(customer)).json()
     assert body["renewal_warning"] is None
@@ -340,7 +348,7 @@ def test_no_renewal_date_means_no_warning(api):
 def test_the_console_shows_the_same_warning_staff_side(api):
     customer, staff = a_customer_and_staff(api)
     tid = tenant_id(api)
-    set_tenant(api, subscription_renews_at=datetime.now(timezone.utc) + timedelta(days=1))
+    set_tenant(api, subscription_renews_at=datetime.now(UTC) + timedelta(days=1))
 
     body = api.get(f"/api/v1/admin/tenants/{tid}", headers=head(staff)).json()
     assert body["renewal_warning"] is not None
@@ -349,13 +357,13 @@ def test_the_console_shows_the_same_warning_staff_side(api):
 
 def test_renewal_warning_boundary_is_inclusive(db, tenant):
     tenant.status = TenantStatus.active.value
-    tenant.subscription_renews_at = datetime.now(timezone.utc) + timedelta(
+    tenant.subscription_renews_at = datetime.now(UTC) + timedelta(
         days=settings.subscription_warning_days
     )
     db.commit()
     assert renewal_warning(tenant) is not None
 
-    tenant.subscription_renews_at = datetime.now(timezone.utc) + timedelta(
+    tenant.subscription_renews_at = datetime.now(UTC) + timedelta(
         days=settings.subscription_warning_days + 1
     )
     db.commit()
@@ -369,7 +377,7 @@ def test_the_warning_turns_urgent_inside_its_own_window(db, tenant):
     tenant's own subscription_renews_at, whatever settings.trial_days or
     settings.billing_period_days it started from."""
     tenant.status = TenantStatus.trialing.value
-    tenant.subscription_renews_at = datetime.now(timezone.utc) + timedelta(
+    tenant.subscription_renews_at = datetime.now(UTC) + timedelta(
         days=settings.subscription_urgent_days
     )
     db.commit()
@@ -378,7 +386,7 @@ def test_the_warning_turns_urgent_inside_its_own_window(db, tenant):
     assert warning["urgent"] is True
 
     tenant.status = TenantStatus.active.value
-    tenant.subscription_renews_at = datetime.now(timezone.utc) + timedelta(
+    tenant.subscription_renews_at = datetime.now(UTC) + timedelta(
         days=settings.subscription_urgent_days + 1
     )
     db.commit()
@@ -390,7 +398,7 @@ def test_the_warning_turns_urgent_inside_its_own_window(db, tenant):
 def test_urgency_is_visible_on_both_dashboard_and_console(api):
     customer, staff = a_customer_and_staff(api)
     tid = tenant_id(api)
-    set_tenant(api, subscription_renews_at=datetime.now(timezone.utc)
+    set_tenant(api, subscription_renews_at=datetime.now(UTC)
                + timedelta(days=settings.subscription_urgent_days) - timedelta(hours=1))
 
     dash = api.get("/api/v1/dashboard", headers=head(customer)).json()
@@ -505,7 +513,7 @@ def test_staff_can_clear_a_tenants_plan(api):
 def test_staff_can_set_a_tenants_renewal_date(api):
     customer, staff = a_customer_and_staff(api)
     tid = tenant_id(api)
-    new_date = (datetime.now(timezone.utc) + timedelta(days=45)).replace(microsecond=0)
+    new_date = (datetime.now(UTC) + timedelta(days=45)).replace(microsecond=0)
 
     response = api.patch(f"/api/v1/admin/tenants/{tid}/config",
                           json={"subscription_renews_at": new_date.isoformat()},
@@ -744,7 +752,7 @@ def test_signup_can_skip_the_trial_with_a_chosen_plan(api):
     assert tenant.status == TenantStatus.active.value
     assert tenant.plan_id == plan_id
     # Roughly settings.billing_period_days out, not settings.trial_days.
-    delta = tenant.subscription_renews_at.replace(tzinfo=timezone.utc) - datetime.now(timezone.utc)
+    delta = tenant.subscription_renews_at.replace(tzinfo=UTC) - datetime.now(UTC)
     assert abs(delta.days - settings.billing_period_days) <= 1
 
 
@@ -823,7 +831,7 @@ def test_switching_while_active_and_already_on_a_plan_defers_to_renewal(api):
     customer, staff = a_customer_and_staff(api)
     starter_id = make_plan(api, name="Starter")
     growth_id = make_plan(api, name="Growth")
-    renews_at = datetime.now(timezone.utc) + timedelta(days=20)
+    renews_at = datetime.now(UTC) + timedelta(days=20)
     set_tenant(api, status=TenantStatus.active.value, plan_id=starter_id,
                subscription_renews_at=renews_at)
 
@@ -848,7 +856,7 @@ def test_a_deferred_switch_does_not_check_the_interval_against_the_new_plan(api)
     growth_id = make_plan(api, name="Growth", min_sync_interval_minutes=60)
     set_tenant(api, status=TenantStatus.active.value, plan_id=starter_id,
                sync_interval_minutes=15,
-               subscription_renews_at=datetime.now(timezone.utc) + timedelta(days=20))
+               subscription_renews_at=datetime.now(UTC) + timedelta(days=20))
 
     response = api.patch("/api/v1/tenant",
                           json={"plan_id": growth_id, "sync_interval_minutes": 15},
@@ -864,7 +872,7 @@ def test_choosing_the_current_plan_cancels_a_pending_switch(api):
     growth_id = make_plan(api, name="Growth")
     set_tenant(api, status=TenantStatus.active.value, plan_id=starter_id,
                pending_plan_id=growth_id,
-               subscription_renews_at=datetime.now(timezone.utc) + timedelta(days=20))
+               subscription_renews_at=datetime.now(UTC) + timedelta(days=20))
 
     response = api.patch("/api/v1/tenant", json={"plan_id": starter_id}, headers=head(customer))
     assert response.status_code == 200, response.text
@@ -880,7 +888,7 @@ def test_switching_again_replaces_the_previously_queued_plan(api):
     growth_id = make_plan(api, name="Growth")
     scale_id = make_plan(api, name="Scale")
     set_tenant(api, status=TenantStatus.active.value, plan_id=starter_id,
-               subscription_renews_at=datetime.now(timezone.utc) + timedelta(days=20))
+               subscription_renews_at=datetime.now(UTC) + timedelta(days=20))
 
     api.patch("/api/v1/tenant", json={"plan_id": growth_id}, headers=head(customer))
     assert row(api).pending_plan_id == growth_id
@@ -900,7 +908,7 @@ def test_staff_setting_plan_id_directly_clears_a_pending_switch(api):
     tid = tenant_id(api)
     set_tenant(api, status=TenantStatus.active.value, plan_id=starter_id,
                pending_plan_id=growth_id,
-               subscription_renews_at=datetime.now(timezone.utc) + timedelta(days=20))
+               subscription_renews_at=datetime.now(UTC) + timedelta(days=20))
 
     response = api.patch(f"/api/v1/admin/tenants/{tid}/config",
                           json={"plan_id": scale_id}, headers=head(staff))
@@ -919,7 +927,7 @@ def test_a_pending_switch_is_promoted_once_the_renewal_date_is_reached(api):
     growth_id = make_plan(api, name="Growth")
     set_tenant(api, status=TenantStatus.active.value, plan_id=starter_id,
                pending_plan_id=growth_id,
-               subscription_renews_at=datetime.now(timezone.utc) - timedelta(minutes=1))
+               subscription_renews_at=datetime.now(UTC) - timedelta(minutes=1))
 
     db = api.session_factory()
     result = sweep_subscriptions(db)
@@ -937,7 +945,7 @@ def test_promotion_raises_the_interval_to_the_new_plans_floor(api):
     growth_id = make_plan(api, name="Growth", min_sync_interval_minutes=60)
     set_tenant(api, status=TenantStatus.active.value, plan_id=starter_id,
                pending_plan_id=growth_id, sync_interval_minutes=15,
-               subscription_renews_at=datetime.now(timezone.utc) - timedelta(minutes=1))
+               subscription_renews_at=datetime.now(UTC) - timedelta(minutes=1))
 
     db = api.session_factory()
     sweep_subscriptions(db)
@@ -954,7 +962,7 @@ def test_a_pending_switch_survives_a_lapse_into_past_due(api):
     growth_id = make_plan(api, name="Growth")
     set_tenant(api, status=TenantStatus.active.value, plan_id=starter_id,
                pending_plan_id=growth_id,
-               subscription_renews_at=datetime.now(timezone.utc) - timedelta(minutes=1))
+               subscription_renews_at=datetime.now(UTC) - timedelta(minutes=1))
 
     db = api.session_factory()
     result = sweep_subscriptions(db)
@@ -977,7 +985,7 @@ def test_a_pending_switch_stays_queued_while_still_past_due(api):
     growth_id = make_plan(api, name="Growth")
     set_tenant(api, status=TenantStatus.past_due.value, plan_id=starter_id,
                pending_plan_id=growth_id,
-               subscription_renews_at=datetime.now(timezone.utc) - timedelta(days=5))
+               subscription_renews_at=datetime.now(UTC) - timedelta(days=5))
 
     db = api.session_factory()
     result = sweep_subscriptions(db)
@@ -1020,7 +1028,7 @@ def test_a_pending_switch_not_yet_due_is_left_alone(api):
     growth_id = make_plan(api, name="Growth")
     set_tenant(api, status=TenantStatus.active.value, plan_id=starter_id,
                pending_plan_id=growth_id,
-               subscription_renews_at=datetime.now(timezone.utc) + timedelta(days=5))
+               subscription_renews_at=datetime.now(UTC) + timedelta(days=5))
 
     db = api.session_factory()
     result = sweep_subscriptions(db)

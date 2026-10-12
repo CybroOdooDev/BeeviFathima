@@ -17,8 +17,8 @@ import threading
 import httpx
 import pytest
 
+from tools import mock_biotime
 from tools.mock_biotime import DATASETS, TOKEN, build_server
-import tools.mock_biotime as mock_biotime
 
 
 def _free_port() -> int:
@@ -146,8 +146,9 @@ def test_company_flag_accepts_valid_companies() -> None:
 
 
 def test_company_flag_rejects_an_unknown_company() -> None:
-    from tools.mock_biotime import main
     import sys
+
+    from tools.mock_biotime import main
 
     old_argv = sys.argv
     sys.argv = ["mock_biotime.py", "--company", "3"]

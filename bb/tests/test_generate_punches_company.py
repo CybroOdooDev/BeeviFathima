@@ -51,7 +51,13 @@ def test_cli_defaults_out_filename_by_company(tmp_path, monkeypatch) -> None:
 
     from tools.generate_punches import main
 
+    import tools.mock_roster as mock_roster
+
     monkeypatch.chdir(tmp_path)
+    # No real database: with several Odoo servers saved in a developer's one,
+    # the connection lookup would refuse to pick, and this test is about the
+    # file name, not Odoo.
+    monkeypatch.setattr(mock_roster, "_saved_connection", lambda tenant_slug=None: None)
     monkeypatch.setattr(sys, "argv", ["generate_punches.py", "--company", "2", "--seed", "1"])
     assert main() == 0
     assert (tmp_path / "punches_company2.json").exists()

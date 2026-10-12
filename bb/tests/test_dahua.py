@@ -6,15 +6,23 @@ from __future__ import annotations
 import base64
 import hashlib
 import re
-from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
 
 from app.integrations.base import ProviderError, SourceConfig
 from app.integrations.providers import dahua as dh
-from app.integrations.providers.dahua import DahuaProvider, direction_of, parse_created, parse_kv, parse_records
+from app.integrations.providers.dahua import (
+    DahuaProvider,
+    direction_of,
+    parse_created,
+    parse_kv,
+    parse_records,
+)
 from tests.test_platform_admin import api, head, signup  # noqa: F401
+from datetime import timezone, datetime, timedelta
+
+UTC = timezone.utc
 
 USER, PASSWORD, REALM, NONCE = "admin", "Dahua@123", "Login to ASI7214", "nonce-77a1"
 SERIAL, MODEL, TZ = "9A0B1C2D3E4F5G6", "ASI7214S-W", "Asia/Dubai"
@@ -95,7 +103,7 @@ def test_parsers():
                                 "records[1].RecNo=2\nrecords[1].UserID=Li\n")
     assert total == 1000 and rows == [{"RecNo": "1", "UserID": "Zhang"}, {"RecNo": "2", "UserID": "Li"}]
     zone = dh.ZoneInfo(TZ)
-    assert parse_created("1790000000", zone) == datetime.fromtimestamp(1790000000, tz=timezone.utc)
+    assert parse_created("1790000000", zone) == datetime.fromtimestamp(1790000000, tz=UTC)
     assert parse_created("2026-09-29 08:00:00", zone).utcoffset() == timedelta(hours=4)
     assert parse_created("nope", zone) is None
     assert direction_of({"AttendanceState": "CheckOut"}) is False and direction_of({"Type": "Entry"}) is True
@@ -103,7 +111,7 @@ def test_parsers():
 
 
 def test_connects_with_digest_and_names_the_device(device):
-    device.add("1001", datetime.now(timezone.utc) - timedelta(hours=1))
+    device.add("1001", datetime.now(UTC) - timedelta(hours=1))
     info = provider().test_connection()
     assert info.ok and MODEL in info.message and "1 access record" in info.message
     assert list(provider().fetch_terminals())[0].serial_number == SERIAL
@@ -120,7 +128,7 @@ def test_old_firmware_that_only_answers_basic(monkeypatch):
 
 
 def test_maps_records_and_skips_failures(device):
-    base = datetime(2026, 9, 29, 4, 0, tzinfo=timezone.utc)              # 08:00 in Dubai
+    base = datetime(2026, 9, 29, 4, 0, tzinfo=UTC)              # 08:00 in Dubai
     device.add("1001", base, method="15", state="CheckIn")
     device.add("1001", base + timedelta(minutes=1), status="0")           # a failed attempt
     device.add("", base + timedelta(minutes=2), card="777")               # a card with no user
@@ -137,7 +145,7 @@ def test_maps_records_and_skips_failures(device):
 
 def test_pages_by_last_create_time_and_drops_the_overlap(device, monkeypatch):
     monkeypatch.setattr(dh, "PAGE_SIZE", 10)
-    base = datetime(2026, 9, 29, 4, 0, tzinfo=timezone.utc)
+    base = datetime(2026, 9, 29, 4, 0, tzinfo=UTC)
     for i in range(25):
         device.add("1001", base + timedelta(minutes=i))
     punches = list(provider().fetch_punches(datetime(2026, 9, 29, 0, 0), datetime(2026, 9, 30, 0, 0)))
@@ -155,7 +163,7 @@ def test_a_day_at_a_time(device):
 def test_firmware_that_wants_local_text_times(monkeypatch):
     fake = FakeDahua(text_times=True)
     monkeypatch.setattr(dh, "TRANSPORT", httpx.MockTransport(fake))
-    fake.add("1001", datetime(2026, 9, 29, 4, 0, tzinfo=timezone.utc))
+    fake.add("1001", datetime(2026, 9, 29, 4, 0, tzinfo=UTC))
     p = provider()
     (punch,) = p.fetch_punches(datetime(2026, 9, 29, 0, 0), datetime(2026, 9, 30, 0, 0))
     assert punch.punch_time_local == datetime(2026, 9, 29, 8, 0)
@@ -184,7 +192,7 @@ def test_sync_registers_the_terminal_and_writes_attendance(api, device, monkeypa
     odoo = FakeOdoo(employees={"1001": (11, "Jane Doe")})
     monkeypatch.setattr(engine_mod, "build_odoo_client", lambda t, c: odoo)
 
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     device.add("1001", now - timedelta(hours=3), state="CheckIn")
     device.add("1001", now - timedelta(hours=1), state="CheckOut")
     run = api.post(f"/api/v1/sources/{source['id']}/sync", headers=head(token)).json()

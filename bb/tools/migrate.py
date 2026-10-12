@@ -27,15 +27,15 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from sqlalchemy import MetaData, inspect, text  # noqa: E402
-from sqlalchemy.engine import make_url  # noqa: E402
-from sqlalchemy.schema import CreateColumn, CreateTable  # noqa: E402
+from sqlalchemy import MetaData, inspect, text
+from sqlalchemy.engine import make_url
+from sqlalchemy.schema import CreateColumn, CreateTable
 
-from app.core.config import settings  # noqa: E402
-from app.db.base import Base  # noqa: E402
-from app.db.schema_check import detect_drift  # noqa: E402
-from app.db.session import engine  # noqa: E402
-import app.models  # noqa: E402,F401 — registers every table on Base.metadata
+import app.models  # noqa: F401 — registers every table on Base.metadata
+from app.core.config import settings
+from app.db.base import Base
+from app.db.schema_check import detect_drift
+from app.db.session import engine
 
 
 def plan() -> tuple[list[str], list[tuple[str, str]], list, list[str]]:
@@ -193,7 +193,7 @@ def rebuild_table(table_name: str) -> None:
         try:
             cursor.execute(create_sql)
             cursor.execute(
-                f"INSERT INTO {temp} ({column_list}) "  # noqa: S608 — names from the model
+                f"INSERT INTO {temp} ({column_list}) "
                 f"SELECT {column_list} FROM {table_name}"
             )
             cursor.execute(f"DROP TABLE {table_name}")

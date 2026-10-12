@@ -50,7 +50,8 @@ def test_an_unsaved_odoo_form_can_be_tested(client, monkeypatch):  # noqa: F811
     )
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["ok"] is True and "17.0" in body["message"]
+    assert body["ok"] is True and body["message"].startswith("Connected to Odoo")
+    assert "17.0" not in body["message"], "the version is not part of the success message"
     assert body["detail"]["companies"] == [{"id": 1, "name": "Acme"}]
 
 

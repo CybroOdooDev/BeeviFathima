@@ -10,7 +10,6 @@ import hashlib
 import hmac
 import json
 import time
-from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -24,6 +23,10 @@ from app.main import app
 from app.models import Base, SubscriptionPlan, Tenant
 from app.services import billing
 from app.services.scheduling import sweep_subscriptions
+
+from datetime import timezone, datetime, timedelta
+
+UTC = timezone.utc
 
 SECRET = "whsec_test_secret"
 NOW = int(time.time())
@@ -185,7 +188,7 @@ def test_checkout_completed_puts_the_account_on_its_paid_plan(client, stripe):
     assert t.status == "active"
     assert t.plan_id == _plan(client, "Growth")
     assert t.stripe_subscription_id == "sub_1"
-    renews = t.subscription_renews_at.replace(tzinfo=timezone.utc)
+    renews = t.subscription_renews_at.replace(tzinfo=UTC)
     assert abs(renews.timestamp() - PERIOD_END) < 2
     assert t.sync_interval_minutes >= 15  # raised to the plan's floor if needed
 
@@ -284,7 +287,7 @@ def test_sweep_does_not_lapse_a_stripe_account_on_the_date_alone(client, stripe)
     _checkout_completed(client, _tenant(client).id)
     s = client.Session()
     t = s.scalars(select(Tenant)).first()
-    t.subscription_renews_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+    t.subscription_renews_at = datetime.now(UTC) - timedelta(minutes=5)
     s.commit()
     sweep_subscriptions(s)
     s.commit()

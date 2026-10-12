@@ -17,10 +17,10 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.core.config import settings  # noqa: E402
-from app.db.base import Base  # noqa: E402
-from app.db.session import engine  # noqa: E402
-import app.models  # noqa: E402,F401 — registers every table on Base.metadata
+import app.models  # noqa: F401 — registers every table on Base.metadata
+from app.core.config import settings
+from app.db.base import Base
+from app.db.session import engine
 
 
 def main() -> int:

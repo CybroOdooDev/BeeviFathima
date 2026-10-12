@@ -157,7 +157,7 @@ class AttendanceProvider(ABC):
     def close(self) -> None:
         """Release sockets and handles. Safe to call more than once."""
 
-    def __enter__(self) -> "AttendanceProvider":
+    def __enter__(self) -> AttendanceProvider:
         return self
 
     def __exit__(self, *exc: object) -> None:

@@ -7,7 +7,7 @@ from sqlalchemy import select
 import app.api.v1.connections as connections_mod
 from app.integrations.odoo import OdooError
 from app.models import EmployeeMapping, Tenant
-from tests.test_connection_test_before_save import PING_OK, _StubOdooClient, _session
+from tests.test_connection_test_before_save import PING_OK, _session, _StubOdooClient
 from tests.test_odoo_company_id_api import auth, client, signup  # noqa: F401
 
 

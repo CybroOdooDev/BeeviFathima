@@ -131,6 +131,8 @@ class SyncEngine:
         #: biobridge.device model this cycle, or None once that lookup has
         #: already failed once — see _odoo_device_id.
         self._odoo_device_cache: dict[str, int | None] = {}
+        #: source.id -> DeviceSource, for the terminal's default company.
+        self._source_cache: dict[str, DeviceSource | None] = {}
 
     # -- logging -----------------------------------------------------------
     def _log(self, message: str, level: str = "info") -> None:
@@ -887,6 +889,8 @@ class SyncEngine:
         over_limit = over_limit_device_ids(self.db, self.tenant)
         cap = self.tenant.plan_max_devices
         held = 0
+        company_held = 0
+        enabled_companies = self._enabled_company_ids(odoo)
         by_employee: dict[str, list[PunchRecord]] = {}
         for punch in punches:
             if over_limit:
@@ -910,8 +914,24 @@ class SyncEngine:
                 punch.process_state = PunchState.skipped.value
                 punch.error_message = f"Mapping is {mapping.status}"
                 continue
+            reason = self._company_hold_reason(punch, mapping, enabled_companies)
+            if reason:
+                punch.process_state = PunchState.held.value
+                punch.error_message = reason
+                company_held += 1
+                continue
+            if punch.process_state == PunchState.held.value:
+                # Held earlier for its terminal's company, and that is now
+                # sorted out (terminal assigned, or employee moved).
+                punch.process_state = PunchState.pending.value
+                punch.error_message = None
             by_employee.setdefault(punch.emp_code, []).append(punch)
 
+        if company_held:
+            self._log(
+                f"{company_held} punch(es) held for review: the terminal's Odoo company "
+                "is not set, or differs from the employee's company", "warning",
+            )
         if held:
             self._log(
                 f"{held} punch(es) held: from terminal(s) beyond the plan's "
@@ -933,6 +953,67 @@ class SyncEngine:
                 self._log(f"{emp_code}: {exc}", "error")
 
         self.db.flush()
+
+    # -- terminal <-> company isolation ------------------------------------
+    def _enabled_company_ids(self, odoo: OdooClient) -> list[int] | None:
+        """Every company this connection may touch, or None when that can't
+        be read (then only explicit mismatches are caught, nothing is held
+        for being unassigned)."""
+        try:
+            scope = odoo.company_scope()
+            if scope is not None:
+                return list(scope)
+            return [c["id"] for c in odoo.list_companies()]
+        except OdooError:
+            return None
+
+    def _company_hold_reason(
+        self, punch: PunchRecord, mapping: EmployeeMapping, enabled: list[int] | None
+    ) -> str | None:
+        """Why this punch must wait for review, or None to send it.
+
+        A terminal belongs to one Odoo company (its own, else its
+        connection's default). A punch is held when the employee is in a
+        different company, and — on an Odoo with several companies on — when
+        the terminal has no company yet, because there is then no telling
+        whose attendance it is. With a single company on, an unassigned
+        terminal is fine: there is nowhere wrong to send it.
+        """
+        device = device_for_punch(self.db, punch)
+        company_id = device.company_id if device is not None else None
+        company_name = device.company_name if device is not None else None
+        if company_id is None:
+            source = self._source_cache.get(punch.source_id)
+            if source is None and punch.source_id:
+                source = self.db.get(DeviceSource, punch.source_id)
+                self._source_cache[punch.source_id] = source
+            if source is not None:
+                company_id = source.default_company_id
+                company_name = source.default_company_name
+        label = (device.alias or device.serial_number) if device is not None else (
+            punch.terminal_sn or "this terminal")
+        if company_id is None:
+            if enabled is not None and len(enabled) > 1:
+                return (
+                    f"Held: company not set for terminal {label}. Your Odoo has several "
+                    "companies on, so choose this terminal's company on the Terminals page."
+                )
+            return None
+        if enabled is not None and company_id not in enabled:
+            return (
+                f"Held: company mismatch: terminal {label} belongs to "
+                f"{company_name or f'company {company_id}'}, which is switched off for this "
+                "connection."
+            )
+        emp_company = mapping.odoo_company_id
+        if emp_company is not None and emp_company != company_id:
+            return (
+                f"Held: company mismatch: terminal {label} belongs to "
+                f"{company_name or f'company {company_id}'}, but {mapping.odoo_employee_name or punch.emp_code} "
+                f"is in {mapping.odoo_company_name or f'company {emp_company}'}. "
+                "Review it, or change the terminal's company."
+            )
+        return None
 
     def _push_employee(
         self,

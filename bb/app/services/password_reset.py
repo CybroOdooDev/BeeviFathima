@@ -9,7 +9,6 @@ it can't be used to flood someone's inbox.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
@@ -19,6 +18,9 @@ from app.core.security import hash_password, hash_token, new_token
 from app.models import User, UserSession
 from app.services.mailer import send_email
 from app.services.timeutils import ensure_aware
+from datetime import timezone, datetime, timedelta
+
+UTC = timezone.utc
 
 log = logging.getLogger(__name__)
 
@@ -43,7 +45,7 @@ def request_reset(db: Session, email: str) -> tuple[User, str] | None:
     if user.credentials_pending:
         log.info("Password reset for %s: email not confirmed yet (login details still pending), nothing sent", user.email)
         return None
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     sent = ensure_aware(user.password_reset_sent_at)
     if sent and (now - sent).total_seconds() < settings.password_reset_cooldown_seconds:
         log.info("Password reset for %s: asked again inside the %ss cooldown, nothing sent",
@@ -86,7 +88,7 @@ def consume(db: Session, raw_token: str, new_password: str) -> User | None:
     if user is None:
         return None
     expires = ensure_aware(user.password_reset_expires_at)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if expires is None or expires < now or not user.is_active:
         return None
     user.hashed_password = hash_password(new_password)

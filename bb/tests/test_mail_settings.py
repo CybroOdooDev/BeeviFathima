@@ -6,7 +6,6 @@ from __future__ import annotations
 import smtplib
 
 import pytest
-from sqlalchemy import select
 
 from app.core.config import settings
 from app.models import PlatformSetting
@@ -19,7 +18,7 @@ GMAIL = {"host": "smtp.gmail.com", "port": 587, "security": "starttls",
 
 
 class FakeSMTP:
-    instances: list["FakeSMTP"] = []
+    instances: list[FakeSMTP] = []
     refuse_login = False
 
     def __init__(self, host, port, timeout=None, context=None):

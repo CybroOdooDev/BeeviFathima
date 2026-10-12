@@ -41,6 +41,9 @@ def odoo(monkeypatch, tmp_path):
     fake = FakeOdoo()
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(mock_roster, "odoo_client", lambda args, company_id: fake)
+    # Never read the developer's real database: with Odoo connections to
+    # several servers saved there, the lookup would refuse to guess.
+    monkeypatch.setattr(mock_roster, "_saved_connection", lambda tenant_slug=None: None)
     return fake
 
 

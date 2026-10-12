@@ -5,7 +5,7 @@
  * lead's history, which is the timeline in the lead's wizard. */
 
 import { api, auth } from '../api.js';
-import { banner, empty, esc, fmtAgo, guard, loading, pill, stat } from '../ui.js';
+import { banner, empty, esc, fmtAgo, guard, loading, pill, stat, viewSwitchHtml } from '../ui.js';
 
 const STAGES = [
   ['new', 'New'], ['contacted', 'Contacted'],
@@ -48,10 +48,10 @@ function summaryHtml(p) {
   const rate = p.conversion == null ? '—' : `${Math.round(p.conversion * 100)}%`;
   return `
     <div class="grid cols-4" style="margin-bottom:16px">
-      ${stat({ label: 'Open leads', value: p.open, note: 'still in play' })}
+      ${stat({ label: 'Open Leads', value: p.open, note: 'still in play' })}
       ${stat({ label: 'Won', value: p.won, note: `${p.lost} lost` })}
       ${stat({ label: 'Conversion', value: rate, note: 'won ÷ (won + lost)' })}
-      ${stat({ label: 'Days to win', value: p.avg_days_to_win == null ? '—' : p.avg_days_to_win, note: 'average, new → won' })}
+      ${stat({ label: 'Days To Win', value: p.avg_days_to_win == null ? '—' : p.avg_days_to_win, note: 'average, new → won' })}
     </div>`;
 }
 
@@ -235,8 +235,7 @@ export async function render(mount) {
   mount.innerHTML = `
     ${summaryHtml(pipeline)}
     <div class="row" style="margin-bottom:14px;gap:8px;flex-wrap:wrap;align-items:center">
-      <button class="sm ${view === 'board' ? 'primary' : ''}" data-view="board">Board</button>
-      <button class="sm ${view === 'list' ? 'primary' : ''}" data-view="list">List</button>
+      ${viewSwitchHtml([['board', 'Board'], ['list', 'List']], view)}
       ${view === 'list' ? `<span class="flt-wrap">
         <button class="sm flt-btn ${activeFilters() ? 'on' : ''}" id="fltBtn" aria-haspopup="true"
           aria-expanded="${filterOpen}" title="Filters">${FUNNEL}<span>Filters</span>

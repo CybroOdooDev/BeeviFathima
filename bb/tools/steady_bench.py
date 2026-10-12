@@ -22,22 +22,26 @@ import argparse
 import os
 import resource
 import sys
-import time
 import tracemalloc
 from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from sqlalchemy import create_engine, event, func, select  # noqa: E402
-from sqlalchemy.orm import sessionmaker  # noqa: E402
-from sqlalchemy.pool import StaticPool  # noqa: E402
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
-from app.core.crypto import encrypt  # noqa: E402
-from app.integrations.base import PunchEvent  # noqa: E402
-from app.models import (  # noqa: E402
-    Base, DeviceSource, EmployeeMapping, OdooConnection, PunchRecord, Tenant,
+from app.core.crypto import encrypt
+from app.integrations.base import PunchEvent
+from app.models import (
+    Base,
+    DeviceSource,
+    EmployeeMapping,
+    OdooConnection,
+    PunchRecord,
+    Tenant,
 )
-from app.services import sync_engine as engine_mod  # noqa: E402
+from app.services import sync_engine as engine_mod
 
 TZ = "Asia/Kolkata"
 LEDGER_SIZES = [50_000, 250_000, 1_000_000, 5_000_000]
@@ -81,7 +85,6 @@ class QuietOdoo:
 
     def attendance_exists(self, employee_id, check_in):
         self.calls += 1
-        return None
 
     def create_attendance(
         self, employee_id, check_in, check_out=None, biotime_ref=None, device_id=None

@@ -53,6 +53,8 @@ class Roster:
     #: The Odoo server this roster was read from: {"url": ..., "db": ...}. Kept so
     #: a cached roster is never served for a different Odoo.
     odoo: dict | None = None
+    #: Why a read found nothing (counts, readable fields), for the error message.
+    diagnosis: str = ""
 
     @property
     def emp_codes(self) -> list[str]:
@@ -202,8 +204,23 @@ def _from_odoo(client, company_id: int) -> Roster:
         first, _, last = (row.get("name") or code).partition(" ")
         employees.append({"id": row["id"], "emp_code": code, "first_name": first, "last_name": last,
                           "department": dept, "enable_attendance": True})
-    return Roster(company_id, companies[company_id], "odoo", list(departments.values()),
-                  employees, terminals_for(company_id), skipped)
+    roster = Roster(company_id, companies[company_id], "odoo", list(departments.values()),
+                    employees, terminals_for(company_id), skipped)
+    if not employees:
+        available = client.fields_of("hr.employee")
+        readable = [f for f in BADGE_FIELDS if f in available]
+        with_values = sum(1 for r in rows if any(r.get(f) for f in BADGE_FIELDS))
+        roster.diagnosis = (
+            f"  Odoo returned {len(rows)} active employee(s) for company {company_id}; "
+            f"{with_values} carry a Badge ID / PIN / registration number.\n"
+            f"  Badge fields this login can read on hr.employee: {', '.join(readable) or 'NONE'}"
+            + ("" if readable else
+               " — the Odoo user needs the HR → Officer (or Administrator) access right to read "
+               "Badge ID and PIN.")
+            + ("\n  No employees at all in this company: they may belong to another company — "
+               "run with --list-companies, and use the matching --company." if not rows else "")
+        )
+    return roster
 
 
 def _from_fixture(company_id: int) -> Roster | None:
@@ -243,7 +260,8 @@ def load_roster(args, company_id: int, *, directory: Path | None = None) -> Rost
             raise SystemExit(
                 f"Company {company_id} ({roster.company_name}) has no active employee with a Badge ID, "
                 "PIN or registration number in Odoo — set a Badge ID on at least one employee "
-                "(Employee → HR Settings → Badge ID) and run this again.")
+                "(Employee → HR Settings → Badge ID) and run this again."
+                + ("\n" + roster.diagnosis if roster.diagnosis else ""))
         path.write_text(json.dumps(roster.to_json(), indent=2) + "\n")
         return roster
     fixture = _from_fixture(company_id)

@@ -1718,5 +1718,15 @@
     "terminal_sn": "MOCK-C4-GATE-01",
     "first_name": "",
     "last_name": ""
+  },
+  {
+    "id": 1791546607,
+    "emp_code": "5",
+    "punch_time": "2026-10-09 17:20:07",
+    "punch_state": "0",
+    "verify_type": "15",
+    "terminal_sn": "MOCK-C4-GATE-02",
+    "first_name": "",
+    "last_name": ""
   }
 ]

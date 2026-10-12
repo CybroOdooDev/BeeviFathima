@@ -28,8 +28,8 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -45,6 +45,9 @@ from app.integrations.base import (
     SourceConfig,
     register,
 )
+from datetime import timezone, datetime, timedelta
+
+UTC = timezone.utc
 
 log = logging.getLogger(__name__)
 
@@ -72,7 +75,7 @@ def parse_time(value: Any) -> datetime | None:
         moment = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except ValueError:
         return None
-    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
 
 
 @register
@@ -128,7 +131,7 @@ class CrossChexProvider(AttendanceProvider):
         body: dict[str, Any] = {
             "header": {"nameSpace": namespace, "nameAction": action, "version": "1.0",
                        "requestId": str(uuid.uuid4()),
-                       "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds")},
+                       "timestamp": datetime.now(UTC).isoformat(timespec="seconds")},
             "payload": payload,
         }
         if token:
@@ -178,7 +181,7 @@ class CrossChexProvider(AttendanceProvider):
     def test_connection(self) -> ConnectionInfo:
         self._token = None
         self._authenticate()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         payload = self._data("attendance.record", "getrecord", {
             "begin_time": (now - timedelta(days=1)).isoformat(timespec="seconds"),
             "end_time": now.isoformat(timespec="seconds"), "order": "asc", "page": 1, "per_page": 1})
@@ -188,7 +191,7 @@ class CrossChexProvider(AttendanceProvider):
 
     def fetch_punches(self, since=None, until=None) -> Iterator[PunchEvent]:
         zone = ZoneInfo(self.tz)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         start = since.replace(tzinfo=zone) if since else now - timedelta(days=1)
         end = until.replace(tzinfo=zone) if until else now
         page = 1

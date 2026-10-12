@@ -142,7 +142,7 @@ def probe_raw(host: str, port: int, timeout: float | None = None) -> tuple[bytes
         return b"", time.monotonic() - started
 
 
-def _explain_http_silence(report: "Report", host: str, port: int, scheme: str) -> None:
+def _explain_http_silence(report: Report, host: str, port: int, scheme: str) -> None:
     """Work out *why* an open port did not answer HTTP.
 
     The tempting single answer — "that is not a web server" — is right maybe a
@@ -322,7 +322,7 @@ def check(url: str, username: str | None, password: str | None, label: str = "")
     client = httpx.Client(
         base_url=f"{parsed.scheme}://{host}:{port}",
         timeout=HTTP_TIMEOUT,
-        verify=False,          # noqa: S501 — diagnosing, not trusting
+        verify=False,
         follow_redirects=True,
         trust_env=False,
     )
@@ -480,7 +480,7 @@ def _summarise(response) -> str:
 
     body = response.text or ""
     if "<html" in body[:200].lower():
-        title = re.search(r"<title[^>]*>(.*?)</title>", body, re.I | re.S)
+        title = re.search(r"<title[^>]*>(.*?)</title>", body, re.IGNORECASE | re.DOTALL)
         text = title.group(1) if title else re.sub(r"<[^>]+>", " ", body)
     else:
         text = body

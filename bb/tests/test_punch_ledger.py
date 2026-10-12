@@ -19,7 +19,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.session import get_db
 from app.main import app
-from app.models import Base, Direction, PunchRecord, PunchState, Tenant, User
+from app.models import Base, Direction, PunchRecord, PunchState, Tenant
 
 
 @pytest.fixture

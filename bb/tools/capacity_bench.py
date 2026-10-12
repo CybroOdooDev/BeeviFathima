@@ -25,21 +25,21 @@ from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from sqlalchemy import create_engine, func, select  # noqa: E402
-from sqlalchemy.orm import sessionmaker  # noqa: E402
-from sqlalchemy.pool import StaticPool  # noqa: E402
+from sqlalchemy import create_engine, func, select
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
-from app.core.config import settings  # noqa: E402
-from app.core.crypto import encrypt  # noqa: E402
-from app.models import (  # noqa: E402
+from app.core.config import settings
+from app.core.crypto import encrypt
+from app.integrations.base import PunchEvent
+from app.models import (
     Base,
     DeviceSource,
     OdooConnection,
     PunchRecord,
     Tenant,
 )
-from app.services import sync_engine as engine_mod  # noqa: E402
-from app.integrations.base import PunchEvent  # noqa: E402
+from app.services import sync_engine as engine_mod
 
 TZ = "Asia/Kolkata"
 

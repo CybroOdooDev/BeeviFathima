@@ -37,8 +37,8 @@ on it.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -56,6 +56,10 @@ from app.integrations.base import (
     TerminalRecord,
     register,
 )
+
+from datetime import timezone, datetime, timedelta
+
+UTC = timezone.utc
 
 log = logging.getLogger(__name__)
 
@@ -111,14 +115,14 @@ def parse_time(value: str | None) -> datetime | None:
         moment = datetime.fromisoformat(text)
     except ValueError:
         try:
-            moment = datetime.strptime(str(value)[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+            moment = datetime.strptime(str(value)[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=UTC)
         except ValueError:
             return None
-    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
 
 
 def utc_text(moment: datetime) -> str:
-    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 def _nested(value: Any, key: str) -> str:
@@ -158,8 +162,7 @@ class BioStar2Provider(AttendanceProvider):
         base = (config.base_url or "").strip().rstrip("/")
         if base and "://" not in base:
             base = f"https://{base}"
-        if base.endswith("/api"):
-            base = base[:-4]
+        base = base.removesuffix("/api")
         self.base = base
         self.tz = config.timezone or "UTC"
         self._session: str | None = config.token or None
@@ -284,7 +287,7 @@ class BioStar2Provider(AttendanceProvider):
 
     def fetch_punches(self, since=None, until=None) -> Iterator[PunchEvent]:
         zone = ZoneInfo(self.tz)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         start = since.replace(tzinfo=zone) if since else now - timedelta(days=1)
         end = until.replace(tzinfo=zone) if until else now
         seen: set[str] = set()

@@ -20,13 +20,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-from alembic import command
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import Engine, inspect, text
 
 import app.models  # noqa: F401 — registers every table on Base.metadata
+from alembic import command
 from app.db.base import Base
 from app.db.schema_check import detect_drift
 

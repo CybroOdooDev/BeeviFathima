@@ -38,8 +38,8 @@ tests/test_hikconnect.py for the shape assumed.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -56,6 +56,9 @@ from app.integrations.base import (
     register,
 )
 from app.integrations.providers.hikvision import direction_of as _hik_direction
+from datetime import timezone, datetime, timedelta
+
+UTC = timezone.utc
 
 log = logging.getLogger(__name__)
 
@@ -116,7 +119,7 @@ def parse_time(value: Any, zone: ZoneInfo) -> datetime | None:
         return None
     if isinstance(value, (int, float)) or str(value).isdigit():
         number = float(value)
-        return datetime.fromtimestamp(number / 1000 if number > 1e11 else number, tz=timezone.utc)
+        return datetime.fromtimestamp(number / 1000 if number > 1e11 else number, tz=UTC)
     text = str(value).strip().replace("Z", "+00:00")
     try:
         moment = datetime.fromisoformat(text.replace(" ", "T", 1) if "T" not in text else text)
@@ -282,7 +285,7 @@ class HikConnectProvider(AttendanceProvider):
                 name = str(_first(row, DEVICE_NAME_KEYS) or "").strip() or None
                 status = _first(row, STATUS_KEYS)
                 record_id = _first(raw, ID_KEYS)
-                utc = when.astimezone(timezone.utc)
+                utc = when.astimezone(UTC)
                 yield PunchEvent(
                     external_id=(f"hc:{record_id}" if record_id not in (None, "")
                                  else f"{serial or name or 'hc'}:{person}:{utc:%Y%m%d%H%M%S}"),

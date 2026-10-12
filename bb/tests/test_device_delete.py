@@ -3,7 +3,6 @@ is scoped to the caller's account, read-only users can't, and it's audited."""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,7 +14,9 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models import AuditLog, Device, DeviceSource, PunchRecord, Tenant
+from datetime import timezone, datetime, timedelta
 
+UTC = timezone.utc
 
 @pytest.fixture
 def client():
@@ -57,7 +58,7 @@ def seed(client, email_domain="acme.com"):
     db.add_all([gate1, gate2]); db.flush()
     punch = PunchRecord(tenant_id=tenant.id, source_id=source.id, device_id=gate1.id,
                         external_id="p1", emp_code="1001", terminal_sn="GATE-01",
-                        punch_time_utc=datetime(2026, 10, 5, 8, 0, tzinfo=timezone.utc))
+                        punch_time_utc=datetime(2026, 10, 5, 8, 0, tzinfo=UTC))
     db.add(punch); db.commit()
     ids = (gate1.id, gate2.id, punch.id)
     db.close()

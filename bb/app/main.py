@@ -39,10 +39,10 @@ def _warn_about_schema_drift() -> None:
     the product, and refusing to boot over it would take a working system down.
     """
     try:
+        import app.models  # noqa: F401
         from app.db.base import Base
         from app.db.schema_check import detect_drift
         from app.db.session import engine
-        import app.models  # noqa: F401
 
         drift = detect_drift(engine, Base.metadata)
         if drift.is_empty:
@@ -66,9 +66,9 @@ async def lifespan(app: FastAPI):
         # alters or drops an existing one, so it cannot migrate a schema and is
         # deliberately not run in production. Use tools/init_db.py explicitly,
         # or tools/db_upgrade.py (Alembic) for anything holding data you care about.
+        import app.models  # noqa: F401 — registers every table on Base.metadata
         from app.db.base import Base
         from app.db.session import engine
-        import app.models  # noqa: F401 — registers every table on Base.metadata
 
         Base.metadata.create_all(engine)
         log.info("Schema ensured (development mode)")

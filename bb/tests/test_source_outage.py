@@ -16,11 +16,11 @@ import httpx
 import pytest
 
 from app.core.config import settings
+from app.core.crypto import encrypt
 from app.integrations.base import ProviderError
 from app.models import ConnectionStatus, DeviceSource, PunchRecord
 from app.services import sync_engine as engine_mod
 from app.services.sync_engine import AllSourcesUnreachable, SyncAborted
-from app.core.crypto import encrypt
 from tests.conftest import TZ, FakeOdoo, FakeProvider
 from tests.test_sync_engine import punch
 

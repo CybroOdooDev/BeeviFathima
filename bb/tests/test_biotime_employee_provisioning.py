@@ -9,13 +9,17 @@ tests (and manual runs) also rely on.
 from __future__ import annotations
 
 import json
-import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from app.integrations.base import Capability, EmployeeRecord, ProviderError, SourceConfig
+from app.integrations.base import (
+    Capability,
+    EmployeeRecord,
+    ProviderError,
+    SourceConfig,
+)
 from app.integrations.providers.biotime import BioTimeProvider
 
 
@@ -27,7 +31,7 @@ class _Handler(BaseHTTPRequestHandler):
     employees: list[dict] = []
     token = "tok"
 
-    def log_message(self, *_args):  # noqa: D102 — silence test output
+    def log_message(self, *_args):
         pass
 
     def _send(self, payload: dict, status: int = 200) -> None:
@@ -45,7 +49,7 @@ class _Handler(BaseHTTPRequestHandler):
             return False
         return True
 
-    def do_POST(self):  # noqa: N802
+    def do_POST(self):
         if self.path == "/api-token-auth/":
             return self._send({"token": type(self).token})
         if self.path == "/personnel/api/employees/":
@@ -74,7 +78,7 @@ class _Handler(BaseHTTPRequestHandler):
             return self._send(row, 201)
         self._send({"detail": "Not found."}, 404)
 
-    def do_GET(self):  # noqa: N802
+    def do_GET(self):
         if not self._authorised():
             return
         if self.path.startswith("/personnel/api/employees/"):

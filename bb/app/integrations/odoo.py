@@ -825,12 +825,12 @@ class OdooClient:
         wanted += [f for f in ("company_id", "parent_id") if f in available]
         wanted += [f for f, _ in MATCH_FIELDS if f in available]
         domain = [("active", "in", [True, False]), *self._company_domain(available)]
-        return self.execute(
-            "hr.employee",
-            "search_read",
-            [domain],
-            {"fields": wanted, "limit": limit or 0, "context": {"active_test": False}},
-        ) or []
+        kwargs: dict[str, Any] = {"fields": wanted, "context": {"active_test": False}}
+        if limit:
+            # Never send "limit": 0 — newer Odoo reads it as "return zero rows",
+            # not "no limit", which made every employee list come back empty.
+            kwargs["limit"] = limit
+        return self.execute("hr.employee", "search_read", [domain], kwargs) or []
 
     def employee_code_for(self, employee_row: dict[str, Any]) -> str | None:
         """The identifier from an ``hr.employee`` row (as ``list_employees``

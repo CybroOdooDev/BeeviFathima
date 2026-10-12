@@ -24,13 +24,13 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from sqlalchemy import select  # noqa: E402
+from sqlalchemy import select
 
-from app.db.session import SessionLocal  # noqa: E402
-from app.integrations.base import ProviderError, get_provider_class  # noqa: E402
-import app.integrations.providers  # noqa: E402,F401 — registers every provider
-import app.models  # noqa: E402,F401
-from app.models import DeviceSource  # noqa: E402
+import app.integrations.providers
+import app.models  # noqa: F401
+from app.db.session import SessionLocal
+from app.integrations.base import ProviderError, get_provider_class
+from app.models import DeviceSource
 
 
 def misfiled(db) -> list[tuple[DeviceSource, str | None]]:

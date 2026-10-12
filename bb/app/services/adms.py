@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -46,6 +45,9 @@ from app.models import (
     TenantStatus,
 )
 from app.services.timeutils import local_to_utc, utcnow_naive
+from datetime import timezone, datetime, timedelta
+
+UTC = timezone.utc
 
 log = logging.getLogger(__name__)
 
@@ -94,7 +96,7 @@ def touch(db: Session, serial: str, ip: str | None) -> AdmsDevice:
     if device is None:
         device = AdmsDevice(serial_number=serial, users={})
         db.add(device)
-    device.last_seen_at = datetime.now(timezone.utc)
+    device.last_seen_at = datetime.now(UTC)
     if ip:
         device.last_ip = ip[:64]
     return device
@@ -105,8 +107,8 @@ def is_online(device: AdmsDevice | None) -> bool:
         return False
     seen = device.last_seen_at
     if seen.tzinfo is None:
-        seen = seen.replace(tzinfo=timezone.utc)
-    return datetime.now(timezone.utc) - seen <= ONLINE_WINDOW
+        seen = seen.replace(tzinfo=UTC)
+    return datetime.now(UTC) - seen <= ONLINE_WINDOW
 
 
 def claimed_source(db: Session, device: AdmsDevice) -> tuple[Tenant, DeviceSource] | None:
@@ -316,7 +318,7 @@ def queue_user(db: Session, device: AdmsDevice, pin: str, name: str) -> AdmsComm
 def pending_commands(db: Session, serial: str, limit: int = 20) -> list[AdmsCommand]:
     """Queued commands to hand out, plus ones sent over 10 minutes ago with no
     answer (the terminal may have rebooted before running them)."""
-    stale = datetime.now(timezone.utc) - timedelta(minutes=10)
+    stale = datetime.now(UTC) - timedelta(minutes=10)
     rows = db.scalars(select(AdmsCommand).where(
         AdmsCommand.serial_number == serial,
         AdmsCommand.status.in_(("queued", "sent")),
@@ -325,7 +327,7 @@ def pending_commands(db: Session, serial: str, limit: int = 20) -> list[AdmsComm
     for row in rows:
         sent = row.sent_at
         if sent is not None and sent.tzinfo is None:
-            sent = sent.replace(tzinfo=timezone.utc)
+            sent = sent.replace(tzinfo=UTC)
         if row.status == "queued" or (sent is not None and sent < stale):
             out.append(row)
         if len(out) >= limit:
@@ -337,7 +339,7 @@ def command_reply(db: Session, serial: str) -> str:
     rows = pending_commands(db, serial)
     if not rows:
         return "OK"
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     for row in rows:
         row.status = "sent"
         row.sent_at = now
@@ -368,7 +370,7 @@ def apply_results(db: Session, device: AdmsDevice, body: str) -> int:
         code = (fields.get("Return") or "").strip()
         row.return_code = code[:16]
         row.status = "done" if code.lstrip("-").isdigit() and int(code) >= 0 else "failed"
-        row.done_at = datetime.now(timezone.utc)
+        row.done_at = datetime.now(UTC)
         done += 1
     return done
 

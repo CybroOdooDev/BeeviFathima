@@ -207,7 +207,12 @@ def main() -> int:
                         help="By default Saturday and Sunday are skipped")
     parser.add_argument("--seed", type=int, default=None,
                         help="Fix the jitter for a reproducible file")
-    from tools.mock_roster import add_odoo_arguments, describe, list_companies, load_roster
+    from tools.mock_roster import (
+        add_odoo_arguments,
+        describe,
+        list_companies,
+        load_roster,
+    )
 
     add_odoo_arguments(parser)
     args = parser.parse_args()

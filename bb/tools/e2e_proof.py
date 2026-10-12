@@ -15,7 +15,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -23,9 +23,9 @@ from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.core.crypto import encrypt  # noqa: E402
-from app.integrations.odoo import OdooClient, OdooCredentials  # noqa: E402
-from app.models import (  # noqa: E402
+from app.core.crypto import encrypt
+from app.integrations.odoo import OdooClient, OdooCredentials
+from app.models import (
     AttendanceRecord,
     Base,
     Device,
@@ -35,8 +35,8 @@ from app.models import (  # noqa: E402
     PunchRecord,
     Tenant,
 )
-from app.services.sync_engine import SyncEngine  # noqa: E402
-from app.services.timeutils import utc_to_local, utcnow_naive  # noqa: E402
+from app.services.sync_engine import SyncEngine
+from app.services.timeutils import utc_to_local, utcnow_naive
 
 TZ = "Asia/Dubai"  # UTC+4, no DST, so the offset is checkable by eye
 MOCK = "http://127.0.0.1:8099"

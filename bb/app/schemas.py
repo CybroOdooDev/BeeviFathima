@@ -848,6 +848,9 @@ class SourceOut(ORMModel):
     is_active: bool
     auto_provision_employees: bool
     location: str | None = None
+    #: Company its terminals inherit unless one sets its own.
+    default_company_id: int | None = None
+    default_company_name: str | None = None
 
 
 class ProvisionedEmployee(BaseModel):
@@ -883,12 +886,26 @@ class DeviceOut(ORMModel):
     missing_since: datetime | None
     #: Beyond the plan's device allowance: its punches are held, not pushed.
     over_plan_limit: bool = False
+    #: The Odoo company set on this terminal itself (null = inherit).
+    company_id: int | None = None
+    company_name: str | None = None
+    #: Held punches waiting on this terminal's company — see sync_engine.
+    held_punch_count: int = 0
 
 
 class DeviceUpdate(BaseModel):
     alias: str | None = None
     is_enabled: bool | None = None
     pairing_override: Literal["state_based", "alternating", "first_last"] | None = None
+    #: Odoo company this terminal belongs to; send null to clear it.
+    company_id: int | None = None
+    company_name: str | None = Field(default=None, max_length=200)
+
+
+class SourceCompanyIn(BaseModel):
+    """Default company for every terminal of one connection (null clears)."""
+    company_id: int | None = None
+    company_name: str | None = Field(default=None, max_length=200)
 
 
 class TestResult(BaseModel):

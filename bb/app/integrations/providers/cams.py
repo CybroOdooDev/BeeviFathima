@@ -43,8 +43,8 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -61,6 +61,9 @@ from app.integrations.base import (
     TerminalRecord,
     register,
 )
+from datetime import timezone, datetime, timedelta
+
+UTC = timezone.utc
 
 log = logging.getLogger(__name__)
 
@@ -112,7 +115,7 @@ def parse_time(text: Any) -> datetime | None:
     if len(offset) >= 5 and offset[0] in "+-" and offset[1:5].isdigit():
         delta = timedelta(hours=int(offset[1:3]), minutes=int(offset[3:5]))
         return moment.replace(tzinfo=timezone(delta if offset[0] == "+" else -delta))
-    return moment.replace(tzinfo=timezone.utc)
+    return moment.replace(tzinfo=UTC)
 
 
 def direction_of(kind: Any) -> bool | None:
@@ -235,7 +238,7 @@ class CamsProvider(AttendanceProvider):
                 if not user or when is None:
                     continue
                 kind = row.get("Type")
-                utc = when.astimezone(timezone.utc)
+                utc = when.astimezone(UTC)
                 yield PunchEvent(
                     external_id=f"{self.stgid}:{user}:{utc:%Y%m%d%H%M%S}",
                     emp_code=user,

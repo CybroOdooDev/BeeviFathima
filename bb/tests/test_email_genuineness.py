@@ -42,6 +42,14 @@ def captured_mail(monkeypatch):
     return sent
 
 
+@pytest.fixture(autouse=True)
+def _in_app_verify_links(monkeypatch):
+    """These tests are about the in-app verification link. A developer's .env
+    may set SITE_URL (the marketing site's verified.html page), which would
+    change the link; pin it off so the result does not depend on that file."""
+    monkeypatch.setattr(settings, "site_url", "")
+
+
 def _link_token(sent: list[dict]) -> str:
     """Pull the token back out of the link in the one email that was sent."""
     assert len(sent) == 1, f"expected exactly one email, got {sent}"

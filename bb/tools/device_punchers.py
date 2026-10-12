@@ -2,6 +2,7 @@
 Read-only — nothing on the device is changed."""
 import sys
 from collections import defaultdict
+
 from zk import ZK
 
 host = sys.argv[1] if len(sys.argv) > 1 else "10.0.11.43"

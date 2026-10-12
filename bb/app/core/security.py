@@ -15,6 +15,8 @@ from app.core.config import settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+UTC = timezone.utc
+
 #: The two doors a session can be minted at.
 #:
 #: A token's scope is decided by where the credentials were presented, not by
@@ -85,7 +87,7 @@ def refresh_ttl(scope: str) -> timedelta:
 def _create_token(
     subject: str, tenant_id: str | None, role: str, ttl: timedelta, kind: str, scope: str
 ) -> str:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload: dict[str, Any] = {
         "sub": subject,
         "tid": tenant_id,

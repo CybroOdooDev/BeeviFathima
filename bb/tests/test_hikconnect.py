@@ -5,15 +5,21 @@ and records whose person sits in a nested object."""
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
 
 from app.integrations.base import ProviderError, SourceConfig
 from app.integrations.providers import hikconnect as hc
-from app.integrations.providers.hikconnect import HikConnectProvider, direction_of, parse_time
+from app.integrations.providers.hikconnect import (
+    HikConnectProvider,
+    direction_of,
+    parse_time,
+)
 from tests.test_platform_admin import api, head, signup  # noqa: F401
+from datetime import timezone, datetime, timedelta
+
+UTC = timezone.utc
 
 KEY, SECRET, TZ = "ak-team-1", "sk-team-1", "Asia/Dubai"
 EU = "https://ieu.hikcentralconnect.com"
@@ -79,16 +85,16 @@ def provider(secret=SECRET, token=None, base=EU):
 
 def test_helpers():
     zone = hc.ZoneInfo(TZ)
-    assert parse_time("2026-09-29T08:00:00+04:00", zone) == datetime(2026, 9, 29, 4, 0, tzinfo=timezone.utc)
+    assert parse_time("2026-09-29T08:00:00+04:00", zone) == datetime(2026, 9, 29, 4, 0, tzinfo=UTC)
     assert parse_time("2026-09-29 08:00:00", zone).utcoffset() == timedelta(hours=4)
-    assert parse_time(1790000000000, zone) == datetime.fromtimestamp(1790000000, tz=timezone.utc)
+    assert parse_time(1790000000000, zone) == datetime.fromtimestamp(1790000000, tz=UTC)
     assert (direction_of("checkIn"), direction_of("checkOut"), direction_of("0"), direction_of("1"),
             direction_of("breakOut"), direction_of(None)) == (True, False, True, False, False, None)
     assert provider(base="eu").base == EU and provider(base=EU + "/api/hccgw/").base == EU
 
 
 def test_connects_with_the_app_key(cloud):
-    cloud.records = [record("1001", datetime.now(timezone.utc) - timedelta(hours=1))]
+    cloud.records = [record("1001", datetime.now(UTC) - timedelta(hours=1))]
     info = provider().test_connection()
     assert info.ok and "1 attendance record" in info.message
     assert cloud.calls[-1][2]["pageSize"] == 5
@@ -97,14 +103,14 @@ def test_connects_with_the_app_key(cloud):
 
 
 def test_unrecognised_record_fields_are_reported(cloud):
-    cloud.records = [{"foo": "bar", "_when": (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()}]
+    cloud.records = [{"foo": "bar", "_when": (datetime.now(UTC) - timedelta(minutes=5)).isoformat()}]
     info = provider().test_connection()
     assert not info.ok and info.detail["fields"] == ["foo"]
 
 
 def test_pages_records_and_maps_them(cloud, monkeypatch):
     monkeypatch.setattr(hc, "PAGE_SIZE", 10)
-    base = datetime(2026, 9, 29, 4, 0, tzinfo=timezone.utc)          # 08:00 in Dubai
+    base = datetime(2026, 9, 29, 4, 0, tzinfo=UTC)          # 08:00 in Dubai
     cloud.records = [record("1001", base + timedelta(minutes=i), status="checkIn" if i % 2 == 0 else "checkOut",
                             rid=f"r{i}") for i in range(25)]
     punches = list(provider().fetch_punches(datetime(2026, 9, 29, 0, 0), datetime(2026, 9, 30, 0, 0)))
@@ -120,7 +126,7 @@ def test_pages_records_and_maps_them(cloud, monkeypatch):
 
 
 def test_a_nested_shape_without_an_id(cloud):
-    when = datetime(2026, 9, 29, 13, 30, tzinfo=timezone.utc)
+    when = datetime(2026, 9, 29, 13, 30, tzinfo=UTC)
     cloud.records = [nested("E-77", when)]
     (p,) = provider().fetch_punches(datetime(2026, 9, 29, 0, 0), datetime(2026, 9, 30, 0, 0))
     assert p.emp_code == "E-77" and p.first_name == "Omar"
@@ -129,7 +135,7 @@ def test_a_nested_shape_without_an_id(cloud):
 
 
 def test_an_expired_token_is_renewed_once(cloud):
-    cloud.records = [record("1001", datetime(2026, 9, 29, 5, 0, tzinfo=timezone.utc))]
+    cloud.records = [record("1001", datetime(2026, 9, 29, 5, 0, tzinfo=UTC))]
     stale = provider(token="tok-old")
     assert len(list(stale.fetch_punches(datetime(2026, 9, 29, 0, 0), datetime(2026, 9, 30, 0, 0)))) == 1
     assert stale.cached_token == "tok1" and cloud.issued == 1
@@ -177,7 +183,7 @@ def test_sync_brings_terminals_in_with_the_punches(api, cloud, monkeypatch):
     odoo = FakeOdoo(employees={"1001": (11, "Sara Ali")})
     monkeypatch.setattr(engine_mod, "build_odoo_client", lambda t, c: odoo)
 
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     cloud.records = [record("1001", now - timedelta(hours=3), "checkIn", rid="a"),
                      record("1001", now - timedelta(hours=1), "checkOut", rid="b")]
     run = api.post(f"/api/v1/sources/{source['id']}/sync", headers=head(token)).json()

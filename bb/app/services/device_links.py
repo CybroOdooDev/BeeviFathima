@@ -18,13 +18,15 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import timezone
 
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.integrations.odoo import OdooClient, OdooError
 from app.models import Device, DeviceSource, PunchRecord, Tenant
+from datetime import timezone
+
+UTC = timezone.utc
 
 
 def device_for_punch(db: Session, punch: PunchRecord) -> Device | None:
@@ -162,7 +164,7 @@ def restore_terminals_from_punches(db: Session, tenant: Tenant, source: DeviceSo
         device = Device(
             tenant_id=tenant.id, source_id=source.id, serial_number=serial,
             punch_count=count,
-            last_seen_at=newest.replace(tzinfo=newest.tzinfo or timezone.utc) if newest else None,
+            last_seen_at=newest.replace(tzinfo=newest.tzinfo or UTC) if newest else None,
         )
         db.add(device)
         db.flush()

@@ -13,7 +13,7 @@ than a timing: a run's reads must be bounded by the punches in front of it.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pytest
 from sqlalchemy import event, select
@@ -60,7 +60,7 @@ def stuffed_ledger(db, tenant, local_day):
 
 def test_lookup_is_scoped_to_the_ids_asked_about(db, tenant, stuffed_ledger):
     engine = SyncEngine(db, tenant, "test")
-    found = engine._known_external_ids(  # noqa: SLF001
+    found = engine._known_external_ids(
         stuffed_ledger, ["old-7", "old-9", "never-seen"]
     )
     assert found == {"old-7", "old-9"}, (
@@ -71,10 +71,10 @@ def test_lookup_is_scoped_to_the_ids_asked_about(db, tenant, stuffed_ledger):
 def test_lookup_of_nothing_touches_the_database_not_at_all(db, tenant, stuffed_ledger):
     engine = SyncEngine(db, tenant, "test")
     statements: list[str] = []
-    listener = lambda c, cur, stmt, p, ctx, many: statements.append(stmt)  # noqa: E731
+    listener = lambda c, cur, stmt, p, ctx, many: statements.append(stmt)
     event.listen(db.get_bind(), "before_cursor_execute", listener)
     try:
-        assert engine._known_external_ids(stuffed_ledger, []) == set()  # noqa: SLF001
+        assert engine._known_external_ids(stuffed_ledger, []) == set()
     finally:
         event.remove(db.get_bind(), "before_cursor_execute", listener)
     assert statements == [], "an empty batch is answerable without a query"
@@ -88,7 +88,7 @@ def test_lookup_chunks_stay_within_sqlite_parameter_limits(db, tenant, stuffed_l
     """
     engine = SyncEngine(db, tenant, "test")
     asked = [f"old-{i}" for i in range(2_500)]
-    found = engine._known_external_ids(stuffed_ledger, asked)  # noqa: SLF001
+    found = engine._known_external_ids(stuffed_ledger, asked)
     assert found == set(asked)
 
 
@@ -159,7 +159,7 @@ def test_batches_are_bounded_so_memory_does_not_track_the_window(
 
     sizes: list[int] = []
     engine = primed(db, tenant)
-    real_batch = engine._ingest_batch  # noqa: SLF001
+    real_batch = engine._ingest_batch
 
     def watched(batch, src, devices):
         sizes.append(len(batch))
@@ -167,7 +167,7 @@ def test_batches_are_bounded_so_memory_does_not_track_the_window(
 
     monkeypatch.setattr(engine, "_ingest_batch", watched)
     monkeypatch.setattr(engine_mod, "build_source_provider", lambda t, s: FakeProvider(rows))
-    engine._fetch_and_ingest(source)  # noqa: SLF001
+    engine._fetch_and_ingest(source)
 
     assert sizes, "nothing was ingested"
     assert max(sizes) <= INGEST_BATCH, f"a batch of {max(sizes)} exceeds the ceiling"
@@ -189,7 +189,7 @@ def test_duplicates_inside_one_batch_do_not_violate_the_unique_index(
 
     source = db.scalars(select(engine_mod.DeviceSource)).first()
     monkeypatch.setattr(engine_mod, "build_source_provider", lambda t, s: FakeProvider(rows))
-    primed(db, tenant)._fetch_and_ingest(source)  # noqa: SLF001
+    primed(db, tenant)._fetch_and_ingest(source)
     db.commit()
 
     stored = db.scalars(select(PunchRecord.external_id)).all()

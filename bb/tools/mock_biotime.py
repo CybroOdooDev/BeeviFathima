@@ -32,7 +32,6 @@ import argparse
 import json
 import os
 import random
-import socket
 import sys
 import threading
 import time
@@ -252,7 +251,7 @@ class Handler(BaseHTTPRequestHandler):
     def handle_one_request(self):
         try:
             super().handle_one_request()
-        except (TimeoutError, socket.timeout):
+        except TimeoutError:
             self.close_connection = True
 
     def log_message(self, *args):
@@ -442,7 +441,12 @@ def main():
              "BioBridge connection's Server Timezone (default: Asia/Dubai)",
     )
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from tools.mock_roster import add_odoo_arguments, describe, list_companies, load_roster
+    from tools.mock_roster import (
+        add_odoo_arguments,
+        describe,
+        list_companies,
+        load_roster,
+    )
 
     add_odoo_arguments(parser)
     args = parser.parse_args()

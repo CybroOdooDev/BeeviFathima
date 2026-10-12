@@ -143,8 +143,9 @@ def test_creates_users_but_not_twice(device):
 
 
 def test_sync_saves_the_cursor_and_writes_attendance(api, device, monkeypatch):
-    from sqlalchemy import select
     from zoneinfo import ZoneInfo
+
+    from sqlalchemy import select
 
     from app.core.crypto import encrypt
     from app.models import DeviceSource, OdooConnection, Tenant

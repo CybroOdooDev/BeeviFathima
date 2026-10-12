@@ -113,6 +113,7 @@ from app.integrations.base import (
     register,
 )
 
+
 log = logging.getLogger(__name__)
 
 DEFAULT_PORT = 4370
@@ -480,7 +481,7 @@ class _Connection:
         self._reply_id = _REPLY_ID_CYCLE - 1
         self.sock: socket.socket | None = None
 
-    def __enter__(self) -> "_Connection":
+    def __enter__(self) -> _Connection:
         self._open()
         return self
 

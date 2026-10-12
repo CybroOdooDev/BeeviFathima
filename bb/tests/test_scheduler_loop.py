@@ -129,7 +129,7 @@ async def test_concurrency_is_bounded(monkeypatch):
         async with lock:
             live -= 1
 
-    select = lambda: (True, [f"t{i}" for i in range(8)])  # noqa: E731
+    select = lambda: (True, [f"t{i}" for i in range(8)])
     monkeypatch.setattr(scheduler, "_claim_and_select", select)
 
     real_to_thread = asyncio.to_thread

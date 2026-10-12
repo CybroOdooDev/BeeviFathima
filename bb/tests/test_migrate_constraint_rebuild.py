@@ -27,10 +27,10 @@ from sqlalchemy import UniqueConstraint, create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.schema import CreateTable
 
+import app.models  # noqa: F401 — registers every table on Base.metadata
 from app.db.base import Base
 from app.db.schema_check import detect_drift
 from app.models import DeviceSource, Tenant
-import app.models  # noqa: F401 — registers every table on Base.metadata
 
 
 def _old_shape_device_ddl(engine, drop_columns: tuple[str, ...] = ()) -> str:

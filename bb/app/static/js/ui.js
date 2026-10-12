@@ -526,3 +526,15 @@ export function wireTips() {
   document.addEventListener('focusout', hide);
   window.addEventListener('scroll', hide, true);
 }
+
+
+/* A two-way view switch drawn as icons: a list icon for "list" and a tiles icon
+ * for anything else (cards, board). The label is the tooltip and the
+ * accessible name. Buttons carry data-view; each page wires its own clicks. */
+const ICON_ATTRS = 'viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
+const LIST_ICON = `<svg ${ICON_ATTRS}><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/></svg>`;
+const TILES_ICON = `<svg ${ICON_ATTRS}><rect x="3" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5"/></svg>`;
+export function viewSwitchHtml(items, current) {
+  return `<div class="view-switch" role="group" aria-label="View">${items.map(([key, label]) =>
+    `<button type="button" data-view="${esc(key)}" aria-pressed="${key === current}" aria-label="${esc(label)} view" title="${esc(label)}">${key === 'list' ? LIST_ICON : TILES_ICON}</button>`).join('')}</div>`;
+}

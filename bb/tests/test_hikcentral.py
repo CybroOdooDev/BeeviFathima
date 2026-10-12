@@ -8,15 +8,21 @@ import base64
 import hashlib
 import hmac
 import json
-from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
 
 from app.integrations.base import ProviderError, SourceConfig
 from app.integrations.providers import hikcentral as hcp
-from app.integrations.providers.hikcentral import HikCentralProvider, sign, string_to_sign
+from app.integrations.providers.hikcentral import (
+    HikCentralProvider,
+    sign,
+    string_to_sign,
+)
 from tests.test_platform_admin import api, head, signup  # noqa: F401
+from datetime import timezone, datetime, timedelta
+
+UTC = timezone.utc
 
 AK, SK, TZ = "24681357", "Kx9mQ2vT7pL4wZ1r", "Asia/Riyadh"
 URL = "https://hcp.acme.example"
@@ -91,7 +97,7 @@ def test_signature_matches_the_published_recipe():
 
 
 def test_connects_and_counts(server):
-    server.add("11", datetime.now(timezone.utc) - timedelta(hours=2))
+    server.add("11", datetime.now(UTC) - timedelta(hours=2))
     info = provider().test_connection()
     assert info.ok and "3 persons" in info.message and "1 door event" in info.message
     with pytest.raises(ProviderError, match="partner key or secret"):
@@ -102,7 +108,7 @@ def test_connects_and_counts(server):
 
 def test_events_map_to_employee_ids(server, monkeypatch):
     monkeypatch.setattr(hcp, "PAGE_SIZE", 2)
-    base = datetime(2026, 9, 29, 5, 0, tzinfo=timezone.utc)       # 08:00 in Riyadh
+    base = datetime(2026, 9, 29, 5, 0, tzinfo=UTC)       # 08:00 in Riyadh
     server.add("11", base, in_out=1)
     server.add("12", base + timedelta(minutes=5), in_out=1)
     server.add("0", base + timedelta(minutes=6))                  # a door event, no person
@@ -128,7 +134,7 @@ def test_people_are_not_read_when_there_are_no_events(server):
 def test_a_server_that_requires_an_event_type(monkeypatch):
     fake = FakeHCP(require_event_type=True)
     monkeypatch.setattr(hcp, "TRANSPORT", httpx.MockTransport(fake))
-    base = datetime(2026, 9, 29, 5, 0, tzinfo=timezone.utc)
+    base = datetime(2026, 9, 29, 5, 0, tzinfo=UTC)
     fake.add("11", base, event_type=198914)                       # card
     fake.add("12", base + timedelta(minutes=1), event_type=196893)  # face
     fake.add("12", base + timedelta(minutes=2), event_type=199999)  # something else
@@ -158,7 +164,7 @@ def test_sync_writes_attendance(api, server, monkeypatch):
     odoo = FakeOdoo(employees={"EMP001": (11, "Layla Hassan")})
     monkeypatch.setattr(engine_mod, "build_odoo_client", lambda t, c: odoo)
 
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     server.add("11", now - timedelta(hours=3), in_out=1)
     server.add("11", now - timedelta(hours=1), in_out=0)
     run = api.post(f"/api/v1/sources/{source['id']}/sync", headers=head(token)).json()

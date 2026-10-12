@@ -10,7 +10,7 @@
 import { api, auth } from '../api.js';
 import {
   $, $$, banner, busy, empty, esc, field, fmtAgo, fmtIn, guard, loading, pill,
-  readForm, timezoneNames, toast,
+  readForm, timezoneNames, toast, viewSwitchHtml, INFO_ICON,
 } from '../ui.js';
 
 const STATUSES = [
@@ -23,13 +23,13 @@ const STATUSES = [
 
 const PAIRING = [
   { value: 'alternating', label: 'Alternating — In, Out, In, Out' },
-  { value: 'state_based', label: 'State based — trust the device keys' },
+  { value: 'state_based', label: 'State Based — Trust The Device Keys' },
   { value: 'first_last', label: 'First / Last Of The Day' },
 ];
 
 const ORPHAN = [
   { value: 'flag', label: 'Flag — Zero-Length Record For Review' },
-  { value: 'create', label: 'Create — open a shift at that time' },
+  { value: 'create', label: 'Create — Open A Shift At That Time' },
   { value: 'ignore', label: 'Ignore — Drop It' },
 ];
 
@@ -37,8 +37,28 @@ const TRASH_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" 
   + 'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
   + '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>';
 
+const tipField = (options) => field({ tip: true, ...options });
+const infoTip = (text) =>
+  `<span class="field-tip" tabindex="0" role="note" aria-label="${esc(text)}" data-tip="${esc(text)}">${INFO_ICON}</span>`;
+
+const PLUS_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+const SEARCH_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>';
+
 /** Accounts staff may delete — the server enforces the same list. */
 const DELETABLE = ['suspended', 'cancelled', 'past_due'];
+
+/* The accounts list as a table or as cards. Remembered per
+ * browser — a convenience only, so a blocked store just means "list". */
+const VIEWS = [['list', 'List'], ['cards', 'Cards']];
+function getView() {
+  try {
+    const v = localStorage.getItem('bb.accountsView');
+    return VIEWS.some(([k]) => k === v) ? v : 'list';
+  } catch { return 'list'; }
+}
+function setView(view) {
+  try { localStorage.setItem('bb.accountsView', view); } catch { /* not remembered */ }
+}
 
 /** Options for a plan <select>, including the "no plan" choice.
  *
@@ -129,6 +149,7 @@ export async function render(mount, route) {
   // If the scheduler is down then *every* customer has stopped, whatever their
   // interval says, and editing one number will not start anything.
   const schedulerDown = health && !health.running;
+  const view = getView();
 
   mount.innerHTML = `
     ${schedulerDown ? banner(
@@ -157,17 +178,23 @@ export async function render(mount, route) {
     <div class="card">
       <div class="card-head" style="position:static">
         <h2>Accounts <span class="hint">${esc(tenants.length)} total</span></h2>
-        <div class="actions"><button class="primary sm" id="addAccount">Add Account</button></div>
       </div>
-      <form id="search" class="row" style="gap:10px;margin-bottom:12px">
-        <input type="text" name="q" id="q" value="${esc(query)}"
-               placeholder="Filter by name or slug" style="max-width:280px">
-        <button class="primary" id="doSearch">Search</button>
-        ${query ? '<a class="btn" href="#/platform">Clear</a>' : ''}
-      </form>
+      <div class="list-toolbar">
+        <button class="primary sm" id="addAccount">${PLUS_ICON} Add Account</button>
+        <div class="toolbar-right">
+          <form id="search" class="search-form">
+            <input type="search" name="q" id="q" value="${esc(query)}"
+                   placeholder="Filter by name or slug" aria-label="Filter by name or slug">
+            <button class="primary search-go" id="doSearch" type="submit" aria-label="Search" title="Search">${SEARCH_ICON}</button>
+            ${query ? '<a class="btn" href="#/platform">Clear</a>' : ''}
+          </form>
+          ${viewSwitchHtml(VIEWS, view)}
+        </div>
+      </div>
 
       ${tenants.length ? `
-        <div class="scroll">
+        ${view === 'cards' ? `<div class="acct-grid">${tenants.map((t) => cardFor(t)).join('')}</div>`
+          : `<div class="scroll">
           <table class="accounts-table">
             <thead><tr>
               <th>Account</th><th>Status</th><th class="num">Every</th>
@@ -177,7 +204,7 @@ export async function render(mount, route) {
               ${tenants.map((t) => rowFor(t)).join('')}
             </tbody>
           </table>
-        </div>
+        </div>`}
         <div class="hint" style="margin-top:12px">
           A new interval counts from that account's <strong>last</strong> sync, not
           from now — so shortening it can make a customer due immediately. A plan's
@@ -216,13 +243,51 @@ function gateControl(t) {
   return '<button class="sm danger-outline gate-stop">Deactivate</button>';
 }
 
-/** The second step: a reason box and the button that means it. */
-function gateConfirm() {
-  return `
-    <input class="gate-reason" maxlength="200" placeholder="Reason (optional)"
-           aria-label="Why this account is being stopped">
-    <button class="sm danger gate-commit">Stop Syncing</button>
-    <button class="link sm gate-cancel" type="button">Cancel</button>`;
+/* Deactivate asks in a wizard (a reason, and the effect spelled out) rather
+ * than inline in the row. */
+function openDeactivateDialog(t, onDone) {
+  document.querySelector('dialog.deactivate-dialog')?.remove();
+  const dialog = document.createElement('dialog');
+  dialog.className = 'wizard deactivate-dialog';
+  dialog.style.width = 'min(520px, calc(100vw - 24px))';
+  document.body.append(dialog);
+  const close = () => { dialog.close(); dialog.remove(); };
+  dialog.innerHTML = `
+    <div class="wiz-head"><strong>Deactivate ${esc(t.name)}</strong>
+      <button type="button" class="link wiz-x" data-close aria-label="Close">&times;</button></div>
+    <form id="deactForm" style="display:contents">
+      <div class="wiz-body">
+        ${banner('Syncing Stops At Once',
+          'This account stops syncing, whatever its own settings say. Its data, connections and settings are kept, '
+          + 'and Activate restores it. The customer sees that the account is stopped.', 'warn')}
+        <div class="field"><label for="deactReason">Reason <span class="opt">optional</span></label>
+          <textarea id="deactReason" name="reason" rows="2" maxlength="200"
+                    placeholder="e.g. subscription ended, payment failed"></textarea></div>
+        <p class="err" id="deactErr"></p>
+      </div>
+      <div class="wiz-foot">
+        <button type="button" data-close>Cancel</button>
+        <button type="submit" class="danger" id="deactGo">Deactivate</button>
+      </div>
+    </form>`;
+  dialog.querySelectorAll('[data-close]').forEach((x) => x.addEventListener('click', close));
+  $('#deactForm', dialog).addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const go = $('#deactGo', dialog);
+    go.disabled = true;
+    try {
+      const reason = $('#deactReason', dialog).value.trim();
+      const result = await api.post(`/admin/tenants/${t.id}/deactivate`, { reason: reason || null });
+      close();
+      onDone(`${result.name}: deactivated`);
+    } catch (exc) {
+      $('#deactErr', dialog).textContent = exc.message || 'Not deactivated.';
+      go.disabled = false;
+    }
+  });
+  dialog.addEventListener('close', () => dialog.remove());
+  dialog.showModal();
+  $('#deactReason', dialog).focus();
 }
 
 /* The back-off, as a small tag beside the interval instead of a red sentence
@@ -256,10 +321,7 @@ function rowFor(t) {
       </td>
       <td>${pill(t.status)}</td>
       <td class="num" style="white-space:nowrap">
-        <input type="number" min="1" max="1440" class="mins"
-               value="${esc(t.sync_interval_minutes)}"
-               style="width:74px;text-align:right" aria-label="Minutes between syncs">
-        <span class="hint">min</span>
+        ${esc(t.sync_interval_minutes)} <span class="hint">min</span>
         ${t.interval_widened ? backoffTag(t) : ''}
       </td>
       <td class="sync-cell">
@@ -270,15 +332,9 @@ function rowFor(t) {
               : 'never synced'}</div>
       </td>
       <td>${t.last_run_at ? pill(t.last_run_status) : '<span class="hint">—</span>'}</td>
-      <td>
-        <select class="enabled" aria-label="Automatic sync">
-          <option value="true"${t.sync_enabled ? ' selected' : ''}>On</option>
-          <option value="false"${t.sync_enabled ? '' : ' selected'}>Off</option>
-        </select>
-      </td>
+      <td><label class="switch" title="Automatic sync"><input type="checkbox" class="enabled" role="switch" aria-label="Automatic sync"${t.sync_enabled ? ' checked' : ''}><span class="switch-track" aria-hidden="true"></span></label></td>
       <td class="actions-cell">
         <div class="row-actions">
-          <button class="sm save">Save</button>
           <button type="button" class="sm configure-btn">Configure</button>
           <span class="gate">${gateControl(t)}</span>
           ${DELETABLE.includes(t.status)
@@ -286,6 +342,35 @@ function rowFor(t) {
         </div>
       </td>
     </tr>`;
+}
+
+/** One account as a card — the same controls and class names as a table row,
+ * so the row wiring in wire() drives both. */
+function cardFor(t) {
+  return `
+    <article class="acct-card${t.syncable === false ? ' is-stopped' : ''}" data-tenant="${esc(t.id)}">
+      <header>
+        <strong>${esc(t.name)}</strong>
+        ${pill(t.status)}
+      </header>
+      <dl class="acct-meta">
+        <div><dt>Plan</dt><dd>${t.plan_name ? esc(t.plan_name) : 'No Plan'}</dd></div>
+        <div><dt>Latest Sync</dt><dd>${t.last_run_at
+          ? `${esc(fmtAgo(t.last_run_at))} ${pill(t.last_run_status)}` : 'Never synced'}</dd></div>
+        <div><dt>Next Sync</dt><dd>${notConnected(t) || (t.next_run_at ? esc(fmtIn(t.next_run_at)) : 'Not scheduled')}</dd></div>
+      </dl>
+      <div class="acct-sync">
+        <span class="hint">Every</span> ${esc(t.sync_interval_minutes)} <span class="hint">min</span>
+        ${t.interval_widened ? backoffTag(t) : ''}
+        <span class="acct-auto"><span class="hint">Automatic</span> <label class="switch" title="Automatic sync"><input type="checkbox" class="enabled" role="switch" aria-label="Automatic sync"${t.sync_enabled ? ' checked' : ''}><span class="switch-track" aria-hidden="true"></span></label></span>
+      </div>
+      <div class="row-actions acct-actions">
+        <button type="button" class="sm configure-btn">Configure</button>
+        <span class="gate">${gateControl(t)}</span>
+        ${DELETABLE.includes(t.status)
+          ? `<button type="button" class="icon-btn delete-tenant" title="Delete account" aria-label="Delete account ${esc(t.name)}">${TRASH_ICON}</button>` : ''}
+      </div>
+    </article>`;
 }
 
 /* The account's facts, at the top of Configure — what used to be stacked
@@ -409,65 +494,86 @@ function openConfigDialog(tenant, { plans, onChange }) {
           <div class="grid cols-2">
             <div>
               <h3 style="margin:0 0 10px;font-size:13px">Account</h3>
-              ${field({ name: 'name', label: 'Company', value: t.name, required: true })}
-              ${field({ name: 'status', label: 'Status', value: t.status, required: true,
+              ${tipField({ name: 'name', label: 'Company', value: t.name, required: true })}
+              ${tipField({ name: 'status', label: 'Status', value: t.status, required: true,
                         options: STATUSES,
                         help: 'Suspended and cancelled stop this account syncing, '
                             + 'whatever its own settings say.' })}
-              ${field({ name: 'timezone', label: 'Display timezone', value: t.timezone,
+              ${tipField({ name: 'timezone', label: 'Display Timezone', value: t.timezone,
                         required: true, datalist: timezoneNames() })}
+              ${tipField({ name: 'sync_interval_minutes', label: 'Sync Every (Minutes)', type: 'number',
+                        value: t.sync_interval_minutes, required: true,
+                        help: 'Counts from the account’s last sync, not from now. Staff may set it faster than the plan allows.' })}
+              <div class="field">
+                <label for="sync_enabled">Automatic Sync ${infoTip('When on, this account syncs on its interval (live scheduler). When off, it only syncs when someone clicks Sync Now (manual).')}</label>
+                <label class="switch-row">
+                  <span class="switch"><input type="checkbox" name="sync_enabled" id="sync_enabled" role="switch"${t.sync_enabled ? ' checked' : ''}><span class="switch-track" aria-hidden="true"></span></span>
+                  <span class="switch-text" id="cfgSyncState">${t.sync_enabled ? 'On — live scheduler' : 'Off — manual only'}</span>
+                </label>
+              </div>
             </div>
             <div>
               <h3 style="margin:0 0 10px;font-size:13px">Pairing</h3>
-              ${field({ name: 'pairing_mode', label: 'Mode', value: t.pairing_mode,
+              ${tipField({ name: 'pairing_mode', label: 'Mode', value: t.pairing_mode,
                         required: true, options: PAIRING, strongHelp: true,
                         help: 'Changes how punches become shifts from the next run. '
                             + 'Existing records are left alone.' })}
-              ${field({ name: 'min_punch_interval_seconds',
+              ${tipField({ name: 'min_punch_interval_seconds',
                         label: 'Ignore Repeats Within (Seconds)', type: 'number',
                         value: t.min_punch_interval_seconds, required: true })}
-              ${field({ name: 'max_shift_hours', label: 'Maximum shift (hours)',
+              ${tipField({ name: 'max_shift_hours', label: 'Maximum Shift (Hours)',
                         type: 'number', value: t.max_shift_hours, required: true })}
               <div id="dayBoundary" ${t.pairing_mode === 'first_last' ? '' : 'hidden'}>
-              ${field({ name: 'day_boundary_hour', label: 'Shift day starts at (hour)',
+              ${tipField({ name: 'day_boundary_hour', label: 'Shift Day Starts At (Hour)',
                         type: 'number', value: t.day_boundary_hour, required: true,
                         help: 'Only used by first/last mode.' })}
               </div>
-              ${field({ name: 'orphan_out_policy', label: 'Check-out with no check-in',
+              ${tipField({ name: 'orphan_out_policy', label: 'Check-Out With No Check-In',
                         value: t.orphan_out_policy, required: true, options: ORPHAN })}
             </div>
           </div>
           <h3 style="margin:6px 0 10px;font-size:13px">Subscription</h3>
           <div class="usage-slot">${usageHtml(usage)}</div>
           <div class="grid cols-2">
-            ${field({ name: 'plan_id', label: 'Plan', value: t.plan_id || '',
+            ${tipField({ name: 'plan_id', label: 'Plan', value: t.plan_id || '',
                       options: planOptions(plans),
                       help: 'Sets this account’s employee, device and sync-speed limits. Assigning a '
                           + 'plan raises a faster sync interval to the plan’s floor. Lowering a plan '
                           + 'never unmaps anyone already matched — only new badges wait.' })}
-            ${field({ name: 'subscription_renews_at', label: 'Renews / paid through',
+            ${tipField({ name: 'subscription_renews_at', label: 'Renews / Paid Through',
                       type: 'date', value: toDateInput(t.subscription_renews_at),
                       help: 'Past this date, an active account moves itself to past '
                           + 'due and stops syncing — no grace period. Leave empty to '
                           + 'exempt this account from that automatic check entirely.' })}
           </div>
           <h3 style="margin:6px 0 4px;font-size:13px">Limits For This Account
-            <span class="hint">empty = use the plan · 0 = no limit</span></h3>
+            ${infoTip('Empty = use the plan. 0 = no limit.')}</h3>
           <div class="grid cols-3 limit-fields">
-            ${field({ tip: true, name: 'limit_max_employees', label: 'Employees', type: 'number',
+            ${tipField({ name: 'limit_max_employees', label: 'Employees', type: 'number',
                       value: t.limit_max_employees ?? '', placeholder: planLimitText(planById(t.plan_id), 'max_employees', ''),
                       help: 'An exception to the plan for this customer only, e.g. a custom deal. '
                           + 'Stays in place if the plan changes — clear it to go back to the plan.' })}
-            ${field({ tip: true, name: 'limit_max_devices', label: 'Devices', type: 'number',
+            ${tipField({ name: 'limit_max_devices', label: 'Devices', type: 'number',
                       value: t.limit_max_devices ?? '', placeholder: planLimitText(planById(t.plan_id), 'max_devices', ''),
                       help: 'Raising it releases held punches from the newly covered terminals on the next sync.' })}
-            ${field({ tip: true, name: 'limit_min_sync_interval_minutes', label: 'Fastest sync (min)', type: 'number',
+            ${tipField({ name: 'limit_min_sync_interval_minutes', label: 'Fastest Sync (Min)', type: 'number',
                       value: t.limit_min_sync_interval_minutes ?? '',
                       placeholder: planLimitText(planById(t.plan_id), 'min_sync_interval_minutes', ' min'),
                       help: 'The fastest interval the customer can pick themselves.' })}
           </div>
         </form>
         <div class="diag">${diag ? diagnosticsHtml(diag) : ''}</div>
+        <div class="danger-zone">
+          <h3 style="margin:0 0 8px;font-size:13px">Account Status</h3>
+          <div class="row">
+            ${t.syncable === false
+              ? '<button type="button" class="cfg-activate">Activate</button>'
+              : '<button type="button" class="danger-outline cfg-deactivate">Deactivate</button>'}
+            ${DELETABLE.includes(t.status)
+              ? `<button type="button" class="danger-outline cfg-delete">${TRASH_ICON} Delete Account</button>`
+              : '<span class="hint">Deactivate this account to be able to delete it.</span>'}
+          </div>
+        </div>
       </div>
       <div class="wiz-foot">
         <button type="button" class="link" data-cfg="close">Close</button>
@@ -489,6 +595,10 @@ function openConfigDialog(tenant, { plans, onChange }) {
     const planSelect = $('#plan_id', dialog);
     const modeSel = dialog.querySelector('[name=pairing_mode]');
     const dayBox = dialog.querySelector('#dayBoundary');
+    const syncBox = $('#sync_enabled', dialog);
+    syncBox?.addEventListener('change', () => {
+      $('#cfgSyncState', dialog).textContent = syncBox.checked ? 'On — live scheduler' : 'Off — manual only';
+    });
     modeSel?.addEventListener('change', () => { dayBox.hidden = modeSel.value !== 'first_last'; });
     planSelect?.addEventListener('change', () => {
       const plan = planById(planSelect.value);
@@ -505,14 +615,24 @@ function openConfigDialog(tenant, { plans, onChange }) {
       // renewal date to watch", not an empty string.
       if (values.plan_id === '') values.plan_id = null;
       if (values.subscription_renews_at === '') values.subscription_renews_at = null;
+      const { sync_interval_minutes: every, sync_enabled: auto, ...config } = values;
+      const schedule = {};
+      // Only what changed, so a plan change that raised the interval (done by
+      // the config save) is not undone by a stale value from this form.
+      if (every != null && every !== t.sync_interval_minutes) schedule.sync_interval_minutes = every;
+      if (auto !== t.sync_enabled) schedule.sync_enabled = auto;
       busy($('.save-config', dialog), async () => {
-        const result = await guard(() => api.patch(`/admin/tenants/${t.id}/config`, values));
+        let result = await guard(() => api.patch(`/admin/tenants/${t.id}/config`, config));
         if (!result) return;
+        if (Object.keys(schedule).length) {
+          result = await guard(() => api.patch(`/admin/tenants/${t.id}/schedule`, schedule));
+          if (!result) return;
+        }
         const raised = result.sync_interval_minutes !== t.sync_interval_minutes;
         t = result;
         paint();
         loadUsage();
-        toast(`${result.name} updated${raised ? ` — now syncs every ${result.sync_interval_minutes} min to fit its plan` : ''}`, 'ok');
+        toast(`${result.name} updated${raised ? ` — now syncs every ${result.sync_interval_minutes} min` : ''}`, 'ok');
         onChange();
       });
     });
@@ -535,6 +655,23 @@ function openConfigDialog(tenant, { plans, onChange }) {
         if (d) { diag = d; paint(); }
       })
     );
+
+    const reload = async (message) => {
+      t = await api.get(`/admin/tenants/${t.id}`).catch(() => t);
+      paint();
+      loadUsage();
+      if (message) toast(message, 'ok');
+      onChange();
+    };
+    $('.cfg-deactivate', dialog)?.addEventListener('click', () => openDeactivateDialog(t, reload));
+    $('.cfg-activate', dialog)?.addEventListener('click', () =>
+      busy($('.cfg-activate', dialog), async () => {
+        const result = await guard(() => api.post(`/admin/tenants/${t.id}/activate`));
+        if (result) await reload(`${result.name}: syncing restored`);
+      })
+    );
+    $('.cfg-delete', dialog)?.addEventListener('click', () =>
+      openDeleteTenantDialog(t, (message) => { close(); toast(message, 'ok'); onChange(); }));
 
     const clearBtn = $('.clear-failures', dialog);
     if (clearBtn) {
@@ -595,18 +732,18 @@ function openNewAccountDialog(plans, onCreated) {
     <div class="wiz-body">
       <form id="newTenant">
         <div class="grid cols-2">
-          ${field({ name: 'company_name', label: 'Company', required: true,
+          ${tipField({ name: 'company_name', label: 'Company', required: true,
                     placeholder: 'Muscat Traders' })}
-          ${field({ name: 'owner_email', label: 'Owner email', type: 'email',
+          ${tipField({ name: 'owner_email', label: 'Owner Email', type: 'email',
                     required: true, placeholder: 'boss@muscat.com' })}
-          ${field({ name: 'plan_id', label: 'Plan', value: defaultPlanId,
+          ${tipField({ name: 'plan_id', label: 'Plan', value: defaultPlanId,
                     options: planOptions(plans), tip: true,
                     help: 'Sets the account’s employee, device and sync-speed limits — a faster '
                         + 'interval than the plan allows is raised to it. The renewal date starts '
                         + 'as a standard trial from today.' })}
-          ${field({ name: 'sync_interval_minutes', label: 'Sync every (minutes)',
+          ${tipField({ name: 'sync_interval_minutes', label: 'Sync Every (Minutes)',
                     type: 'number', required: true, value: 15 })}
-          ${field({ name: 'timezone', label: 'Timezone', required: true,
+          ${tipField({ name: 'timezone', label: 'Timezone', required: true,
                     value: 'Asia/Dubai', datalist: timezoneNames(), tip: true,
                     help: 'Used to render their attendance. Not the device zone.' })}
         </div>
@@ -671,12 +808,17 @@ function wire(mount, route, tenants, plans, linkFor) {
     window.location.hash = linkFor({ q: value });
   });
 
+  $$('[data-view]', mount).forEach((b) => b.addEventListener('click', () => {
+    setView(b.dataset.view);
+    render(mount, route);
+  }));
+
   // --- create -------------------------------------------------------------
   $('#addAccount', mount).addEventListener('click', () =>
     openNewAccountDialog(plans, () => render(mount, route)));
 
   // --- per row ------------------------------------------------------------
-  $$('tr[data-tenant]', mount).forEach((row) => {
+  $$('[data-tenant]', mount).forEach((row) => {
     const id = row.dataset.tenant;
 
     const refresh = async (message) => {
@@ -684,19 +826,21 @@ function wire(mount, route, tenants, plans, linkFor) {
       if (message) toast(message, 'ok');
     };
 
-    $('.save', row).addEventListener('click', () =>
-      busy($('.save', row), async () => {
-        const result = await guard(() => api.patch(`/admin/tenants/${id}/schedule`, {
-          sync_interval_minutes: Number($('.mins', row).value),
-          sync_enabled: $('.enabled', row).value === 'true',
-        }));
-        if (result) {
-          await refresh(`${result.name}: every ${result.effective_interval_minutes} min`
-            + (result.next_run_at ? `, next sync ${fmtIn(result.next_run_at)}`
-                                  : ', automatic sync off'));
-        }
-      })
-    );
+    // The automatic-sync switch saves as soon as it is flipped. The interval
+    // is edited only in Configure.
+    const toggle = $('.enabled', row);
+    toggle.addEventListener('change', async () => {
+      toggle.disabled = true;
+      const result = await guard(() => api.patch(`/admin/tenants/${id}/schedule`, {
+        sync_enabled: toggle.checked,
+      }));
+      if (result) {
+        await refresh(`${result.name}: automatic sync ${result.sync_enabled ? 'on' : 'off'}`);
+      } else {
+        toggle.checked = !toggle.checked;
+        toggle.disabled = false;
+      }
+    });
 
     $('.delete-tenant', row)?.addEventListener('click', () => {
       const tenant = tenants.find((x) => x.id === id);
@@ -715,37 +859,9 @@ function wire(mount, route, tenants, plans, linkFor) {
       const stop = $('.gate-stop', gate);
       if (stop) {
         stop.addEventListener('click', () => {
-          // The confirm step takes the place of Save / Configure rather than
-          // sitting beside them, so the row keeps its width and stays on one line.
-          gate.closest('.row-actions')?.classList.add('confirming');
-          gate.innerHTML = gateConfirm();
-          $('.gate-reason', gate).focus();
-          wireGate();
+          const tenant = tenants.find((x) => x.id === id);
+          if (tenant) openDeactivateDialog(tenant, (message) => refresh(message));
         });
-      }
-
-      const cancel = $('.gate-cancel', gate);
-      if (cancel) {
-        cancel.addEventListener('click', () => {
-          // Back to the button, from the row's own data rather than a refetch:
-          // cancelling changed nothing, so a round trip would be for show.
-          gate.closest('.row-actions')?.classList.remove('confirming');
-          gate.innerHTML = gateControl(tenants.find((x) => x.id === id) || {});
-          wireGate();
-        });
-      }
-
-      const commit = $('.gate-commit', gate);
-      if (commit) {
-        commit.addEventListener('click', () =>
-          busy(commit, async () => {
-            const reason = $('.gate-reason', gate).value.trim();
-            const result = await guard(() => api.post(
-              `/admin/tenants/${id}/deactivate`, { reason: reason || null }
-            ));
-            if (result) await refresh(`${result.name}: syncing stopped`);
-          })
-        );
       }
 
       const start = $('.gate-start', gate);

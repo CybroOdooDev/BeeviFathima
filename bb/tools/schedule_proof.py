@@ -28,12 +28,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import time
-from datetime import datetime, timedelta, timezone
 
 import requests
+from datetime import timezone, datetime, timedelta
+
+UTC = timezone.utc
 
 RESULTS: list[tuple[str, bool, str]] = []
 
@@ -117,7 +118,7 @@ def seed_punches(
     fails the proof for a reason that has nothing to do with scheduling. Point it
     at hours where badge 1001 has no attendance.
     """
-    local_day = (datetime.now(timezone.utc) + timedelta(hours=tz_offset_hours)).date()
+    local_day = (datetime.now(UTC) + timedelta(hours=tz_offset_hours)).date()
     local_day -= timedelta(days=day_offset)
     check_in = datetime.combine(local_day, datetime.min.time()).replace(hour=hour)
     check_out = check_in + timedelta(hours=length_hours)
@@ -326,7 +327,7 @@ def _proof(client: Client, args) -> int:
     ledger = client.get("/punches?limit=200")
     # The API serialises datetimes as ISO ("2026-09-13T19:00:00"); the punch file
     # uses BioTime's space-separated form. Normalise, or nothing ever matches.
-    minute = lambda value: str(value or "").replace("T", " ")[:16]  # noqa: E731
+    minute = lambda value: str(value or "").replace("T", " ")[:16]
     seen = {minute(p.get("punch_time_local")) for p in ledger}
     expected = {minute(p["punch_time"]) for p in seeded}
     check(

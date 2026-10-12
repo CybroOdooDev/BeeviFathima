@@ -13,8 +13,10 @@ to read, one place to test, and no second implementation to drift.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import  date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+UTC = timezone.utc
 
 
 def get_zone(name: str | None) -> ZoneInfo:
@@ -33,20 +35,20 @@ def get_zone(name: str | None) -> ZoneInfo:
 def local_to_utc(naive_local: datetime, tz_name: str) -> datetime:
     """Naive local wall-clock -> naive UTC, which is what Odoo stores."""
     zone = get_zone(tz_name)
-    return naive_local.replace(tzinfo=zone).astimezone(timezone.utc).replace(tzinfo=None)
+    return naive_local.replace(tzinfo=zone).astimezone(UTC).replace(tzinfo=None)
 
 
 def utc_to_local(naive_utc: datetime, tz_name: str) -> datetime:
     """Naive UTC -> naive local wall-clock, which is what device APIs filter on."""
     return (
-        naive_utc.replace(tzinfo=timezone.utc)
+        naive_utc.replace(tzinfo=UTC)
         .astimezone(get_zone(tz_name))
         .replace(tzinfo=None)
     )
 
 
 def utcnow_naive() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def ensure_aware(value: datetime | None) -> datetime | None:
@@ -59,13 +61,13 @@ def ensure_aware(value: datetime | None) -> datetime | None:
     """
     if value is None:
         return None
-    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value
 
 
 def is_past(value: datetime | None) -> bool:
     """True when a stored timestamp is in the past. Missing never expires."""
     aware = ensure_aware(value)
-    return aware is not None and aware < datetime.now(timezone.utc)
+    return aware is not None and aware < datetime.now(UTC)
 
 
 def shift_day(moment: datetime, boundary_hour: int) -> date:

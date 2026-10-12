@@ -18,7 +18,6 @@ itself, in its own words, at the moment it stops the account.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -28,6 +27,9 @@ from app.models import Tenant, TenantStatus, User, UserRole
 from app.services.alerts import BAD, tenant_alerts
 from app.services.mailer import send_email
 from app.services.timeutils import ensure_aware
+from datetime import timezone, datetime, timedelta
+
+UTC = timezone.utc
 
 log = logging.getLogger(__name__)
 
@@ -83,14 +85,14 @@ def _body(tenant: Tenant, fresh: list[dict], reminders: list[dict]) -> tuple[str
            else "BioBridge found a problem that is keeping attendance from reaching Odoo:\n\n")
         + "\n\n".join(lines)
         + "\n\nNothing is lost — punches are kept and sent as soon as it is fixed.\n\n"
-        f"Open BioBridge: {login_url()}  (the bell at the top shows the same list)\n\n"
+        f"Open BioBridge: {login_url()}\n\n"
         "You can switch these emails off under Settings → General.\n\n— BioBridge\n"
     )
     return subject, body
 
 
 def sweep_alert_emails(db: Session, *, now: datetime | None = None) -> dict[str, int]:
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     sent = tenants = 0
     for tenant in db.scalars(select(Tenant).where(Tenant.status.in_(WATCHED))).all():
         try:
@@ -115,7 +117,7 @@ def sweep_alert_emails(db: Session, *, now: datetime | None = None) -> dict[str,
             if state != (tenant.alert_state or {}):
                 tenant.alert_state = state
             db.commit()
-        except Exception:  # noqa: BLE001 — one tenant must not stop the sweep
+        except Exception:
             db.rollback()
             log.exception("Alert email sweep failed for %s", tenant.slug)
     return {"tenants_emailed": tenants, "emails_sent": sent}

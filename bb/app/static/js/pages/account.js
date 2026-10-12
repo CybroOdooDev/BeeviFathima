@@ -89,7 +89,7 @@ export async function renderVerifyEmail(route = {}) {
     <p class="sub">Confirming <b>${esc(info.email)}</b>. Choose a password — you'll sign in with this email address and that password.</p>
     <form id="pwForm">
       ${field({ name: 'new_password', label: 'Password', type: 'password', required: true, help: 'At least 10 characters.' })}
-      ${field({ name: 'confirm', label: 'Confirm password', type: 'password', required: true })}
+      ${field({ name: 'confirm', label: 'Confirm Password', type: 'password', required: true })}
       <button class="primary" style="width:100%" id="pwGo">Confirm And Set Password</button>
     </form>
     <p class="err" id="authError"></p>`;
@@ -132,9 +132,9 @@ export async function renderSignInCode(route = {}) {
 function passwordFields({ current = 'Current Password' } = {}) {
   return `
     ${current ? field({ name: 'current_password', label: current, type: 'password', required: true }) : ''}
-    ${field({ name: 'new_password', label: 'New password', type: 'password', required: true,
+    ${field({ name: 'new_password', label: 'New Password', type: 'password', required: true,
               help: 'At least 10 characters.' })}
-    ${field({ name: 'confirm', label: 'Confirm password', type: 'password', required: true })}`;
+    ${field({ name: 'confirm', label: 'Confirm Password', type: 'password', required: true })}`;
 }
 
 function check(values) {
@@ -185,8 +185,8 @@ export function renderSetPassword() {
 
 /** Settings → General → "Change user password": a two-step modal wizard.
  *
- *   1 Current password   who you are
- *   2 New password       typed twice; Save sends both steps together
+ *   1 Current Password   who you are
+ *   2 New Password       typed twice; Save sends both steps together
  *
  * There is no "check the current password" call on its own, so the server
  * checks it on Save — when it says the current one is wrong, the wizard
@@ -222,11 +222,11 @@ export function openPasswordWizard() {
         <div class="wiz-body">
           ${state.step === 1 ? `
             <p class="hint" style="margin:0 0 12px">Signed in as <b>${esc(auth.user?.email || '')}</b>. Enter your current password to continue.</p>
-            ${field({ name: 'current_password', label: 'Current password', type: 'password', required: true })}
+            ${field({ name: 'current_password', label: 'Current Password', type: 'password', required: true })}
           ` : `
-            ${field({ name: 'new_password', label: 'New password', type: 'password', required: true,
+            ${field({ name: 'new_password', label: 'New Password', type: 'password', required: true,
                       help: 'At least 10 characters.' })}
-            ${field({ name: 'confirm', label: 'Confirm password', type: 'password', required: true })}
+            ${field({ name: 'confirm', label: 'Confirm Password', type: 'password', required: true })}
             <p class="hint" style="margin:4px 0 0">Saving signs you out everywhere else.</p>
           `}
           <p class="err" id="pwWizError">${esc(state.error)}</p>
@@ -340,7 +340,7 @@ export async function openDeleteAccountWizard({ companyName, billedByStripe }) {
               It is cancelled immediately — nothing more is charged, and the rest of the current period is not refunded.</div>` : ''}
             <div class="field"><label for="confirm_name">Type <strong>${esc(companyName)}</strong> to confirm</label>
               <input id="confirm_name" name="confirm_name" autocomplete="off"></div>
-            <div class="field"><label for="del_password">Your password</label>
+            <div class="field"><label for="del_password">Your Password</label>
               <input id="del_password" name="password" type="password" autocomplete="current-password"></div>
           `}
           <p class="err" id="delAccErr">${esc(state.error)}</p>

@@ -14,7 +14,11 @@ import pytest
 
 from app.integrations.base import EmployeeRecord, ProviderError, SourceConfig
 from app.integrations.providers import hikvision as hik
-from app.integrations.providers.hikvision import HikvisionProvider, direction_of, parse_event_time
+from app.integrations.providers.hikvision import (
+    HikvisionProvider,
+    direction_of,
+    parse_event_time,
+)
 from tests.test_platform_admin import api, head, signup  # noqa: F401
 
 USER, PASSWORD, REALM, NONCE = "admin", "Hik12345", "DS-K1T343", "nonce-4f1d"

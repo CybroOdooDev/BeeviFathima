@@ -8,8 +8,6 @@ later every run, one that keeps hammering a customer's dead server.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -28,9 +26,13 @@ from app.services.scheduling import (
     scheduler_health,
 )
 
+from datetime import timezone, datetime, timedelta
+
+UTC = timezone.utc
+
 
 def _run(db, tenant, *, minutes_ago: int, status: str = "success") -> SyncRun:
-    started = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+    started = datetime.now(UTC) - timedelta(minutes=minutes_ago)
     row = SyncRun(
         tenant_id=tenant.id,
         triggered_by="schedule",
@@ -103,7 +105,7 @@ def test_due_is_measured_from_the_start_of_the_last_run(db, tenant):
     customer's "every 15 minutes" has become something else entirely.
     """
     tenant.sync_interval_minutes = 15
-    started = datetime.now(timezone.utc) - timedelta(minutes=16)
+    started = datetime.now(UTC) - timedelta(minutes=16)
     db.add(
         SyncRun(
             tenant_id=tenant.id,
@@ -111,7 +113,7 @@ def test_due_is_measured_from_the_start_of_the_last_run(db, tenant):
             status="success",
             started_at=started,
             # Finished only a minute ago: a ten-minute cycle.
-            finished_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+            finished_at=datetime.now(UTC) - timedelta(minutes=1),
         )
     )
     db.commit()

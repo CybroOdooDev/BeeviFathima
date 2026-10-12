@@ -92,6 +92,12 @@ class FakeOdoo:
         #: Employees that exist but sit in a switched-off company; found only
         #: by an unscoped lookup.
         self.out_of_scope_employees: dict[str, tuple[int, str]] = {}
+        #: Every company the Odoo user can see, as list_companies() answers;
+        #: empty by default so scope-None means "a single-company Odoo".
+        self.companies: list[dict] = []
+
+    def list_companies(self):
+        return self.companies
 
     def authenticate(self) -> int:
         return self.uid

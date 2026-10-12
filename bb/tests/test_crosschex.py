@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -13,6 +12,9 @@ from app.integrations.base import ProviderError, SourceConfig
 from app.integrations.providers import crosschex as cx
 from app.integrations.providers.crosschex import CrossChexProvider
 from tests.test_platform_admin import api, head, signup  # noqa: F401
+from datetime import timezone, datetime, timedelta
+
+UTC = timezone.utc
 
 KEY, SECRET, TZ = "ak_live_123", "sk_live_456", "Asia/Dubai"
 US = "https://api.us.crosschexcloud.com"
@@ -79,7 +81,7 @@ def test_connects_with_the_api_key(cloud):
 
 def test_pages_records_and_maps_them(cloud, monkeypatch):
     monkeypatch.setattr(cx, "PAGE_SIZE", 10)
-    base = datetime(2026, 9, 29, 4, 0, tzinfo=timezone.utc)      # 08:00 in Dubai
+    base = datetime(2026, 9, 29, 4, 0, tzinfo=UTC)      # 08:00 in Dubai
     cloud.records = [record("1", base + timedelta(minutes=i), checktype=i % 2) for i in range(25)]
     punches = list(provider().fetch_punches(datetime(2026, 9, 29, 0, 0), datetime(2026, 9, 30, 0, 0)))
     assert len(punches) == 25
@@ -94,13 +96,13 @@ def test_pages_records_and_maps_them(cloud, monkeypatch):
 
 
 def test_unknown_checktype_leaves_direction_to_pairing(cloud):
-    cloud.records = [record("7", datetime(2026, 9, 29, 5, 0, tzinfo=timezone.utc), checktype=128)]
+    cloud.records = [record("7", datetime(2026, 9, 29, 5, 0, tzinfo=UTC), checktype=128)]
     (p,) = provider().fetch_punches(datetime(2026, 9, 29, 0, 0), datetime(2026, 9, 30, 0, 0))
     assert p.direction is None
 
 
 def test_an_expired_token_is_renewed_once(cloud):
-    cloud.records = [record("1", datetime(2026, 9, 29, 5, 0, tzinfo=timezone.utc))]
+    cloud.records = [record("1", datetime(2026, 9, 29, 5, 0, tzinfo=UTC))]
     stale = provider(token="jwt-old")
     assert len(list(stale.fetch_punches(datetime(2026, 9, 29, 0, 0), datetime(2026, 9, 30, 0, 0)))) == 1
     assert stale.cached_token == "jwt1" and cloud.issued == 1
@@ -139,7 +141,7 @@ def test_sync_brings_terminals_in_with_the_punches(api, cloud, monkeypatch):
     odoo = FakeOdoo(employees={"1": (11, "John Doe")})
     monkeypatch.setattr(engine_mod, "build_odoo_client", lambda t, c: odoo)
 
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     cloud.records = [record("1", now - timedelta(hours=3), checktype=0),
                      record("1", now - timedelta(hours=1), checktype=1)]
     run = api.post(f"/api/v1/sources/{source['id']}/sync", headers=head(token)).json()

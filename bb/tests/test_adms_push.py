@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-import pytest
 from sqlalchemy import select
 
 from app.core.crypto import encrypt
@@ -187,8 +186,8 @@ def test_offline_terminal_still_sends_what_already_arrived(api, monkeypatch):
 
 def test_provisioning_queues_users_for_the_terminal(api):
     from app.integrations.base import EmployeeRecord
-    from app.services.connections import build_source_provider
     from app.models import DeviceSource
+    from app.services.connections import build_source_provider
 
     token = signup(api, "Acme", "owner@acme.example.com")
     t = Terminal(api)

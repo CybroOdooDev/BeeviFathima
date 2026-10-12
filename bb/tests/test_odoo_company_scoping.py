@@ -21,8 +21,6 @@ A fake XML-RPC ``models`` proxy, same seam as test_odoo_device_bootstrap.py
 
 from __future__ import annotations
 
-from datetime import datetime
-
 import pytest
 
 from app.integrations.odoo import OdooClient, OdooCredentials, OdooError

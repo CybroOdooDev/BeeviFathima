@@ -11,7 +11,7 @@
  */
 
 // ---- settings: change these two lines when you deploy -------------------
-const APP_URL = 'http://localhost:8001';          // where BioBridge runs — just the address, e.g. http://127.0.0.1:8000
+const APP_URL = 'http://localhost:8000';          // where BioBridge runs — just the address, e.g. http://127.0.0.1:8000
 const FORM_ENDPOINT = '';                            // e.g. a Formspree / Basin URL; blank = email fallback
 const SALES_EMAIL = 'sales@example.com';             // used by the email fallback
 // --------------------------------------------------------------------------
@@ -507,6 +507,18 @@ if (signupForm) {
       note.textContent = `${p.name} can't be bought online yet — start a free trial, or contact us.`;
     }
     go.disabled = Boolean(buying && p && !canBuy);
+    if (!p && summary) {
+      // The plan list could not be loaded (offline, or the API is unreachable):
+      // still show the card, from what the select itself says.
+      const opt = planSelect.selectedOptions[0];
+      const m = opt && opt.textContent.match(/^(.*?)\s+—\s+(\$[\d,.]+)\/mo/);
+      if (m) {
+        summary.hidden = false;
+        summary.innerHTML = `<span class="eyebrow">${buying ? 'You are buying' : 'Your trial plan'}</span>
+          <span class="name">${m[1]}</span>
+          <span class="price">${m[2]}<small> / month${buying ? '' : ' after the trial'}</small></span>`;
+      }
+    }
     if (p && summary) {
       summary.hidden = false;
       const price = yearly && yearlyOk

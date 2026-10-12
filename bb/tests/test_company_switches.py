@@ -14,10 +14,12 @@ from sqlalchemy import select
 
 from app.integrations.odoo import OdooClient, OdooCredentials, OdooError
 from app.models import EmployeeMapping, MappingStatus, PunchRecord, PunchState
-from app.services import sync_engine as engine_mod
-from tests.conftest import FakeOdoo, FakeProvider
+from tests.conftest import FakeOdoo
 from tests.test_odoo_company_scoping import (
-    COMPANY_A, COMPANY_B, FakeXmlRpcCommon, FakeXmlRpcModels,
+    COMPANY_A,
+    COMPANY_B,
+    FakeXmlRpcCommon,
+    FakeXmlRpcModels,
 )
 from tests.test_sync_engine import punch, run
 

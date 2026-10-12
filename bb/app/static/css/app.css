@@ -1521,7 +1521,50 @@ button.danger-outline#delAccount { border-color: var(--bad); }
 .filter-end { justify-content: flex-end; align-items: center; }
 .filter-row .search-box { flex: 0 1 280px; min-width: 150px; }
 .filter-row .search-box input { width: 100%; height: 40px; }
-.icon-btn { width: 40px; height: 40px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: 10px; flex: none; }
+.filter-row .icon-btn, .search-go { width: 40px; height: 40px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: 10px; flex: none; }
 @media (max-width: 760px) { .filter-end { justify-content: flex-start; } .filter-row .search-box { flex: 1 1 100%; } }
 .filter-row .icon-btn, .filter-row .icon-btn:hover { background: var(--accent); border-color: var(--accent); color: var(--accent-ink, #fff); }
 .filter-row .icon-btn:hover { filter: brightness(1.08); }
+
+/* Staff console: list / cards / kanban views of the accounts */
+.view-switch { display: inline-flex; border: 1px solid var(--rule, #d9dce6); border-radius: 10px; overflow: hidden; }
+.view-switch button { border: 0; border-radius: 0; background: transparent; padding: 0; width: 40px; height: 38px; display: inline-flex; align-items: center; justify-content: center; box-shadow: none; }
+.view-switch button + button { border-left: 1px solid var(--rule, #d9dce6); }
+.view-switch button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink, #fff); font-weight: 600; }
+.card-head .actions { display: flex; gap: 10px; align-items: center; }
+.acct-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.acct-card { border: 1px solid var(--rule, #e3e5ee); border-radius: 12px; padding: 14px; display: grid; gap: 12px; background: var(--card, #fff); }
+.acct-card.is-stopped { opacity: .85; border-style: dashed; }
+.acct-card header { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.acct-meta { margin: 0; display: grid; gap: 6px; font-size: 13px; }
+.acct-meta > div { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+.acct-meta dt { color: var(--muted); }
+.acct-meta dd { margin: 0; text-align: right; display: inline-flex; gap: 6px; align-items: center; }
+.acct-sync { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.acct-sync .mins { width: 74px; text-align: right; }
+.acct-sync select { width: auto; margin-left: auto; }
+.acct-actions { flex-wrap: wrap; }
+.danger-zone { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--rule-soft, #e3e5ee); }
+
+/* Accounts toolbar: Add on the left; search and the view switch on the right. */
+.list-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin: 4px 0 14px; }
+.list-toolbar .toolbar-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.list-toolbar .primary.sm { display: inline-flex; align-items: center; gap: 6px; }
+.search-form { display: flex; align-items: center; gap: 6px; margin: 0; }
+.search-form input { width: 260px; height: 40px; }
+.search-go { padding: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: 10px; flex: none; background: var(--accent); border-color: var(--accent); color: var(--accent-ink, #fff); }
+.acct-auto { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
+td .switch { vertical-align: middle; }
+
+/* Pairing: collapsed "how it works" guide */
+.pairing-help-card { padding: 12px 16px; margin-bottom: 14px; }
+.pairing-help { margin: 0; }
+.pairing-help > summary { cursor: pointer; font-weight: 600; font-size: 13px; padding: 4px 0; }
+.pairing-modes { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin: 12px 0; }
+.pairing-mode { border: 1px solid var(--rule); border-radius: 10px; padding: 12px 14px; background: var(--panel, transparent); }
+.pairing-mode.current, .pairing-mode.selected { border-color: var(--accent, #4f46e5); box-shadow: 0 0 0 1px var(--accent, #4f46e5) inset; }
+.pairing-mode h3 { margin: 0 0 6px; font-size: 13px; display: flex; gap: 8px; align-items: center; }
+.pairing-mode p { margin: 0 0 8px; font-size: 12.5px; line-height: 1.5; }
+.pairing-mode dl { margin: 0; font-size: 12px; }
+.pairing-mode dt { font-weight: 600; color: var(--faint); text-transform: uppercase; letter-spacing: .04em; font-size: 10.5px; margin-top: 6px; }
+.pairing-mode dd { margin: 2px 0 0; }

@@ -347,6 +347,58 @@ function wireChipField(mount, form, name, presets) {
   paint();
 }
 
+/* A collapsed "how it works" panel under the Pairing settings: what each mode
+ * does with the same four punches, so the choice can be made without trial and
+ * error. The mode currently selected is marked. */
+function pairingGuide(current) {
+  const modes = [
+    {
+      value: 'alternating', name: 'Alternating',
+      rule: 'Takes the punches in time order: the 1st is a check-in, the 2nd a check-out, the 3rd a check-in again, and so on. The device\'s IN/OUT key is ignored.',
+      result: '09:00–13:00 and 14:00–18:00 (two records)',
+      when: 'Most devices: terminals with no IN/OUT keys, or where people do not press them.',
+      watch: 'One forgotten punch shifts every later pair that day.',
+    },
+    {
+      value: 'state_based', name: 'State Based',
+      rule: 'Trusts what the device says: an IN punch opens a record, an OUT punch closes it. A device that stamps everything as Check In falls back to alternating automatically.',
+      result: 'As the keys were pressed: IN 09:00, OUT 13:00, IN 14:00, OUT 18:00 gives the same two records',
+      when: 'Terminals with IN/OUT keys (or separate entry and exit readers) that staff use correctly.',
+      watch: 'A wrong key press gives a wrong record. A check-in with no check-out is closed at the next check-in.',
+    },
+    {
+      value: 'first_last', name: 'First / Last',
+      rule: 'One record per day: the first punch is the check-in, the last is the check-out, and everything in between is ignored.',
+      result: '09:00–18:00 (one record, the lunch break is not shown)',
+      when: 'Sites that only care about arrival and departure, or where people punch many times a day.',
+      watch: 'Breaks and short exits are not recorded. Set the day boundary below for night shifts.',
+    },
+  ];
+  return `
+    <details class="pairing-help">
+      <summary>How Pairing Works</summary>
+      <p class="hint">A device only reports punches (a person and a time). Pairing decides which punches become the
+        check-in and check-out of an attendance record in Odoo. The same four punches (09:00, 13:00, 14:00, 18:00)
+        give different results depending on the mode:</p>
+      <div class="pairing-modes">
+        ${modes.map((m) => `
+          <div class="pairing-mode${m.value === current ? ' current' : ''}" data-mode="${m.value}">
+            <h3>${esc(m.name)}${m.value === current ? ' <span class="pill">In Use</span>' : ''}</h3>
+            <p>${esc(m.rule)}</p>
+            <dl>
+              <dt>Example</dt><dd>${esc(m.result)}</dd>
+              <dt>Best For</dt><dd>${esc(m.when)}</dd>
+              <dt>Watch Out</dt><dd>${esc(m.watch)}</dd>
+            </dl>
+          </div>`).join('')}
+      </div>
+      <p class="hint"><strong>Other settings:</strong> Ignore Repeat Punches drops accidental double taps.
+        Maximum Shift Length caps an open record so a forgotten check-out cannot run for days (it is closed and
+        marked Manual in Odoo). Check-Out With No Check-In decides what happens to a check-out that has nothing to
+        pair with. Changes apply from the next sync; records already in Odoo are not rewritten.</p>
+    </details>`;
+}
+
 async function renderPairing(mount) {
   mount.innerHTML = loading();
   const ctx = await tenantContext();
@@ -354,6 +406,7 @@ async function renderPairing(mount) {
 
   mount.innerHTML = `
     ${topBanners(ctx)}
+    <div class="card pairing-help-card">${pairingGuide(tenant.pairing_mode)}</div>
     <form id="form" ${readonly ? 'inert' : ''}>
       <div class="card">
         ${cardHead('Pairing', '', saveButton(readonly))}
@@ -362,7 +415,7 @@ async function renderPairing(mount) {
           options: [
             { value: 'alternating', label: 'Alternating — In, Out, In, Out' },
             { value: 'state_based', label: 'State Based — Trust The Device' },
-            { value: 'first_last', label: 'First / last — first in, last out' },
+            { value: 'first_last', label: 'First / Last — First In, Last Out' },
           ],
           help: 'Alternating suits devices with no IN/OUT keys, which is most of the field. State based needs those keys configured correctly; it falls back automatically when a device stamps everything "Check In".',
         })}
@@ -400,7 +453,10 @@ async function renderPairing(mount) {
   // Only first/last mode groups punches by day, so only it needs a day boundary.
   const modeSel = mount.querySelector('[name=pairing_mode]');
   const dayBox = mount.querySelector('#dayBoundary');
-  modeSel?.addEventListener('change', () => { dayBox.hidden = modeSel.value !== 'first_last'; });
+  modeSel?.addEventListener('change', () => {
+    dayBox.hidden = modeSel.value !== 'first_last';
+    mount.querySelectorAll('.pairing-mode').forEach((el) => el.classList.toggle('selected', el.dataset.mode === modeSel.value));
+  });
 
   const pairForm = mount.querySelector('#form');
   wireChipField(mount, pairForm, 'min_punch_interval_seconds', [0, 30, 60, 120, 300]);
@@ -664,7 +720,7 @@ async function renderOdoo(mount, route) {
           placeholder: odoo ? 'unchanged' : '',
           help: odoo
             ? 'Stored encrypted and never shown again. Leave blank to keep the current one.'
-            : 'Odoo → Preferences → Account Security → New API Key.',
+            : 'Odoo → Preferences → Account Security → New API key.',
         })}
         <div id="companyField">${companyFieldHtml(odoo, odooLastCompanies?.companies, savedDisabled(odoo, odooLastCompanies?.companies))}</div>
       </form>
@@ -1828,7 +1884,7 @@ function sourceFieldsHtml(source, kind, providers, provider) {
         placeholder: 'https://hcp.example.com',
         help: 'The HikCentral server, reachable from wherever BioBridge runs (VPN or forwarded port). Add :port if it isn’t 443.',
       })}
-      ${field({ name: 'username', label: 'Partner key (AK)', required: true, value: source?.username || '',
+      ${field({ name: 'username', label: 'Partner Key (AK)', required: true, value: source?.username || '',
                 help: 'The API key of the OpenAPI partner created for BioBridge.' })}
       ${field({
         name: 'password', label: 'Partner Secret (SK)', type: 'password', required: !source,
@@ -1880,7 +1936,7 @@ function sourceFieldsHtml(source, kind, providers, provider) {
         value: saved || regions[0].value, options: regions,
         help: 'Where your Hik-Connect for Teams account lives — the region you picked when signing up.',
       })}
-      ${field({ name: 'username', label: 'App key', required: true, value: source?.username || '',
+      ${field({ name: 'username', label: 'App Key', required: true, value: source?.username || '',
                 help: 'Hik-Connect for Teams → Team Management → API Integration.' })}
       ${field({
         name: 'password', label: 'Secret Key', type: 'password', required: !source,
@@ -1916,7 +1972,7 @@ function sourceFieldsHtml(source, kind, providers, provider) {
         value: source?.base_url || regions[0].value, options: regions,
         help: 'The one in your CrossChex Cloud address (us., eu. or ap.crosschexcloud.com).',
       })}
-      ${field({ name: 'username', label: 'API key', required: true, value: source?.username || '',
+      ${field({ name: 'username', label: 'API Key', required: true, value: source?.username || '',
                 help: 'CrossChex Cloud → Settings → API → API key.' })}
       ${field({
         name: 'password', label: 'API Secret', type: 'password', required: !source,
@@ -1952,7 +2008,7 @@ function sourceFieldsHtml(source, kind, providers, provider) {
         placeholder: 'https://…',
         help: 'The RESTful endpoint URL in your Cams API Monitor account (without the ?stgid part).',
       })}
-      ${field({ name: 'username', label: 'Service tag ID', required: true, value: source?.username || '',
+      ${field({ name: 'username', label: 'Service Tag ID', required: true, value: source?.username || '',
                 help: 'This device’s stgid in API Monitor.' })}
       ${field({
         name: 'password', label: 'AuthToken', type: 'password', required: !source,

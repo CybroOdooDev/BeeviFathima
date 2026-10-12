@@ -36,6 +36,7 @@ from app.models import (
 from app.schemas import (
     DeviceOut,
     DeviceUpdate,
+    SourceCompanyIn,
     MessageOut,
     OdooConnectionIn,
     OdooConnectionOut,
@@ -139,9 +140,7 @@ def _probe_odoo(principal: Principal, conn: OdooConnection) -> TestResult:
     return TestResult(
         ok=True,
         message=(
-            f"Connected to Odoo {info.get('server_version')} over the "
-            f"{info.get('api_label') or 'external API'} — "
-            f"{info['employee_count']} employee(s) visible"
+            f"Connected to Odoo — {info['employee_count']} employee(s) visible"
         ),
         detail=info,
     )
@@ -1203,6 +1202,23 @@ def _set_matched_counts(db: Session, tenant_id: str, devices: list[Device]) -> N
         d.matched_punch_count = counts.get(d.id, 0)
 
 
+def _set_held_counts(db: Session, tenant_id: str, devices: list[Device]) -> None:
+    """How many punches are waiting on each terminal's company (held)."""
+    ids = [d.id for d in devices]
+    counts = dict(db.execute(
+        select(PunchRecord.device_id, func.count())
+        .where(
+            PunchRecord.tenant_id == tenant_id,
+            PunchRecord.device_id.in_(ids),
+            PunchRecord.process_state == PunchState.held.value,
+            PunchRecord.error_message.like("Held: company%"),
+        )
+        .group_by(PunchRecord.device_id)
+    ).all()) if ids else {}
+    for d in devices:
+        d.held_punch_count = counts.get(d.id, 0)
+
+
 @router.get("/devices", response_model=list[DeviceOut])
 def list_devices(
     principal: Principal = Depends(get_principal), db: Session = Depends(get_db)
@@ -1217,6 +1233,7 @@ def list_devices(
     over = over_limit_device_ids(db, principal.tenant)
     for device in devices:
         device.over_plan_limit = device.id in over  # read by DeviceOut
+    _set_held_counts(db, principal.tenant.id, devices)
     _set_matched_counts(db, principal.tenant.id, devices)
     return devices
 
@@ -1258,15 +1275,47 @@ def delete_device(
 def update_device(
     device_id: str,
     payload: DeviceUpdate,
+    request: Request,
     principal: Principal = Depends(require_writer),
     db: Session = Depends(get_db),
 ) -> Device:
     device = db.get(Device, device_id)
     if device is None or device.tenant_id != principal.tenant.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Device not found")
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    if "company_id" in data and data["company_id"] is None:
+        data["company_name"] = None  # cleared together: a name without an id is stale
+    for key, value in data.items():
         setattr(device, key, value)
+    if "company_id" in data:
+        audit(db, principal, "device.company", device.id,
+              f"{device.alias or device.serial_number} -> {data['company_id']}", request)
     db.commit()
     db.refresh(device)
     _set_matched_counts(db, principal.tenant.id, [device])
     return device
+
+
+@router.put("/sources/{source_id}/default-company", response_model=SourceOut)
+def set_source_company(
+    source_id: str,
+    payload: SourceCompanyIn,
+    request: Request,
+    principal: Principal = Depends(require_writer),
+    db: Session = Depends(get_db),
+) -> DeviceSource:
+    """The Odoo company every terminal of this connection belongs to, unless
+    a terminal sets its own. Held punches are re-checked on the next sync."""
+    source = _get_source(db, principal, source_id)
+    config = dict(source.config or {})
+    if payload.company_id is None:
+        config.pop("company_id", None)
+        config.pop("company_name", None)
+    else:
+        config["company_id"] = payload.company_id
+        config["company_name"] = payload.company_name
+    source.config = config  # reassigned, so the JSON change is seen as a change
+    audit(db, principal, "source.company", source.id, str(payload.company_id), request)
+    db.commit()
+    db.refresh(source)
+    return source

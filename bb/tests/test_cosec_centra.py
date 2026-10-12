@@ -12,7 +12,11 @@ import pytest
 
 from app.integrations.base import ProviderError, SourceConfig
 from app.integrations.providers import cosec_centra as cc
-from app.integrations.providers.cosec_centra import CosecCentraProvider, parse_when, records
+from app.integrations.providers.cosec_centra import (
+    CosecCentraProvider,
+    parse_when,
+    records,
+)
 from tests.test_platform_admin import api, head, signup  # noqa: F401
 
 PASSWORD, TZ = "matrix@123", "Asia/Kolkata"
@@ -150,8 +154,9 @@ def test_a_long_backfill_is_capped(server):
 
 
 def test_sync_writes_attendance_and_learns_panels(api, server, monkeypatch):
-    from sqlalchemy import select
     from zoneinfo import ZoneInfo
+
+    from sqlalchemy import select
 
     from app.core.crypto import encrypt
     from app.models import OdooConnection, Tenant

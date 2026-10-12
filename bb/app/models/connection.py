@@ -166,6 +166,15 @@ class DeviceSource(Base, UUIDPk, Timestamped):
     )
 
     @property
+    def default_company_id(self) -> int | None:
+        """Company its terminals inherit; kept in ``config`` (no column)."""
+        return (self.config or {}).get("company_id")
+
+    @property
+    def default_company_name(self) -> str | None:
+        return (self.config or {}).get("company_name")
+
+    @property
     def location(self) -> str | None:
         """Where a standalone device physically is ("Main entrance"), as the
         customer typed it when adding it. Kept in ``config`` rather than a
@@ -222,5 +231,14 @@ class Device(Base, UUIDPk, Timestamped):
     #: its history (alias, punch_count, pairing_override) survives a terminal
     #: being briefly offline or renamed on the provider side.
     missing_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    #: The Odoo company (res.company id) this terminal belongs to. Null means
+    #: "inherit the connection's default" (``DeviceSource.config["company_id"]``)
+    #: and, failing that, "unassigned": allowed through on an Odoo that has a
+    #: single company enabled, held for review on a multi-company one. A punch
+    #: whose employee is in a different company is held, never sent.
+    company_id: Mapped[int | None] = mapped_column(Integer)
+    #: Display cache of the company's name, set when the company is chosen.
+    company_name: Mapped[str | None] = mapped_column(String(200))
 
     source: Mapped[DeviceSource] = relationship(back_populates="devices")

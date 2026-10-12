@@ -27,13 +27,13 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from sqlalchemy import select  # noqa: E402
+from sqlalchemy import select
 
-from app.db.session import SessionLocal  # noqa: E402
-from app.integrations.odoo import OdooError  # noqa: E402
-from app.models import OdooConnection, Tenant  # noqa: E402
-from app.services.connections import UnsafeTargetError, build_odoo_client  # noqa: E402
-from app.services.device_links import link_attendance_devices  # noqa: E402
+from app.db.session import SessionLocal
+from app.integrations.odoo import OdooError
+from app.models import OdooConnection, Tenant
+from app.services.connections import UnsafeTargetError, build_odoo_client
+from app.services.device_links import link_attendance_devices
 
 
 def main() -> int:

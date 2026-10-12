@@ -2,16 +2,24 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
 from app.db.session import get_db
 from app.main import app
 from app.models import (
-    AdmsDevice, DeviceSource, OdooConnection, PunchRecord, SyncRun, Tenant,
+    AdmsDevice,
+    DeviceSource,
+    OdooConnection,
+    PunchRecord,
+    SyncRun,
+    Tenant,
 )
 from tests.test_punch_ledger import api  # noqa: F401 — seeded tenant: 2 error + 1 unmapped punch
+
+from datetime import timezone, datetime, timedelta
+
+UTC = timezone.utc
 
 
 def _db():
@@ -62,12 +70,12 @@ def test_failed_odoo_and_source_connections_alert_with_the_reason(api):  # noqa:
 def test_an_overdue_sync_is_critical_but_a_recent_one_is_not(api):  # noqa: F811
     db = _db()
     t = _connect(db)
-    db.add(SyncRun(tenant_id=t.id, status="success", started_at=datetime.now(timezone.utc) - timedelta(minutes=5)))
+    db.add(SyncRun(tenant_id=t.id, status="success", started_at=datetime.now(UTC) - timedelta(minutes=5)))
     db.commit()
     assert "sync-overdue" not in _alerts(api)[0]
     db.commit()
     for r in db.scalars(select(SyncRun)):
-        r.started_at = datetime.now(timezone.utc) - timedelta(hours=5)
+        r.started_at = datetime.now(UTC) - timedelta(hours=5)
     db.commit(); db.close()
     keys, _ = _alerts(api)
     assert keys["sync-overdue"]["severity"] == "bad"
@@ -79,9 +87,9 @@ def test_a_silent_push_terminal_is_flagged_and_a_live_one_is_not(api):  # noqa: 
     src = db.scalars(select(DeviceSource)).one()
     db.add_all([
         AdmsDevice(serial_number="SILENT1", tenant_id=t.id, source_id=src.id, users={},
-                   last_seen_at=datetime.now(timezone.utc) - timedelta(hours=3)),
+                   last_seen_at=datetime.now(UTC) - timedelta(hours=3)),
         AdmsDevice(serial_number="LIVE1", tenant_id=t.id, source_id=src.id, users={},
-                   last_seen_at=datetime.now(timezone.utc) - timedelta(minutes=1)),
+                   last_seen_at=datetime.now(UTC) - timedelta(minutes=1)),
     ])
     db.commit(); db.close()
     keys, _ = _alerts(api)
@@ -107,7 +115,7 @@ def test_a_trial_about_to_end_raises_a_renewal_alert(api):  # noqa: F811
     db = _db()
     t = db.scalars(select(Tenant)).one()
     t.status = "trialing"
-    t.subscription_renews_at = datetime.now(timezone.utc) + timedelta(days=2)
+    t.subscription_renews_at = datetime.now(UTC) + timedelta(days=2)
     db.commit(); db.close()
     keys, _ = _alerts(api)
     assert keys["renewal"]["title"].startswith("Your free trial ends in 2 days")

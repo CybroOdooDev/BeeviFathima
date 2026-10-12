@@ -3,7 +3,6 @@ lapses — with an email to the customer every time BioBridge stops them."""
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import func, select
@@ -12,9 +11,18 @@ from app.models import AccountClosure, AuditLog, SubscriptionPlan, Tenant, User
 from app.services import billing, notices
 from app.services.scheduling import sweep_subscriptions
 from tests.test_billing import (  # noqa: F401
-    FakeStripe, _checkout_completed, _plan, _post_event, _signup, _tenant, client, stripe,
+    FakeStripe,
+    _checkout_completed,
+    _plan,
+    _post_event,
+    _signup,
+    _tenant,
+    client,
+    stripe,
 )
+from datetime import timezone, datetime, timedelta
 
+UTC = timezone.utc
 
 @pytest.fixture
 def mail(monkeypatch):
@@ -166,7 +174,7 @@ def _set(client, **values):
 
 def test_trial_ending_without_a_plan_stops_syncing_and_tells_them(client, mail):
     _signup(client)
-    s, tid = _set(client, status="trialing", subscription_renews_at=datetime.now(timezone.utc) - timedelta(minutes=1))
+    s, tid = _set(client, status="trialing", subscription_renews_at=datetime.now(UTC) - timedelta(minutes=1))
     assert sweep_subscriptions(s)["lapsed"] == 1
     assert s.get(Tenant, tid).status == "past_due" and not s.get(Tenant, tid).syncable
     s.close()
@@ -177,11 +185,11 @@ def test_stripe_account_with_no_renewal_is_stopped_after_the_grace(client, strip
     _signup(client)
     stripe.sub()
     _checkout_completed(client, _tenant(client).id)
-    s, tid = _set(client, subscription_renews_at=datetime.now(timezone.utc) - timedelta(days=1))
+    s, tid = _set(client, subscription_renews_at=datetime.now(UTC) - timedelta(days=1))
     sweep_subscriptions(s)
     assert s.get(Tenant, tid).status == "active"      # inside the grace: Stripe may still be retrying
     s.close()
-    s, tid = _set(client, subscription_renews_at=datetime.now(timezone.utc) - timedelta(days=4))
+    s, tid = _set(client, subscription_renews_at=datetime.now(UTC) - timedelta(days=4))
     sweep_subscriptions(s)
     assert s.get(Tenant, tid).status == "past_due"
     s.close()
