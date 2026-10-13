@@ -11,9 +11,10 @@ from app.models import DeviceSource, OdooConnection, Tenant
 from app.services import alert_emails
 from app.services.alert_emails import due_alerts, sweep_alert_emails
 from tests.test_billing import _signup, client  # noqa: F401
-from datetime import timezone, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 UTC = timezone.utc
+
 
 T0 = datetime(2026, 10, 5, 12, 0, tzinfo=UTC)
 RED = {"key": "odoo-connection", "severity": "bad", "title": "BioBridge can't reach Odoo", "detail": "Invalid API key."}

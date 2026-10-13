@@ -20,9 +20,10 @@ from tests.test_billing import (  # noqa: F401
     client,
     stripe,
 )
-from datetime import timezone, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 UTC = timezone.utc
+
 
 @pytest.fixture
 def mail(monkeypatch):

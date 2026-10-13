@@ -39,7 +39,7 @@ from app.services.scheduling import (
     sweep_subscriptions,
 )
 from app.services.sync_engine import SyncEngine, close_stale_attendances
-from datetime import timezone, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 UTC = timezone.utc
 
@@ -141,8 +141,8 @@ class Scheduler:
                 await asyncio.wait_for(
                     self._stopping.wait(), timeout=settings.scheduler_tick_seconds
                 )
-            except TimeoutError:
-                pass
+            except asyncio.TimeoutError:
+                continue
 
     async def _tick(self) -> None:
         self.ticks += 1

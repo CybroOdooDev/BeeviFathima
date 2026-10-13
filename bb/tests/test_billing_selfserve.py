@@ -11,7 +11,15 @@ from app.core.config import settings
 from app.models import Tenant, User
 from app.services import billing
 from tests.test_billing import (  # noqa: F401
-    PERIOD_END, SECRET, FakeStripe, _checkout_completed, _post_event, _signup, _tenant, client, stripe,
+    PERIOD_END,
+    SECRET,
+    FakeStripe,
+    _checkout_completed,
+    _post_event,
+    _signup,
+    _tenant,
+    client,
+    stripe,
 )
 
 

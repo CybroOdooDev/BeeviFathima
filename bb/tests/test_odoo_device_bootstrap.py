@@ -381,7 +381,7 @@ def test_company_rule_domain_treats_an_unset_company_as_visible_everywhere():
     domain_force = next(
         df for mid, _name, df in fake.ir_rule_rows if mid == device_model_id
     )
-    domain = eval(domain_force, {"company_ids": [10]})  # noqa: S307 - fixed literal, test-only
+    domain = eval(domain_force, {"company_ids": [10]})
 
     unscoped = {"x_company_id": False}
     own_company = {"x_company_id": 10}

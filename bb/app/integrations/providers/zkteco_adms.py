@@ -23,7 +23,6 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-
 from app.integrations.base import (
     AttendanceProvider,
     Capability,
@@ -35,8 +34,7 @@ from app.integrations.base import (
     TerminalRecord,
     register,
 )
-
-from datetime import timezone, datetime
+from datetime import datetime, timezone
 
 UTC = timezone.utc
 

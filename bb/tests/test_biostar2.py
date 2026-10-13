@@ -12,10 +12,10 @@ from app.integrations.base import EmployeeRecord, ProviderError, SourceConfig
 from app.integrations.providers import biostar2 as bs
 from app.integrations.providers.biostar2 import BioStar2Provider, direction_of, is_punch
 from tests.test_platform_admin import api, head, signup  # noqa: F401
-
-from datetime import timezone, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 UTC = timezone.utc
+
 
 LOGIN, PASSWORD, TZ = "admin", "Biostar1!", "Asia/Dubai"
 

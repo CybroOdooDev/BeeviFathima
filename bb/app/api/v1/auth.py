@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func, select, update
@@ -26,22 +25,30 @@ from app.core.security import (
     verify_password,
 )
 from app.db.session import get_db
-from app.models import SubscriptionPlan, Tenant, TenantStatus, User, UserRole, UserSession
+from app.models import (
+    SubscriptionPlan,
+    Tenant,
+    TenantStatus,
+    User,
+    UserRole,
+    UserSession,
+)
 from app.schemas import (
     ChangePasswordIn,
     ForgotPasswordIn,
-    ResetPasswordIn,
     LoginRequest,
     MessageOut,
+    ResetPasswordIn,
+    SignInCodeIn,
     SignupRequest,
     SubscriptionPlanOut,
     TokenPair,
     UserOut,
-    SignInCodeIn,
     VerifyCheckOut,
     VerifyEmailOut,
     VerifyEmailRequest,
 )
+from app.services import password_reset
 from app.services.email_check import UngenuineEmailError, assert_genuine_email
 from app.services.email_verification import (
     issue_verification_token,
@@ -53,10 +60,11 @@ from app.services.onboarding import (
     consume_signin_code,
     issue_signin_code,
     send_account_ready,
-    send_credentials,
 )
-from app.services import password_reset
 from app.services.timeutils import ensure_aware, is_past
+from datetime import datetime, timedelta, timezone
+
+UTC = timezone.utc
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -96,7 +104,7 @@ def _issue(db: Session, user: User, request: Request, scope: str) -> TokenPair:
     access = create_access_token(user.id, user.tenant_id, user.role, scope)
     refresh = create_refresh_token(user.id, user.tenant_id, user.role, scope)
     payload = decode_token(refresh, expected_kind="refresh")
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     db.add(
         UserSession(
@@ -200,7 +208,7 @@ def signup(payload: SignupRequest, request: Request, db: Session = Depends(get_d
         timezone=payload.timezone,
         sync_interval_minutes=sync_interval,
         plan_id=chosen_plan.id if chosen_plan else None,
-        subscription_renews_at=datetime.now(timezone.utc) + timedelta(days=period_days),
+        subscription_renews_at=datetime.now(UTC) + timedelta(days=period_days),
     )
     db.add(tenant)
     db.flush()
@@ -243,7 +251,7 @@ def _verify_credentials(db: Session, payload: LoginRequest) -> User:
     console door becomes the weaker of the two to guess against.
     """
     user = db.scalars(select(User).where(User.email == payload.email.lower())).first()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     locked_until = ensure_aware(user.locked_until) if user is not None else None
     if locked_until and locked_until > now:
@@ -287,7 +295,7 @@ def _refuse_pending(db: Session, email: str) -> None:
 def _record_login(user: User) -> None:
     user.failed_login_count = 0
     user.locked_until = None
-    user.last_login_at = datetime.now(timezone.utc)
+    user.last_login_at = datetime.now(UTC)
 
 
 @router.post("/login", response_model=TokenPair)
@@ -381,7 +389,7 @@ def refresh(refresh_token: str, db: Session = Depends(get_db)) -> TokenPair:
             status.HTTP_401_UNAUTHORIZED, "This account no longer has console access"
         )
 
-    session.last_seen_at = datetime.now(timezone.utc)
+    session.last_seen_at = datetime.now(UTC)
     db.commit()
     return TokenPair(
         access_token=create_access_token(user.id, user.tenant_id, user.role, scope),
@@ -404,7 +412,7 @@ def logout(refresh_token: str = "", db: Session = Depends(get_db)) -> MessageOut
                 UserSession.token_hash == hash_token(payload["jti"]),
                 UserSession.revoked_at.is_(None),
             )
-            .values(revoked_at=datetime.now(timezone.utc), revoked_reason="logout")
+            .values(revoked_at=datetime.now(UTC), revoked_reason="logout")
         )
         db.commit()
     return MessageOut(message="Signed out")
@@ -499,7 +507,7 @@ def change_password(
     stmt = update(UserSession).where(UserSession.user_id == user.id, UserSession.revoked_at.is_(None))
     if current:
         stmt = stmt.where(UserSession.id != current)
-    db.execute(stmt.values(revoked_at=datetime.now(timezone.utc), revoked_reason="password_changed"))
+    db.execute(stmt.values(revoked_at=datetime.now(UTC), revoked_reason="password_changed"))
     db.commit()
     return MessageOut(message="Password changed.")
 

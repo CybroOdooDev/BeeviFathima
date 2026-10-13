@@ -251,6 +251,12 @@ class RevalidatingStatics(StaticFiles):
 
 STATIC_DIR = Path(__file__).parent / "static"
 if STATIC_DIR.exists():
+    @app.get("/admin", include_in_schema=False)
+    def admin_dashboard_redirect():
+        return RedirectResponse(url="/admin/", status_code=307)
+
+    app.mount("/admin", RevalidatingStatics(directory=STATIC_DIR, html=True), name="admin-dashboard",)
+    
     app.mount("/app", RevalidatingStatics(directory=STATIC_DIR, html=True), name="dashboard")
 
 

@@ -31,6 +31,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+
 from sqlalchemy import inspect, text
 
 import app.models  # noqa: F401
@@ -40,9 +41,10 @@ from app.db.base import Base
 from app.db.schema_check import detect_drift
 from app.db.session import engine, session_scope
 from app.models import Tenant, User
-from datetime import timezone, datetime
+from datetime import datetime, timedelta, timezone
 
 UTC = timezone.utc
+
 
 
 class Row:

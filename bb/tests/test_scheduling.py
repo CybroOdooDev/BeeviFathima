@@ -8,6 +8,7 @@ later every run, one that keeps hammering a customer's dead server.
 
 from __future__ import annotations
 
+
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -25,10 +26,10 @@ from app.services.scheduling import (
     release_lease,
     scheduler_health,
 )
-
-from datetime import timezone, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 UTC = timezone.utc
+
 
 
 def _run(db, tenant, *, minutes_ago: int, status: str = "success") -> SyncRun:

@@ -64,7 +64,7 @@ from app.integrations.base import (
     SourceConfig,
     register,
 )
-from datetime import timezone, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 UTC = timezone.utc
 

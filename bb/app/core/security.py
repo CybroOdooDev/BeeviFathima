@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import secrets
 import uuid
-from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from jose import JWTError, jwt
@@ -13,9 +12,12 @@ from passlib.context import CryptContext
 
 from app.core.config import settings
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+from datetime import datetime, timedelta, timezone
 
 UTC = timezone.utc
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
 
 #: The two doors a session can be minted at.
 #:

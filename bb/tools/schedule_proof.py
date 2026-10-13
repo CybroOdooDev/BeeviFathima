@@ -32,7 +32,7 @@ import sys
 import time
 
 import requests
-from datetime import timezone, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 UTC = timezone.utc
 

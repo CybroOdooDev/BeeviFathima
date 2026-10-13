@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.models import PendingSignup, SubscriptionPlan, Tenant
-from tests.test_billing import _post_event, _plan, _signup, client, stripe  # noqa: F401
+from tests.test_billing import _plan, _post_event, _signup, client, stripe  # noqa: F401
 from tests.test_website_onboarding import REG, form, mail  # noqa: F401
 
 

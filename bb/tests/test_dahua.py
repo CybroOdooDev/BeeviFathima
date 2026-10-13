@@ -20,9 +20,10 @@ from app.integrations.providers.dahua import (
     parse_records,
 )
 from tests.test_platform_admin import api, head, signup  # noqa: F401
-from datetime import timezone, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 UTC = timezone.utc
+
 
 USER, PASSWORD, REALM, NONCE = "admin", "Dahua@123", "Login to ASI7214", "nonce-77a1"
 SERIAL, MODEL, TZ = "9A0B1C2D3E4F5G6", "ASI7214S-W", "Asia/Dubai"

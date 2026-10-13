@@ -30,9 +30,10 @@ from app.services import billing, onboarding
 from app.services import contact as contact_service
 from app.services.email_check import UngenuineEmailError, assert_genuine_email
 
-from datetime import timezone, datetime
+from datetime import datetime, timezone
 
 UTC = timezone.utc
+
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/public", tags=["public"], dependencies=[Depends(billing.use_config)])

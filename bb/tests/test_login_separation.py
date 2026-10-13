@@ -36,10 +36,10 @@ from tests.test_platform_admin import (  # noqa: F401
     signup,
     staff_login,
 )
-
-from datetime import timezone, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 UTC = timezone.utc
+
 
 PASSWORD = "a-long-enough-password"
 STAFF_EMAIL = "ops@platform.example.com"

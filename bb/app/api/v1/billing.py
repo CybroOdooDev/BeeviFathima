@@ -12,7 +12,6 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import Principal, audit, get_principal, require_writer
-from app.core.config import settings
 from app.db.session import get_db
 from app.models import SubscriptionPlan
 from app.models.tenant import TenantStatus

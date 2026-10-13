@@ -20,9 +20,10 @@ from app.integrations.providers.hikcentral import (
     string_to_sign,
 )
 from tests.test_platform_admin import api, head, signup  # noqa: F401
-from datetime import timezone, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 UTC = timezone.utc
+
 
 AK, SK, TZ = "24681357", "Kx9mQ2vT7pL4wZ1r", "Asia/Riyadh"
 URL = "https://hcp.acme.example"

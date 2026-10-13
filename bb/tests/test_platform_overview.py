@@ -7,9 +7,10 @@ from sqlalchemy import select
 
 from app.models import EmployeeMapping, PunchRecord, SyncRun, Tenant
 from tests.test_platform_admin import api, head, promote, signup  # noqa: F401
-from datetime import timezone, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 UTC = timezone.utc
+
 
 STAFF = "ops@platform.example.com"
 

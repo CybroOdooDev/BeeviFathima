@@ -1,3 +1,1 @@
-from . import biobridge_device
-from . import biobridge_pairing_method
-from . import hr_attendance
+from . import biobridge_device, biobridge_pairing_method, hr_attendance

@@ -27,9 +27,11 @@ from app.models import Tenant, TenantStatus, User, UserRole
 from app.services.alerts import BAD, tenant_alerts
 from app.services.mailer import send_email
 from app.services.timeutils import ensure_aware
-from datetime import timezone, datetime, timedelta
+
+from datetime import datetime, timedelta, timezone
 
 UTC = timezone.utc
+
 
 log = logging.getLogger(__name__)
 

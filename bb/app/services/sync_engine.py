@@ -24,14 +24,18 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Collection
-from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.crypto import encrypt
-from app.integrations.base import Capability, EmployeeRecord, ProviderError, UnsupportedCapability
+from app.integrations.base import (
+    Capability,
+    EmployeeRecord,
+    ProviderError,
+    UnsupportedCapability,
+)
 from app.integrations.odoo import OdooClient, OdooError, parse_dt
 from app.models import (
     AttendanceRecord,
@@ -48,15 +52,18 @@ from app.models import (
     SyncStatus,
     Tenant,
 )
-from app.services.device_links import device_for_punch, restore_terminals_from_punches
+from app.services import adms
 from app.services.connections import (
     UnsafeTargetError,
     build_odoo_client,
     build_source_provider,
 )
 from app.services.device_limits import over_limit_device_ids
+from app.services.device_links import device_for_punch, restore_terminals_from_punches
 from app.services.pairing import (
     Direction as PairDirection,
+)
+from app.services.pairing import (
     OpenShift,
     PairingConfig,
     PairingMode,
@@ -66,6 +73,9 @@ from app.services.pairing import (
     pair_punches,
 )
 from app.services.timeutils import local_to_utc, utc_to_local, utcnow_naive
+from datetime import datetime, timedelta, timezone
+
+UTC = timezone.utc
 
 log = logging.getLogger(__name__)
 
@@ -118,7 +128,7 @@ class SyncEngine:
         self._failures_before = tenant.consecutive_failures
         # Held locally as well as on the row: the run commits mid-cycle, which
         # expires the ORM object, and a reloaded value can come back naive.
-        self._started_at = datetime.now(timezone.utc)
+        self._started_at = datetime.now(UTC)
         self.run = SyncRun(
             tenant_id=tenant.id,
             status=SyncStatus.running.value,
@@ -136,7 +146,7 @@ class SyncEngine:
 
     # -- logging -----------------------------------------------------------
     def _log(self, message: str, level: str = "info") -> None:
-        stamp = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        stamp = datetime.now(UTC).strftime("%H:%M:%S")
         self._log_lines.append(f"[{stamp}] {level.upper()}: {message}")
         getattr(log, level, log.info)("[tenant=%s] %s", self.tenant.slug, message)
 
@@ -202,7 +212,7 @@ class SyncEngine:
                 except (ProviderError, UnsafeTargetError) as exc:
                     source.status = ConnectionStatus.failed.value
                     source.status_message = str(exc)[:500]
-                    source.last_checked_at = datetime.now(timezone.utc)
+                    source.last_checked_at = datetime.now(UTC)
                     self.run.error_count += 1
                     self._log(f"'{source.name}' unreachable: {exc}", "error")
 
@@ -264,13 +274,13 @@ class SyncEngine:
                 from app.services.roster_import import refresh_companies
 
                 refresh_companies(self.db, self.tenant, odoo, force=True)
-            except Exception:  # noqa: BLE001 — a display cache must never fail a sync
+            except Exception:
                 log.warning("company refresh skipped", exc_info=True)
             self._push(odoo, odoo_conn)
 
             self.tenant.consecutive_failures = 0
             odoo_conn.status = ConnectionStatus.connected.value
-            odoo_conn.last_checked_at = datetime.now(timezone.utc)
+            odoo_conn.last_checked_at = datetime.now(UTC)
             self.run.status = (
                 SyncStatus.partial.value if self.run.error_count else SyncStatus.success.value
             )
@@ -302,7 +312,7 @@ class SyncEngine:
         finally:
             if self.only_source_id and self.run.status == SyncStatus.failed.value:
                 self.tenant.consecutive_failures = self._failures_before
-            finished = datetime.now(timezone.utc)
+            finished = datetime.now(UTC)
             self.run.finished_at = finished
             self.run.duration_ms = int((finished - self._started_at).total_seconds() * 1000)
             self.run.log = self._log_lines[-500:]
@@ -389,7 +399,7 @@ class SyncEngine:
 
             source.status = ConnectionStatus.connected.value
             source.status_message = None
-            source.last_checked_at = datetime.now(timezone.utc)
+            source.last_checked_at = datetime.now(UTC)
             # Advanced last, and only over punches actually stored. If the
             # provider raised mid-iteration the cursor stays put, the rows
             # already written remain, and the next run re-reads the same window
@@ -421,10 +431,14 @@ class SyncEngine:
             .values(first_seen_run_id=self.run.id)
         )
         created = result.rowcount or 0
+        log.warning("ADMS health check before: source_id=%s",source.id,)
+        device = provider._device()
+        log.warning("ADMS DEBUG: serial=%s last_seen_at=%r online=%s", provider.serial, device.last_seen_at if device else None, adms.is_online(device),)
         health = provider.test_connection()
+        log.warning("ADMS health check after: source_id=%s ok=%s message=%s", source.id, health.ok, health.message,)
         source.status = (ConnectionStatus.connected if health.ok else ConnectionStatus.failed).value
         source.status_message = None if health.ok else health.message[:500]
-        source.last_checked_at = datetime.now(timezone.utc)
+        source.last_checked_at = datetime.now(UTC)
         newest = self.db.scalar(select(func.max(PunchRecord.punch_time_utc)).where(
             PunchRecord.tenant_id == self.tenant.id, PunchRecord.source_id == source.id))
         if newest:
@@ -1151,7 +1165,7 @@ class SyncEngine:
         if config.mode is PairingMode.first_last:
             self._settle_covered_punches(punches, result.intervals, by_id)
 
-        mapping.last_synced_at = datetime.now(timezone.utc)
+        mapping.last_synced_at = datetime.now(UTC)
         if punches:
             mapping.last_punch_at = max(p.punch_time_utc for p in punches)
 
@@ -1497,7 +1511,7 @@ def store_punch(
     db.add(record)
     if device is not None:
         device.punch_count = (device.punch_count or 0) + 1
-        device.last_seen_at = datetime.now(timezone.utc)
+        device.last_seen_at = datetime.now(UTC)
         # A punch is live proof the terminal is there, regardless of
         # whether "Import terminals" has been re-run since it was last
         # flagged missing.
@@ -1512,7 +1526,7 @@ def close_stale_attendances(db: Session, tenant: Tenant) -> int:
     open record that blocks every subsequent check-in for that person.
     """
     engine = SyncEngine(db, tenant, "maintenance")
-    conn = engine._active_odoo_connection()  # noqa: SLF001
+    conn = engine._active_odoo_connection()
     if conn is None:
         return 0
 

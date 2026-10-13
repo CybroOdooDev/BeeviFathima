@@ -10,9 +10,10 @@ from sqlalchemy import select
 from app.models import User, UserSession
 from app.services import password_reset
 from tests.test_billing import _signup, client  # noqa: F401
-from datetime import timezone, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 UTC = timezone.utc
+
 
 NEW = "a-brand-new-password"
 OLD = "a-long-enough-password"

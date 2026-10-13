@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ipaddress
 import logging
-from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -12,7 +11,13 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.deps import Principal, audit, get_principal, require_syncable, require_writer
+from app.api.deps import (
+    Principal,
+    audit,
+    get_principal,
+    require_syncable,
+    require_writer,
+)
 from app.core.crypto import encrypt
 from app.db.session import get_db
 from app.integrations.base import (
@@ -22,6 +27,7 @@ from app.integrations.base import (
     get_provider_class,
 )
 from app.integrations.odoo import OdooError, forget_detected_api
+from app.integrations.providers.zkteco_adms import serial_from_address
 from app.models import (
     ConnectionStatus,
     Device,
@@ -36,13 +42,12 @@ from app.models import (
 from app.schemas import (
     DeviceOut,
     DeviceUpdate,
-    SourceCompanyIn,
-    MessageOut,
     OdooConnectionIn,
     OdooConnectionOut,
     OdooConnectionTestIn,
     OdooConnectionUpdate,
     ProvisionOut,
+    SourceCompanyIn,
     SourceIn,
     SourceOut,
     SourceTestIn,
@@ -50,7 +55,6 @@ from app.schemas import (
     SyncRunOut,
     TestResult,
 )
-from app.integrations.providers.zkteco_adms import serial_from_address
 from app.services import adms
 from app.services.connections import (
     UnsafeTargetError,
@@ -62,6 +66,10 @@ from app.services.device_limits import over_limit_device_ids
 from app.services.provisioning import provision_unmapped
 from app.services.roster_import import auto_import
 from app.services.sync_engine import SyncEngine
+
+from datetime import datetime, timezone
+
+UTC = timezone.utc
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["connections"])
@@ -107,7 +115,7 @@ def _probe_odoo(principal: Principal, conn: OdooConnection) -> TestResult:
     except (OdooError, UnsafeTargetError) as exc:
         conn.status = ConnectionStatus.failed.value
         conn.status_message = str(exc)[:500]
-        conn.last_checked_at = datetime.now(timezone.utc)
+        conn.last_checked_at = datetime.now(UTC)
         return TestResult(ok=False, message=str(exc))
 
     conn.status = ConnectionStatus.connected.value
@@ -117,7 +125,7 @@ def _probe_odoo(principal: Principal, conn: OdooConnection) -> TestResult:
     conn.has_companion_addon = bool(info.get("has_companion_addon"))
     conn.has_device_tracking = bool(info.get("has_device_tracking"))
     conn.device_tracking_mode = info.get("device_tracking_mode")
-    conn.last_checked_at = datetime.now(timezone.utc)
+    conn.last_checked_at = datetime.now(UTC)
     # company_name is a display cache, refreshed here and only here — never
     # trust a name the client sent, and never leave a stale one paired with
     # whatever company_id ends up being true after this probe.
@@ -550,13 +558,13 @@ def _probe_source(principal: Principal, source: DeviceSource) -> TestResult:
     except (ProviderError, UnsafeTargetError) as exc:
         source.status = ConnectionStatus.failed.value
         source.status_message = str(exc)[:500]
-        source.last_checked_at = datetime.now(timezone.utc)
+        source.last_checked_at = datetime.now(UTC)
         return TestResult(ok=False, message=str(exc))
     finally:
         if provider is not None:
             provider.close()
 
-    source.last_checked_at = datetime.now(timezone.utc)
+    source.last_checked_at = datetime.now(UTC)
     source.status = (
         ConnectionStatus.connected.value if result.ok else ConnectionStatus.failed.value
     )
@@ -980,7 +988,7 @@ def _register_standalone_device(
     device.missing_since = None
     # A different serial at this address means the unit was swapped: the old
     # record stays (its history is real) but is flagged as no longer there.
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     for other_serial, other in known.items():
         if other_serial != serial and other.missing_since is None:
             other.missing_since = now
@@ -1057,7 +1065,7 @@ def discover_devices(
     # timestamp is set once and left alone on repeat imports that still don't
     # see it, so it reflects when it first went missing, not the most recent
     # check.
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     missing_now = 0
     for serial, device in existing.items():
         if serial in seen_serials:

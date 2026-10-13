@@ -87,8 +87,7 @@ from app.services.scheduling import (
     scheduler_health,
 )
 from app.services.sync_engine import SyncEngine
-
-from datetime import timezone, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 UTC = timezone.utc
 

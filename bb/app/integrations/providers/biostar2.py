@@ -56,8 +56,7 @@ from app.integrations.base import (
     TerminalRecord,
     register,
 )
-
-from datetime import timezone, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 UTC = timezone.utc
 

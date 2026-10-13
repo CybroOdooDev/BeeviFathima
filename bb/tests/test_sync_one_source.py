@@ -60,17 +60,18 @@ def test_a_switched_off_device_does_not_count_against_the_account(db, tenant, mo
 
 
 def test_the_route_runs_that_source_and_is_tenant_scoped(monkeypatch):
-    import app.api.v1.connections as connections_mod
-    from app.integrations.base import ConnectionInfo
-    from tests.test_connection_test_before_save import _StubProvider
-    from tests.test_odoo_company_id_api import auth, signup
     from fastapi.testclient import TestClient
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
     from sqlalchemy.pool import StaticPool
+
+    import app.api.v1.connections as connections_mod
     from app.db.session import get_db
+    from app.integrations.base import ConnectionInfo
     from app.main import app
     from app.models import Base
+    from tests.test_connection_test_before_save import _StubProvider
+    from tests.test_odoo_company_id_api import auth, signup
 
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)

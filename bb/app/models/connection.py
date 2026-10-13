@@ -161,7 +161,7 @@ class DeviceSource(Base, UUIDPk, Timestamped):
         Boolean, default=False, server_default=text("false"), nullable=False
     )
 
-    devices: Mapped[list["Device"]] = relationship(
+    devices: Mapped[list[Device]] = relationship(
         back_populates="source", cascade="all, delete-orphan"
     )
 

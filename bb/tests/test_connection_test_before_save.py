@@ -13,7 +13,8 @@ from sqlalchemy import select
 
 import app.api.v1.connections as connections_mod
 from app.core.crypto import decrypt
-from app.integrations.base import ConnectionInfo as ProviderTestResult, ProviderError
+from app.integrations.base import ConnectionInfo as ProviderTestResult
+from app.integrations.base import ProviderError
 from app.integrations.odoo import OdooError
 from app.models import DeviceSource, OdooConnection, Tenant
 from tests.test_odoo_company_id_api import _StubOdooClient, auth, client, signup  # noqa: F401
@@ -301,7 +302,7 @@ def test_platform_servers_and_standalone_devices_can_sit_side_by_side(
 # ===========================================================================
 # One connection per address
 # ===========================================================================
-from app.services.connections import address_key  # noqa: E402
+from app.services.connections import address_key
 
 
 def test_address_key_sees_through_default_ports_case_and_slashes():

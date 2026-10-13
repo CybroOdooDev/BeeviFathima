@@ -113,7 +113,6 @@ from app.integrations.base import (
     register,
 )
 
-
 log = logging.getLogger(__name__)
 
 DEFAULT_PORT = 4370

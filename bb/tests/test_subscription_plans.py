@@ -30,9 +30,10 @@ from app.models import (
     TenantStatus,
 )
 from app.services.scheduling import due_tenants, renewal_warning, sweep_subscriptions
-from datetime import timezone, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 UTC = timezone.utc
+
 
 # The console fixture and account helpers — "a customer" and "a staff
 # session" mean the same thing here as everywhere else in this suite.

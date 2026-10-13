@@ -12,8 +12,7 @@ import threading
 import httpx
 import pytest
 
-import tools.mock_biotime as mock_biotime
-import tools.mock_roster as mock_roster
+from tools import mock_biotime, mock_roster
 
 
 class FakeOdoo:
@@ -93,10 +92,19 @@ def test_mock_server_serves_the_cached_company(odoo, tmp_path, monkeypatch):
 def test_without_odoo_the_old_fixtures_still_work(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(mock_roster, "odoo_client", lambda *a: None)
+    monkeypatch.setattr(mock_roster, "_saved_connection", lambda tenant_slug=None: None)
+
     args = type("A", (), {"refresh_roster": False})()
     assert mock_roster.load_roster(args, 2).emp_codes == ["2001", "2002", "2003"]
+
     with pytest.raises(SystemExit, match="Connect Odoo"):
         mock_roster.load_roster(args, 9)
+    # monkeypatch.chdir(tmp_path)
+    # monkeypatch.setattr(mock_roster, "odoo_client", lambda *a: None)
+    # args = type("A", (), {"refresh_roster": False})()
+    # assert mock_roster.load_roster(args, 2).emp_codes == ["2001", "2002", "2003"]
+    # with pytest.raises(SystemExit, match="Connect Odoo"):
+    #     mock_roster.load_roster(args, 9)
 
 
 def test_a_cached_roster_is_not_served_for_a_different_odoo(odoo, tmp_path, monkeypatch):

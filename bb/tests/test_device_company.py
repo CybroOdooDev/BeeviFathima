@@ -113,7 +113,7 @@ def test_a_terminal_own_company_beats_the_connection_default(db, tenant, local_d
 # --------------------------------------------------------------------------- #
 # The API that sets it
 # --------------------------------------------------------------------------- #
-from tests.test_device_delete import client, seed, signup  # noqa: E402,F401
+from tests.test_device_delete import client, seed, signup  # noqa: F401
 
 
 def test_company_can_be_set_and_cleared_on_a_terminal(client):

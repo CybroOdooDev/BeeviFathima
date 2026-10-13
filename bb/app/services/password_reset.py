@@ -18,9 +18,10 @@ from app.core.security import hash_password, hash_token, new_token
 from app.models import User, UserSession
 from app.services.mailer import send_email
 from app.services.timeutils import ensure_aware
-from datetime import timezone, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 UTC = timezone.utc
+
 
 log = logging.getLogger(__name__)
 

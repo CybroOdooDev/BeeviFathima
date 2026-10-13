@@ -29,7 +29,6 @@ import string
 import threading
 import time
 from collections import defaultdict, deque
-from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import func, select
@@ -45,10 +44,16 @@ from app.models import (
     User,
     UserRole,
 )
-from app.services.email_verification import issue_verification_token, send_verification_email
+from app.services.email_verification import (
+    issue_verification_token,
+    send_verification_email,
+)
 from app.services.mailer import send_email
 
 log = logging.getLogger(__name__)
+from datetime import datetime, timedelta, timezone
+
+UTC = timezone.utc
 
 
 # --- helpers ----------------------------------------------------------------
@@ -129,7 +134,7 @@ def create_account(
         sync_interval_minutes=interval,
         plan_id=plan.id if plan else None,
         billing_interval=billing_interval,
-        subscription_renews_at=datetime.now(timezone.utc) + timedelta(days=days),
+        subscription_renews_at=datetime.now(UTC) + timedelta(days=days),
     )
     db.add(tenant)
     db.flush()
@@ -231,7 +236,7 @@ SIGNIN_CODE_MINUTES = 15
 def issue_signin_code(user: User) -> str:
     raw = new_token()
     user.password_reset_token_hash = hash_token("signin:" + raw)
-    user.password_reset_expires_at = datetime.now(timezone.utc) + timedelta(minutes=SIGNIN_CODE_MINUTES)
+    user.password_reset_expires_at = datetime.now(UTC) + timedelta(minutes=SIGNIN_CODE_MINUTES)
     return raw
 
 
@@ -244,10 +249,10 @@ def consume_signin_code(db: Session, raw: str) -> User | None:
         return None
     expires = user.password_reset_expires_at
     if expires is not None and expires.tzinfo is None:
-        expires = expires.replace(tzinfo=timezone.utc)
+        expires = expires.replace(tzinfo=UTC)
     user.password_reset_token_hash = None
     user.password_reset_expires_at = None
-    if expires is None or expires < datetime.now(timezone.utc) or not user.is_active:
+    if expires is None or expires < datetime.now(UTC) or not user.is_active:
         return None
     return user
 
@@ -302,7 +307,7 @@ def complete_paid_signup(db: Session, pending_id: str, session: dict[str, Any]) 
         db.info.setdefault("after_commit_mail", []).append(
             lambda db=db, user_id=user.id, raw=raw: _send_verification_later(db, user_id, raw))
 
-    pending.completed_at = datetime.now(timezone.utc)
+    pending.completed_at = datetime.now(UTC)
     pending.tenant_id = tenant.id if tenant else None
     return tenant
 

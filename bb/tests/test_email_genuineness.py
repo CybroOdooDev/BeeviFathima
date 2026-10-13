@@ -14,6 +14,7 @@ Two layers, tested separately:
 
 from __future__ import annotations
 
+
 import pytest
 from email_validator import EmailNotValidError
 from sqlalchemy import select
@@ -22,8 +23,10 @@ from app.core.config import settings
 from app.models import User
 from app.services import email_verification as verification_mod
 from app.services.email_check import UngenuineEmailError, assert_genuine_email
-
 from tests.test_platform_admin import api, head, promote, signup, staff_login  # noqa: F401
+from datetime import timezone
+
+UTC = timezone.utc
 
 PASSWORD = "a-long-enough-password"
 
@@ -203,9 +206,9 @@ def test_an_expired_token_is_rejected(api, captured_mail):
 
     db = api.session_factory()
     user = db.scalars(select(User).where(User.email == "owner@acme.example.com")).one()
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
-    user.email_verify_token_expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    user.email_verify_token_expires_at = datetime.now(UTC) - timedelta(minutes=1)
     db.commit()
     db.close()
 

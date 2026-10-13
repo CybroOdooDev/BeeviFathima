@@ -4,7 +4,6 @@ ledger and on to Odoo, user list, command queue, provisioning, release."""
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
 
 from sqlalchemy import select
 
@@ -13,6 +12,9 @@ from app.models import AdmsCommand, AdmsDevice, OdooConnection, PunchRecord, Ten
 from app.services import sync_engine as engine_mod
 from tests.conftest import FakeOdoo
 from tests.test_platform_admin import api, head, signup  # noqa: F401
+from datetime import datetime, timedelta, timezone
+
+UTC = timezone.utc
 
 SN = "CKJG201760123"
 
@@ -173,9 +175,23 @@ def test_offline_terminal_still_sends_what_already_arrived(api, monkeypatch):
     source = add_device(api, token).json()
     t.attlog(line("1001", when(2), 0))
     s = api.session_factory()
-    d = s.scalars(select(AdmsDevice)).first()
-    d.last_seen_at = datetime.now() - timedelta(hours=2)
-    s.commit(); s.close()
+    d = s.scalars(
+    select(AdmsDevice).where(AdmsDevice.serial_number == t.sn)).first()
+
+    assert d is not None, "Simulated terminal was not found in the database"
+
+    print("DEBUG: datetime.now():", datetime.now())
+
+    d.last_seen_at = datetime.now(UTC) - timedelta(hours=2)
+    print("DEBUG: assigned timestamp:", d.last_seen_at)
+    s.commit()
+    s.refresh(d)
+
+    print("DEBUG: timestamp after refresh:", d.last_seen_at)
+    s.close()
+    # d = s.scalars(select(AdmsDevice)).first()
+    # d.last_seen_at = datetime.now() - timedelta(hours=2)
+    # s.commit(); s.close()
 
     run = api.post(f"/api/v1/sources/{source['id']}/sync", headers=head(token)).json()
     assert run["punches_new"] == 1, "not an 'unreachable' abort — the punch is in hand"

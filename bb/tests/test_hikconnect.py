@@ -17,9 +17,10 @@ from app.integrations.providers.hikconnect import (
     parse_time,
 )
 from tests.test_platform_admin import api, head, signup  # noqa: F401
-from datetime import timezone, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 UTC = timezone.utc
+
 
 KEY, SECRET, TZ = "ak-team-1", "sk-team-1", "Asia/Dubai"
 EU = "https://ieu.hikcentralconnect.com"

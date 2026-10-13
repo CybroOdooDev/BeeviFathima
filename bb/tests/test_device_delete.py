@@ -14,9 +14,10 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models import AuditLog, Device, DeviceSource, PunchRecord, Tenant
-from datetime import timezone, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 UTC = timezone.utc
+
 
 @pytest.fixture
 def client():

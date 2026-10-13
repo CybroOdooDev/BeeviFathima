@@ -16,10 +16,10 @@ from app.models import (
     Tenant,
 )
 from tests.test_punch_ledger import api  # noqa: F401 — seeded tenant: 2 error + 1 unmapped punch
-
-from datetime import timezone, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 UTC = timezone.utc
+
 
 
 def _db():

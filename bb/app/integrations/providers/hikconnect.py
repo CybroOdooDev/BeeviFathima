@@ -56,9 +56,10 @@ from app.integrations.base import (
     register,
 )
 from app.integrations.providers.hikvision import direction_of as _hik_direction
-from datetime import timezone, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 UTC = timezone.utc
+
 
 log = logging.getLogger(__name__)
 

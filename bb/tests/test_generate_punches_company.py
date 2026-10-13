@@ -49,9 +49,8 @@ def test_cli_defaults_out_filename_by_company(tmp_path, monkeypatch) -> None:
     silently overwrite each other's punch data."""
     import sys
 
+    from tools import mock_roster
     from tools.generate_punches import main
-
-    import tools.mock_roster as mock_roster
 
     monkeypatch.chdir(tmp_path)
     # No real database: with several Odoo servers saved in a developer's one,

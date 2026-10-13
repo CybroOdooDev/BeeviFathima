@@ -17,8 +17,7 @@ from app.integrations.providers.cams import (
     parse_time,
 )
 from tests.test_platform_admin import api, head, signup  # noqa: F401
-
-from datetime import timezone, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 UTC = timezone.utc
 
