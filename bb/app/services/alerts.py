@@ -8,28 +8,18 @@ Nothing here is stored.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import (
-    AdmsDevice,
-    ConnectionStatus,
-    Device,
-    DeviceSource,
-    EmployeeMapping,
-    MappingStatus,
-    OdooConnection,
-    PunchRecord,
-    PunchState,
-    SyncRun,
-    Tenant,
+    AdmsDevice, ConnectionStatus, Device, DeviceSource, EmployeeMapping, MappingStatus,
+    OdooConnection, PunchRecord, PunchState, SyncRun, Tenant,
 )
 from app.services.scheduling import effective_interval, next_run_at, renewal_warning
 from app.services.timeutils import ensure_aware
-from datetime import datetime, timedelta, timezone
 
-UTC = timezone.utc
 #: Punches stop being retried by the sync engine after this many failed tries
 #: (see SyncEngine's ``attempts < 5``), so they sit until someone presses Retry.
 MAX_ATTEMPTS = 5
@@ -66,7 +56,7 @@ def _plural(n: int, one: str, many: str) -> str:
 
 
 def tenant_alerts(db: Session, tenant: Tenant, *, now: datetime | None = None) -> list[dict]:
-    now = now or datetime.now(UTC)
+    now = now or datetime.now(timezone.utc)
     out: list[dict] = []
 
     if not tenant.syncable:

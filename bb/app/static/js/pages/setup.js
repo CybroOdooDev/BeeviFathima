@@ -92,16 +92,15 @@ export async function render(mount) {
       ${devices.length ? `
         <div class="scroll">
           <table>
-            <thead><tr><th>Device</th><th>Serial</th><th>IP</th><th class="num">Punches</th><th>Last Seen</th><th>Pairing</th><th></th></tr></thead>
+            <thead><tr><th>Device</th><th>Serial</th><th>IP</th><th class="num">Punches</th><th>Last Seen</th><th></th></tr></thead>
             <tbody>
               ${devices.map((d) => `
                 <tr data-device="${esc(d.id)}">
-                  <td>${esc(d.alias || '—')}</td>
+                  <td>${esc(d.alias || '—')}${d.company_name || source?.default_company_name ? ` <span class="pill mute">${esc(d.company_name || source.default_company_name)}</span>` : ''}</td>
                   <td class="mono">${esc(d.serial_number)}</td>
                   <td class="mono">${esc(d.ip_address || '—')}</td>
                   <td class="num">${esc(d.punch_count)}</td>
                   <td>${esc(fmtAgo(d.last_seen_at))}</td>
-                  <td>${esc(d.pairing_override || 'account default')}</td>
                   <td style="text-align:right">
                     ${auth.canWrite ? `<button class="sm" data-toggle="${esc(d.id)}" data-on="${d.is_enabled}">
                       ${d.is_enabled ? 'Disable' : 'Enable'}</button>` : pill(d.is_enabled ? 'active' : 'skipped')}
@@ -196,5 +195,5 @@ function statusRow(connection) {
       ${pill(connection.status)}
     </div>
     ${connection.status_message
-      ? banner('Last Error', connection.status_message, 'bad') : ''}`;
+      ? banner('Error', connection.status_message, 'bad') : ''}`;
 }

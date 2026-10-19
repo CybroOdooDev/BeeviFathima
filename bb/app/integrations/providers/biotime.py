@@ -20,7 +20,8 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import Any
 
 import httpx
@@ -48,6 +49,16 @@ log = logging.getLogger(__name__)
 
 TIME_FMT = "%Y-%m-%d %H:%M:%S"
 
+#: DeviceSource.config key recording how this server treats ``upload_time``:
+#: absent until the first conclusive answer, then "from" (filters from that
+#: time on, used) or "off" (ignored or exact-match, never asked again).
+UPLOAD_FILTER_KEY = "biotime_upload_filter"
+UPLOAD_FILTER_ON = "from"
+UPLOAD_FILTER_OFF = "off"
+
+#: Single-transaction reads per run for the id-gap check (fetch_punches_after).
+MAX_ID_LOOKUPS = 200
+
 # BioTime punch_state -> semantic direction.
 STATE_IN = {"0", "3", "4"}   # Check In, Break In, Overtime In
 STATE_OUT = {"1", "2", "5"}  # Check Out, Break Out, Overtime Out
@@ -55,6 +66,10 @@ STATE_OUT = {"1", "2", "5"}  # Check Out, Break Out, Overtime Out
 
 class BioTimeError(ProviderError):
     """Any failure talking to BioTime."""
+
+
+class BioTimeNotFound(BioTimeError):
+    """HTTP 404: no such endpoint, or (for one transaction) no such record."""
 
 
 class BioTimeAuthError(BioTimeError):
@@ -154,6 +169,10 @@ class BioTimeProvider(AttendanceProvider):
     #: standalone-device protocols; tools/fix_connection_kinds.py re-files
     #: any connection saved that way.)
     kinds = frozenset({"platform"})
+    #: Transaction ids only grow, and one transaction can be read by id
+    #: (/iclock/api/transactions/<id>/), though the list ignores id filters —
+    #: see fetch_punches_after.
+    record_id_cursor = True
     capabilities = frozenset(
         {
             Capability.READ_PUNCHES,
@@ -183,6 +202,11 @@ class BioTimeProvider(AttendanceProvider):
         self.base_url = config.base_url.rstrip("/")
         self.auth_type = str(config.options.get("auth_type") or "token")
         self._token = config.token
+        #: Transaction ids the punch-time read returned this run, so the id
+        #: read only looks up the ones it did not (fetch_punches_after).
+        self._seen_ids: set[int] = set()
+        #: How far the id read got; the engine never moves its id cursor past it.
+        self.record_cursor_until: int | None = None
         self._client = httpx.Client(
             base_url=self.base_url,
             timeout=settings.http_timeout_seconds,
@@ -279,7 +303,7 @@ class BioTimeProvider(AttendanceProvider):
             response = self._request("GET", path, params=params, headers=self._auth_header())
 
         if response.status_code == 404:
-            raise BioTimeError(
+            raise BioTimeNotFound(
                 f"BioTime has no endpoint at {path} — check the URL and the BioTime version."
             )
         if response.status_code >= 400:
@@ -335,6 +359,7 @@ class BioTimeProvider(AttendanceProvider):
                 return
             page += 1
 
+        self.truncated = True   # the window was not read to its end
         log.warning(
             "BioTime %s: hit max_pages=%s; the rest follows on the next run.",
             path, settings.max_pages_per_run,
@@ -362,23 +387,144 @@ class BioTimeProvider(AttendanceProvider):
         if until:
             params["end_time"] = until.strftime(TIME_FMT)
 
+        seen: set[str] = set()
         for row in self._paginate("/iclock/api/transactions/", params):
-            txn = self._parse(row)
-            if txn is None:
+            event = self._event(row)
+            if event is not None:
+                seen.add(event.external_id)
+                yield event
+        self._seen_ids.update(int(i) for i in seen if i.isdigit())
+
+        # Late uploads: a terminal that was offline sends its backlog with the
+        # punch times it recorded, which fall before this window. Asking by
+        # upload time (when BioTime received them) finds them. Only for the
+        # window that reaches "now" — an old backlog slice has nothing late
+        # to add, and re-reading every upload since then would be wasteful.
+        if since is not None and self._upload_filter() != UPLOAD_FILTER_OFF and self._is_live(until):
+            yield from self._fetch_uploaded_since(since, seen)
+
+    def _update(self, values: dict[str, Any]) -> None:
+        self.config_updates = {**(getattr(self, "config_updates", None) or {}), **values}
+
+    # -- late uploads: the upload_time filter --------------------------------
+    def _upload_filter(self) -> str | None:
+        return (self.config.options or {}).get(UPLOAD_FILTER_KEY)
+
+    def _is_live(self, until: datetime | None) -> bool:
+        if until is None:
+            return True
+        now = datetime.now(ZoneInfo(self.config.timezone or "UTC")).replace(tzinfo=None)
+        return until >= now - timedelta(hours=1)
+
+    def _fetch_uploaded_since(self, since: datetime, seen: set[str]) -> Iterator[PunchEvent]:
+        """Transactions BioTime received at or after ``since``, whatever
+        their punch time. The filter's behaviour is checked against the rows
+        that come back, and remembered (``config_updates``): one that
+        ignores the value, or matches it exactly instead of "from", is
+        switched off for this connection rather than trusted."""
+        value = since.strftime(TIME_FMT)
+        cut_short = self.truncated
+        self.truncated = False
+        rows = list(self._paginate("/iclock/api/transactions/", {"upload_time": value}))
+        if self.truncated:
+            log.warning("BioTime %s: more late uploads than one read holds; the rest follow next run",
+                        self.base_url)
+        self.truncated = cut_short   # the punch-time window's completeness is what the engine tracks
+
+        uploaded = [str(r.get("upload_time") or "")[:19] for r in rows]
+        if any(u and u < value for u in uploaded):
+            self._remember(UPLOAD_FILTER_OFF, "ignores the upload_time filter")
+            return
+        if uploaded and all(u == value for u in uploaded) and len(rows) > 1:
+            # Exact-match semantics: useless as a "from" filter. (One row equal
+            # to the value proves nothing either way, so that waits.)
+            self._remember(UPLOAD_FILTER_OFF, "matches upload_time exactly, not from that time on")
+            return
+        if any(u > value for u in uploaded):
+            self._remember(UPLOAD_FILTER_ON, None)
+        late = 0
+        for row in rows:
+            event = self._event(row)
+            if event is None or event.external_id in seen:
                 continue
-            yield PunchEvent(
-                external_id=txn.external_id,
-                emp_code=txn.emp_code,
-                punch_time_local=txn.punch_time_local,
-                direction=txn.direction,
-                terminal_sn=txn.terminal_sn,
-                terminal_alias=txn.terminal_alias,
-                first_name=txn.first_name,
-                last_name=txn.last_name,
-                department=txn.department,
-                verify_type=txn.verify_type,
-                raw=txn.raw,
-            )
+            seen.add(event.external_id)
+            if event.external_id.isdigit():
+                self._seen_ids.add(int(event.external_id))
+            late += 1
+            yield event
+        if late:
+            log.info("BioTime %s: %d late upload(s) found by upload_time", self.base_url, late)
+
+    def _remember(self, mode: str, why: str | None) -> None:
+        if self._upload_filter() == mode:
+            return
+        if why:
+            log.warning("BioTime %s %s; reading by punch time only", self.base_url, why)
+        self._update({UPLOAD_FILTER_KEY: mode})
+
+    def _event(self, row: dict[str, Any]) -> PunchEvent | None:
+        txn = self._parse(row)
+        if txn is None:
+            return None
+        return PunchEvent(
+            external_id=txn.external_id,
+            emp_code=txn.emp_code,
+            punch_time_local=txn.punch_time_local,
+            direction=txn.direction,
+            terminal_sn=txn.terminal_sn,
+            terminal_alias=txn.terminal_alias,
+            first_name=txn.first_name,
+            last_name=txn.last_name,
+            department=txn.department,
+            verify_type=txn.verify_type,
+            record_id=int(txn.external_id) if txn.external_id.isdigit() else None,
+            raw=txn.raw,
+        )
+
+    # -- late uploads: the gaps in the id sequence ----------------------------
+    def fetch_punches_after(self, after_id: int, since=None, until=None) -> Iterator[PunchEvent]:
+        """Transactions numbered after ``after_id`` that the punch-time read
+        did not return. BioTime numbers transactions as it receives them, so
+        a gap between ids the time read saw is a transaction stored there
+        with a punch time outside the window — a late upload — or one since
+        deleted. Each gap is read on its own (/iclock/api/transactions/<id>/),
+        then a few ids past the newest, until one does not exist. At most
+        MAX_ID_LOOKUPS per run; ``record_cursor_until`` says how far it got."""
+        top = max(self._seen_ids, default=after_id)
+        gaps = [i for i in range(after_id + 1, top + 1) if i not in self._seen_ids]
+        lookups = 0
+        checked = after_id
+        for txn_id in gaps:
+            if lookups >= MAX_ID_LOOKUPS:
+                self.record_cursor_until = checked
+                log.warning("BioTime %s: %d id gap(s) left to check; continuing next run",
+                            self.base_url, len([g for g in gaps if g > checked]))
+                return
+            lookups += 1
+            event = self._one(txn_id)
+            checked = txn_id
+            if event is not None:
+                yield event
+        # Past the newest id the time read saw: anything there was received
+        # after it with an older punch time.
+        checked = max(checked, top)
+        for txn_id in range(top + 1, top + 1 + MAX_ID_LOOKUPS - lookups):
+            event = self._one(txn_id)
+            if event is None:
+                break
+            checked = txn_id
+            yield event
+        self.record_cursor_until = checked
+
+    def _one(self, txn_id: int) -> PunchEvent | None:
+        try:
+            data = self._get(f"/iclock/api/transactions/{txn_id}/")
+        except BioTimeNotFound:
+            return None
+        row = data.get("data") if isinstance(data.get("data"), dict) else data
+        if not isinstance(row, dict) or row.get("id") is None:
+            return None
+        return self._event(row)
 
     @staticmethod
     def _parse(row: dict[str, Any]) -> _Transaction | None:

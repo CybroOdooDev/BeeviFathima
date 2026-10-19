@@ -31,6 +31,18 @@ that belong to no user are skipped. Direction comes from ``AttendanceState``
 attendance terminals, else ``Type`` (Entry / Exit); when neither is present it
 is left to the pairing logic.
 
+Late records: the record number
+--------------------------------
+``RecNo`` counts up as the terminal stores records, failed attempts included.
+The documented query has no "after this RecNo" condition, so the record-id
+read (``fetch_punches_after``) works from the gaps: every RecNo the time read
+saw is noted, and a number between the id cursor and the highest one seen
+that did not come back is a record stored with a time outside the window —
+the terminal's clock was set back, say. Only then are older days searched,
+newest first, for those numbers. A terminal whose numbers have gaps that are
+never found (numbering shared with other record types, records deleted) is
+switched to reading by time only after MISS_LIMIT fruitless searches.
+
 Built from Dahua's published documents; tested against a simulated terminal
 (tests/test_dahua.py), not a physical one. Firmware varies — pilot first. Time
 handling is the thing to check: the query is sent as epoch seconds and, if a
@@ -41,7 +53,8 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Iterator
+from datetime import datetime, timedelta, timezone
+from typing import Iterator
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -52,16 +65,13 @@ from app.integrations.base import (
     AttendanceProvider,
     Capability,
     ConnectionInfo,
+    IdFilterUnsupported,
     ProviderError,
     PunchEvent,
     SourceConfig,
     TerminalRecord,
     register,
 )
-from datetime import datetime, timedelta, timezone
-
-UTC = timezone.utc
-
 
 log = logging.getLogger(__name__)
 
@@ -73,6 +83,9 @@ MAX_PAGES = 200
 MAX_DAYS = 45
 _IN = {"checkin", "entry", "in", "breakin", "overtimein", "mealin"}
 _OUT = {"checkout", "exit", "out", "breakout", "overtimeout", "mealout"}
+MAX_GAP_DAYS = 31        # days searched back for missing record numbers, per run
+MISS_LIMIT = 3           # fruitless searches in a row before reading by time only
+MISSES_KEY = "dahua_recno_misses"
 METHODS = {"0": "password", "1": "card", "2": "password+card", "6": "fingerprint", "15": "face"}
 
 
@@ -112,7 +125,7 @@ def parse_created(value: str, zone: ZoneInfo) -> datetime | None:
         return None
     if text.isdigit():
         number = int(text)
-        return datetime.fromtimestamp(number / 1000 if number > 1e11 else number, tz=UTC)
+        return datetime.fromtimestamp(number / 1000 if number > 1e11 else number, tz=timezone.utc)
     try:
         moment = datetime.fromisoformat(text.replace("Z", "+00:00").replace(" ", "T", 1))
     except ValueError:
@@ -140,6 +153,7 @@ class DahuaProvider(AttendanceProvider):
     )
     capabilities = frozenset({Capability.READ_PUNCHES, Capability.LIST_TERMINALS})
     kinds = frozenset({"device"})
+    record_id_cursor = True
     config_fields = (
         {"name": "base_url", "label": "Device Address", "type": "text", "required": True,
          "help": "http://<device IP> — add :port if it isn't 80."},
@@ -162,6 +176,12 @@ class DahuaProvider(AttendanceProvider):
         self._basic = False           # this device only answers a Basic challenge
         self._epoch = True            # StartTime/EndTime as epoch seconds; False = local text
         self._serial: str | None = None
+        #: Every RecNo the time read returned this run (failed attempts too),
+        #: and the earliest time it read from — what fetch_punches_after works from.
+        self._seen_recnos: set[int] = set()
+        self._read_from: datetime | None = None
+        #: How far the record-id read got; the engine's id cursor stops there.
+        self.record_cursor_until: int | None = None
 
     # -- transport ------------------------------------------------------------
     def _http(self) -> httpx.Client:
@@ -244,6 +264,8 @@ class DahuaProvider(AttendanceProvider):
             for row in fresh:
                 if row.get("RecNo"):
                     seen.add(row["RecNo"])
+                    if row["RecNo"].strip().isdigit():
+                        self._seen_recnos.add(int(row["RecNo"]))
                 yield row
             if total <= len(rows) or not rows:
                 return
@@ -252,6 +274,7 @@ class DahuaProvider(AttendanceProvider):
                 return
             # More than one page: continue from the last record's time (inclusive).
             cursor = last if (last > cursor or fresh) else last + timedelta(seconds=1)
+        self.truncated = True   # the window was not read to its end
         log.warning("Dahua %s: stopped paging after %d pages", self.host, MAX_PAGES)
 
     # -- interface -----------------------------------------------------------
@@ -277,33 +300,104 @@ class DahuaProvider(AttendanceProvider):
         end = until.replace(tzinfo=zone) if until else now
         start = since.replace(tzinfo=zone) if since else end - timedelta(days=1)
         start = max(start, end - timedelta(days=MAX_DAYS))
-        if not self._serial:
-            try:
-                self._system_info()
-            except DahuaError:
-                raise
-        serial = self._serial or self.host
+        if self._read_from is None or start < self._read_from:
+            self._read_from = start
+        serial = self._device_serial()
         cursor = start
         while cursor < end:
             chunk_end = min(cursor + timedelta(days=1), end)
             for row in self._window(cursor, chunk_end):
-                if row.get("Status", "1") != "1":
-                    continue                       # a failed attempt, not a punch
-                user = (row.get("UserID") or "").strip()
-                when = parse_created(row.get("CreateTime", ""), zone)
-                if not user or when is None:
-                    continue
-                utc = when.astimezone(UTC)
-                rec = (row.get("RecNo") or "").strip()
-                door = (row.get("Door") or row.get("ReaderID") or "").strip()
-                yield PunchEvent(
-                    external_id=f"{serial}:{rec}" if rec else f"{serial}:{user}:{utc:%Y%m%d%H%M%S}",
-                    emp_code=user,
-                    punch_time_local=when.astimezone(zone).replace(tzinfo=None),
-                    direction=direction_of(row),
-                    terminal_sn=serial,
-                    verify_type=METHODS.get((row.get("Method") or "").strip()),
-                    raw={"punch_state": row.get("AttendanceState") or row.get("Type") or "",
-                         "method": row.get("Method"), "door": door, "card": row.get("CardNo")},
-                )
+                event = self._punch(row, serial, zone)
+                if event is not None:
+                    yield event
             cursor = chunk_end
+
+    def _device_serial(self) -> str:
+        if not self._serial:
+            self._system_info()
+        return self._serial or self.host
+
+    def _punch(self, row: dict[str, str], serial: str, zone: ZoneInfo) -> PunchEvent | None:
+        if row.get("Status", "1") != "1":
+            return None                            # a failed attempt, not a punch
+        user = (row.get("UserID") or "").strip()
+        when = parse_created(row.get("CreateTime", ""), zone)
+        if not user or when is None:
+            return None
+        utc = when.astimezone(timezone.utc)
+        rec = (row.get("RecNo") or "").strip()
+        door = (row.get("Door") or row.get("ReaderID") or "").strip()
+        return PunchEvent(
+            external_id=f"{serial}:{rec}" if rec else f"{serial}:{user}:{utc:%Y%m%d%H%M%S}",
+            emp_code=user,
+            punch_time_local=when.astimezone(zone).replace(tzinfo=None),
+            direction=direction_of(row),
+            terminal_sn=serial,
+            verify_type=METHODS.get((row.get("Method") or "").strip()),
+            record_id=int(rec) if rec.isdigit() else None,
+            raw={"punch_state": row.get("AttendanceState") or row.get("Type") or "",
+                 "method": row.get("Method"), "door": door, "card": row.get("CardNo")},
+        )
+
+    # -- late records: gaps in the RecNo sequence -----------------------------
+    def fetch_punches_after(self, after_id: int, since=None, until=None) -> Iterator[PunchEvent]:
+        """Records numbered after ``after_id`` that the time read did not
+        return. RecNo counts up as the terminal stores records, so a number
+        missing below the highest one seen is a record stored with a time
+        outside the window. Older days — from where the time read started
+        back to ``since``, newest first, at most MAX_GAP_DAYS per run — are
+        searched for those numbers only when there are any.
+        ``record_cursor_until`` says how far the engine may move its cursor."""
+        top = max(self._seen_recnos, default=after_id)
+        self.record_cursor_until = max(top, after_id)
+        if top <= after_id:
+            return                       # nothing new (or the numbering restarted: the engine follows)
+        missing = set(range(after_id + 1, top + 1)) - self._seen_recnos
+        if not missing:
+            self._misses(0)
+            return
+
+        zone = ZoneInfo(self.tz)
+        floor = since.replace(tzinfo=zone) if since else None
+        upper = self._read_from or (until.replace(tzinfo=zone) if until else datetime.now(zone))
+        if floor is None or floor >= upper:
+            floor = upper - timedelta(days=MAX_GAP_DAYS)
+        serial = self._device_serial()
+        found = 0
+        day_end, days = upper, 0
+        while missing and day_end > floor and days < MAX_GAP_DAYS:
+            day_start = max(day_end - timedelta(days=1), floor)
+            for row in self._window(day_start, day_end):
+                rec = (row.get("RecNo") or "").strip()
+                if not rec.isdigit() or int(rec) not in missing:
+                    continue
+                missing.discard(int(rec))
+                found += 1
+                event = self._punch(row, serial, zone)
+                if event is not None:
+                    yield event
+            day_end, days = day_start, days + 1
+
+        if missing and day_end > floor:
+            # Ran out of this run's search budget: the cursor waits below the
+            # first number still missing, and the search goes on next run.
+            self.record_cursor_until = min(missing) - 1
+            log.info("Dahua %s: %d record number(s) still missing; searching on next run",
+                     self.host, len(missing))
+            return
+        if found:
+            log.info("Dahua %s: %d record(s) found by record number outside the time window",
+                     self.host, found)
+            self._misses(0)
+            return
+        # Searched the whole range and found none of them: deleted records, or
+        # numbering this terminal shares with other record types.
+        misses = int((self.config.options or {}).get(MISSES_KEY) or 0) + 1
+        self._misses(misses)
+        if misses >= MISS_LIMIT:
+            raise IdFilterUnsupported(
+                f"record numbers on this terminal have gaps that are never found ({misses} searches)")
+
+    def _misses(self, count: int) -> None:
+        if int((self.config.options or {}).get(MISSES_KEY) or 0) != count:
+            self.config_updates = {**(getattr(self, "config_updates", None) or {}), MISSES_KEY: count}

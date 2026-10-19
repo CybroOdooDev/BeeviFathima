@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 
 from app.core.config import settings
 from app.db.session import session_scope
@@ -39,9 +40,6 @@ from app.services.scheduling import (
     sweep_subscriptions,
 )
 from app.services.sync_engine import SyncEngine, close_stale_attendances
-from datetime import datetime, timedelta, timezone
-
-UTC = timezone.utc
 
 log = logging.getLogger(__name__)
 
@@ -132,7 +130,7 @@ class Scheduler:
                 await self._tick()
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception:  # noqa: BLE001
                 # The loop is the one thing that must not die. A tick that
                 # raises has already failed; a loop that exits means the
                 # customer's attendance silently stops arriving.
@@ -142,7 +140,7 @@ class Scheduler:
                     self._stopping.wait(), timeout=settings.scheduler_tick_seconds
                 )
             except asyncio.TimeoutError:
-                continue
+                pass
 
     async def _tick(self) -> None:
         self.ticks += 1
@@ -191,7 +189,7 @@ class Scheduler:
         try:
             async with self._semaphore:
                 await asyncio.to_thread(self._sync_blocking, tenant_id)
-        except Exception:
+        except Exception:  # noqa: BLE001 — one tenant must not stop the rest
             log.exception("Scheduled sync failed for tenant %s", tenant_id)
         finally:
             self._in_flight.discard(tenant_id)
@@ -216,7 +214,7 @@ class Scheduler:
 
     # --- housekeeping ------------------------------------------------------
     def _stale_close_due(self) -> bool:
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.utc)
         if self._last_stale_close is None:
             self._last_stale_close = now  # not on the first tick — let a sync run first
             return False
@@ -230,7 +228,7 @@ class Scheduler:
             closed = await asyncio.to_thread(self._stale_close_blocking)
             if closed:
                 log.info("Closed %d stale open attendance record(s)", closed)
-        except Exception:
+        except Exception:  # noqa: BLE001
             log.exception("Stale-attendance close failed")
 
     @staticmethod
@@ -249,7 +247,7 @@ class Scheduler:
         return closed
 
     def _subscription_sweep_due(self) -> bool:
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.utc)
         if self._last_subscription_sweep is None:
             self._last_subscription_sweep = now  # not on the first tick either
             return False
@@ -266,11 +264,11 @@ class Scheduler:
                     "Subscription sweep: %d lapsed to past_due, %d renewed to active",
                     result["lapsed"], result["renewed"],
                 )
-        except Exception:
+        except Exception:  # noqa: BLE001
             log.exception("Subscription sweep failed")
 
     def _alert_sweep_due(self) -> bool:
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.utc)
         if self._last_alert_sweep is None:
             self._last_alert_sweep = now  # not on the first tick either
             return False
@@ -284,7 +282,7 @@ class Scheduler:
             result = await asyncio.to_thread(self._alert_sweep_blocking)
             if result["emails_sent"]:
                 log.info("Alert emails: %d sent to %d account(s)", result["emails_sent"], result["tenants_emailed"])
-        except Exception:
+        except Exception:  # noqa: BLE001
             log.exception("Alert email sweep failed")
 
     @staticmethod

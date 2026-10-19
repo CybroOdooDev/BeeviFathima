@@ -880,6 +880,46 @@ class OdooClient:
         )
         return rows[0]["id"] if rows else None
 
+    def attendances_by_id(self, attendance_ids: list[int]) -> dict[int, dict[str, Any]]:
+        """id -> {id, check_in, check_out} for the records Odoo still shows.
+        Used to bring BioBridge's own copy back in step with Odoo, where a
+        record may have been closed (or removed) by something other than a
+        sync."""
+        if not attendance_ids:
+            return {}
+        company_domain = self._company_domain(self.fields_of("hr.attendance"))
+        rows = self.execute(
+            "hr.attendance",
+            "search_read",
+            [[("id", "in", list(attendance_ids)), *company_domain]],
+            {"fields": ["id", "check_in", "check_out"]},
+        )
+        return {int(r["id"]): r for r in rows}
+
+    def attendance_covering(self, employee_id: int, moment: datetime) -> dict[str, Any] | None:
+        """The closed record that already spans ``moment``, if any.
+
+        Odoo refuses an attendance whose check-in falls inside another one of
+        the same employee — closed or not. It looks at the latest record that
+        starts at or before the new check-in and rejects it when that one
+        ends after it ("the employee was already checked in on …", which
+        prints the *new* check-in, not the old record's). Asking first lets
+        the engine deal with it instead of retrying a write that cannot work.
+        """
+        company_domain = self._company_domain(self.fields_of("hr.attendance"))
+        rows = self.execute(
+            "hr.attendance",
+            "search_read",
+            [[("employee_id", "=", employee_id), ("check_in", "<=", fmt_dt(moment)), *company_domain]],
+            {"fields": ["id", "check_in", "check_out"], "limit": 1, "order": "check_in desc"},
+        )
+        if not rows:
+            return None
+        end = parse_dt(rows[0].get("check_out"))
+        if end is None or end <= moment:
+            return None
+        return rows[0]
+
     def attendance_closed_at(self, employee_id: int, check_out: datetime) -> dict[str, Any] | None:
         """The record, if any, already closed with exactly this check-out.
 
@@ -1140,6 +1180,7 @@ class OdooClient:
         location: str | None = None,
         terminal_model: str | None = None,
         ip_address: str | None = None,
+        company_id: int | None = None,
     ) -> int:
         """Find-or-create the device record for a terminal, however this
         connection's Odoo got its device tracking. Callers gate this on
@@ -1161,6 +1202,8 @@ class OdooClient:
                 vals["terminal_model"] = terminal_model
             if ip_address:
                 vals["ip_address"] = ip_address
+            if company_id:
+                vals["company_id"] = company_id
             result = self.execute("biobridge.device", "biobridge_upsert", [serial_number, vals])
             return int(result)
 
@@ -1196,12 +1239,23 @@ class OdooClient:
             # Only stamped on a row being created or claimed: a device found
             # in one enabled company must not be moved to another just
             # because several are on.
-            new_company = scope[0] if has_company_field and scope is not None else None
+            new_company = company_id or (scope[0] if has_company_field and scope is not None else None)
+            if new_company is None and has_company_field and len(self.list_companies()) <= 1:
+                # Single-company Odoo, terminal with no company: use the API
+                # user's own so the field is never blank. Never on a
+                # multi-company Odoo, where that would be a guess that files an
+                # unassigned terminal under whichever company the user is in.
+                try:
+                    rows = self.execute("res.users", "read", [[self.uid], ["company_id"]])
+                    cid = rows[0]["company_id"] if rows else None
+                    new_company = (cid[0] if isinstance(cid, (list, tuple)) else cid) or None
+                except OdooError:
+                    new_company = None
             existing = self.execute(
                 "x_biobridge_device",
                 "search_read",
                 [[("x_serial_number", "=", serial_number), *company_domain]],
-                {"fields": ["id"], "limit": 1},
+                {"fields": ["id", "x_company_id"] if has_company_field else ["id"], "limit": 1},
             )
             claimed = False
             if not existing and company_domain:
@@ -1220,11 +1274,15 @@ class OdooClient:
                     {"fields": ["id"], "limit": 1},
                 )
                 claimed = bool(existing)
+            if existing and has_company_field and not claimed and not existing[0].get("x_company_id"):
+                claimed = True  # found, but its company was never filled in
             if existing:
                 if claimed and new_company is not None:
                     vals["x_company_id"] = new_company
                 if vals:
                     self.execute("x_biobridge_device", "write", [[existing[0]["id"]], vals])
+                    if "x_company_id" in vals:
+                        self._verify_device_company(existing[0]["id"], vals["x_company_id"])
                 return int(existing[0]["id"])
             if new_company is not None:
                 vals["x_company_id"] = new_company
@@ -1238,6 +1296,39 @@ class OdooClient:
             "the biobridge_attendance add-on, or run the device-tracking "
             "bootstrap, first."
         )
+
+    def delete_device(self, serial_number: str, company_id: int | None = None) -> bool:
+        """Remove the device record of a terminal that BioBridge no longer
+        has, in whichever mode this Odoo got device tracking. True when a
+        record was deleted.
+
+        Attendance already recorded against the device stays: the link is a
+        plain many2one, so Odoo just clears it. The record is only touched
+        when it can be pinned to one company — the terminal's own, else this
+        connection's enabled ones — and if that still leaves several rows
+        with the serial number (an unrestricted connection and a terminal
+        with no company) nothing is deleted, since one of them may be
+        another company's.
+        """
+        mode = self._device_tracking_mode()
+        if mode == "module":
+            model, serial_f, company_f = "biobridge.device", "serial_number", "company_id"
+        elif mode == "bootstrap":
+            model, serial_f, company_f = "x_biobridge_device", "x_serial_number", "x_company_id"
+            if company_f not in self.fields_of(model):
+                company_f = None
+        else:
+            return False
+        domain: list[Any] = [(serial_f, "=", serial_number)]
+        if company_f:
+            domain += [(company_f, "=", company_id)] if company_id else self._in_scope(company_f)
+        found = self.execute(
+            model, "search", [domain], {"limit": 2, "context": {"active_test": False}}
+        )
+        if not found or (len(found) > 1 and not company_id):
+            return False
+        self.execute(model, "unlink", [[int(found[0])]])
+        return True
 
     # -- bootstrap: create device tracking with no add-on, over the API ----
     def ensure_device_tracking_bootstrap(self) -> None:
@@ -1317,6 +1408,19 @@ class OdooClient:
         # attendance, so a change of method part-way through stays visible.
         self.ensure_pairing_tracking_bootstrap()
 
+    def _verify_device_company(self, device_id: int, company_id: int) -> None:
+        """Read the company back: Odoo can accept a write and silently keep
+        the old value (a read-only field, a rule), and that must be loud."""
+        rows = self.execute("x_biobridge_device", "read", [[device_id], ["x_company_id"]])
+        got = rows[0]["x_company_id"] if rows else None
+        got = got[0] if isinstance(got, (list, tuple)) else got
+        if got != company_id:
+            raise OdooError(
+                f"Odoo accepted the write but device {device_id} still has company "
+                f"{got or 'empty'} (expected {company_id}). Check that x_company_id is "
+                "writable for the connected user."
+            )
+
     def _assert_settings_access(self) -> None:
         if self.can("ir.model", "create") is False:
             raise OdooAuthError(
@@ -1326,6 +1430,66 @@ class OdooClient:
                 "the same access level Odoo Studio itself requires, since this "
                 "uses the same underlying mechanism Studio does."
             )
+
+    def ensure_device_company_rule(self) -> bool:
+        """Make sure the row-level company rule exists on the auto-created
+        device model, so a connection set up before the rule was added (or one
+        whose rule was removed) is isolated too. True when it is in place.
+        No-op with the add-on, which ships its own rule."""
+        if self._device_tracking_mode() != "bootstrap":
+            return False
+        if "x_company_id" not in self.fields_of("x_biobridge_device"):
+            return False
+        self._ensure_company_rule(
+            self._model_id("x_biobridge_device"), "x_biobridge_device", "x_company_id"
+        )
+        return True
+
+    def check_device_isolation(self) -> list[str]:
+        """Ask Odoo what each company can see of the device model, and what
+        security records guard it. Plain-text lines for the sync log: the one
+        way to tell, from outside, whether the rule actually filters."""
+        mode = self._device_tracking_mode()
+        model, field = (
+            ("biobridge.device", "company_id") if mode == "module"
+            else ("x_biobridge_device", "x_company_id")
+        )
+        if mode not in ("module", "bootstrap"):
+            return []
+        lines: list[str] = []
+        companies = self.list_companies()
+        everything = self.execute(
+            model, "search_read", [[]], {"fields": ["id", field], "context": {"active_test": False}},
+            scope_to_company=False,
+        )
+        lines.append(f"{model}: {len(everything)} device(s) visible with no company filter")
+        for company in companies:
+            seen = self.execute(
+                model, "search_read", [[]],
+                {"fields": ["id", field],
+                 "context": {"allowed_company_ids": [company["id"]], "active_test": False}},
+                scope_to_company=False,
+            )
+            foreign = [
+                r["id"] for r in seen
+                if r.get(field) and (r[field][0] if isinstance(r[field], (list, tuple)) else r[field]) != company["id"]
+            ]
+            lines.append(
+                f"company {company['id']} ({company.get('name')}): sees {len(seen)}"
+                + (f", including {len(foreign)} of another company -> NOT isolated" if foreign else ", isolated")
+            )
+        try:
+            for sec in ("ir.rule", "ir.access"):
+                if self._model_exists(sec):
+                    flds = ["name", "domain_force"] if sec == "ir.rule" else ["name", "domain"]
+                    rows = self.execute(
+                        sec, "search_read", [[("name", "like", "biobridge_company")]],
+                        {"fields": flds, "context": {"active_test": False}},
+                    )
+                    lines.append(f"{sec}: {[(r['name'], r.get(flds[1])) for r in rows] or 'none found'}")
+        except OdooError as exc:
+            lines.append(f"could not read security records: {exc}")
+        return lines
 
     def _model_id(self, model_name: str) -> int:
         rows = self.execute("ir.model", "search", [[("model", "=", model_name)]], {"limit": 1})
@@ -1407,12 +1571,47 @@ class OdooClient:
             f"['|', ('{company_field}', '=', False), "
             f"('{company_field}', 'in', company_ids)]"
         )
-        if self._unified_access:
+        # Written to every security model this Odoo has, found by asking rather
+        # than by version: older Odoo has ir.rule, Odoo 20 folded it into
+        # ir.access, and a build with both gets both. Never decided from state
+        # another step happened to leave behind.
+        wrote = False
+        if self._model_exists("ir.access"):
             # Odoo 20: a restriction is an ir.access row with no group.
             self._ensure_access_row(
                 model_id, name, group_id=False, domain=domain, repair_domain=True
             )
-            return
+            # The grant row (full CRUD for internal users) must carry the same
+            # domain. Left unrestricted it grants every row on its own, and in
+            # a model where access rows add up the restriction above never
+            # narrows anything — which is what the isolation check showed.
+            grant = self.execute(
+                "ir.access", "search_read",
+                [[("model_id", "=", model_id), ("name", "=", f"{model_name}.biobridge")]],
+                {"fields": ["domain"], "limit": 1},
+            )
+            if grant and (grant[0].get("domain") or "").strip() != domain:
+                self.execute("ir.access", "write", [[grant[0]["id"]], {"domain": domain}])
+            wrote = True
+        if self._model_exists("ir.rule"):
+            self._ensure_ir_rule(model_id, name, domain)
+            wrote = True
+        if not wrote:
+            raise OdooError("This Odoo has neither ir.rule nor ir.access, so no company rule can be set.")
+
+    def _model_exists(self, model_name: str) -> bool:
+        cache = self.__dict__.setdefault("_model_exists_cache", {})
+        if model_name not in cache:
+            try:
+                self.execute(model_name, "search", [[]], {"limit": 1})
+                cache[model_name] = True
+            except OdooError as exc:
+                if not self._model_missing(exc, model_name):
+                    raise
+                cache[model_name] = False
+        return cache[model_name]
+
+    def _ensure_ir_rule(self, model_id: int, name: str, domain: str) -> None:
         existing = self.execute(
             "ir.rule",
             "search_read",
@@ -1430,12 +1629,33 @@ class OdooClient:
             # domain on "Update setup" overrides nothing the customer made.
             if (existing[0].get("domain_force") or "").strip() != domain:
                 self.execute("ir.rule", "write", [[existing[0]["id"]], {"domain_force": domain}])
+            # Also repaired: a rule someone archived, or limited to one group
+            # or one operation, silently stops isolating anything.
+            self._repair_rule_flags(existing[0]["id"])
             return
         self.execute(
             "ir.rule",
             "create",
             [{"name": name, "model_id": model_id, "domain_force": domain}],
         )
+
+    def _repair_rule_flags(self, rule_id: int) -> None:
+        fields = self.fields_of("ir.rule")
+        want = {"active": True, "perm_read": True, "perm_write": True,
+                "perm_create": True, "perm_unlink": True}
+        want = {k: v for k, v in want.items() if k in fields}
+        if "groups" in fields:
+            want["groups"] = [(5, 0, 0)]  # no group: the rule is global
+        rows = self.execute("ir.rule", "read", [[rule_id], list(want)])
+        row = rows[0] if rows else {}
+        changed = {
+            k: v for k, v in want.items()
+            if k != "groups" and row.get(k) is not v
+        }
+        if "groups" in want and row.get("groups"):
+            changed["groups"] = want["groups"]
+        if changed:
+            self.execute("ir.rule", "write", [[rule_id], changed])
 
     def _xmlid_to_id(self, module: str, name: str) -> int | None:
         rows = self.execute(

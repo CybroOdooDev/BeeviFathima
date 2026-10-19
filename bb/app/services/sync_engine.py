@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Collection
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -31,10 +32,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.crypto import encrypt
 from app.integrations.base import (
-    Capability,
-    EmployeeRecord,
-    ProviderError,
-    UnsupportedCapability,
+    Capability, EmployeeRecord, IdFilterUnsupported, ProviderError, UnsupportedCapability,
 )
 from app.integrations.odoo import OdooClient, OdooError, parse_dt
 from app.models import (
@@ -52,18 +50,23 @@ from app.models import (
     SyncStatus,
     Tenant,
 )
-from app.services import adms
+from app.services import device_removals
+from app.services.device_links import terminal_may_register_in_odoo
+from app.services.company_scope import (
+    MULTI_COMPANY_PROVISION_MESSAGE,
+    enabled_company_ids,
+    infer_device_companies,
+    is_multi_company,
+)
+from app.services.device_links import device_for_punch, restore_terminals_from_punches
 from app.services.connections import (
     UnsafeTargetError,
     build_odoo_client,
     build_source_provider,
 )
 from app.services.device_limits import over_limit_device_ids
-from app.services.device_links import device_for_punch, restore_terminals_from_punches
 from app.services.pairing import (
     Direction as PairDirection,
-)
-from app.services.pairing import (
     OpenShift,
     PairingConfig,
     PairingMode,
@@ -73,9 +76,6 @@ from app.services.pairing import (
     pair_punches,
 )
 from app.services.timeutils import local_to_utc, utc_to_local, utcnow_naive
-from datetime import datetime, timedelta, timezone
-
-UTC = timezone.utc
 
 log = logging.getLogger(__name__)
 
@@ -83,6 +83,15 @@ log = logging.getLogger(__name__)
 #: enough that the round trips are few, small enough that the IN list stays an
 #: index seek and the buffer stays negligible.
 INGEST_BATCH = 500
+
+#: DeviceSource.config keys of the record-id cursor (see _record_cursor).
+RECORD_CURSOR_KEY = "record_cursor"
+RECORD_CURSOR_OFF = "record_cursor_unsupported"
+
+#: Reading a window whose read was cut short by a page cap (see _read_by_time):
+#: at most this many reads per source per run, slices never under MIN_SLICE.
+MAX_SLICE_READS = 12
+MIN_SLICE = timedelta(minutes=10)
 
 #: Bound parameters per lookup. SQLite's older default ceiling is 999.
 ID_LOOKUP_CHUNK = 500
@@ -128,7 +137,7 @@ class SyncEngine:
         self._failures_before = tenant.consecutive_failures
         # Held locally as well as on the row: the run commits mid-cycle, which
         # expires the ORM object, and a reloaded value can come back naive.
-        self._started_at = datetime.now(UTC)
+        self._started_at = datetime.now(timezone.utc)
         self.run = SyncRun(
             tenant_id=tenant.id,
             status=SyncStatus.running.value,
@@ -145,9 +154,13 @@ class SyncEngine:
         self._source_cache: dict[str, DeviceSource | None] = {}
 
     # -- logging -----------------------------------------------------------
-    def _log(self, message: str, level: str = "info") -> None:
-        stamp = datetime.now(UTC).strftime("%H:%M:%S")
-        self._log_lines.append(f"[{stamp}] {level.upper()}: {message}")
+    def _log(self, message: str, level: str = "info", *, ui: bool = True) -> None:
+        """Write a log line. ``ui=False`` keeps it in the server log only:
+        device records, company isolation and provisioning are housekeeping,
+        and the run log customers read is about attendance."""
+        stamp = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        if ui:
+            self._log_lines.append(f"[{stamp}] {level.upper()}: {message}")
         getattr(log, level, log.info)("[tenant=%s] %s", self.tenant.slug, message)
 
     def pairing_config(self, mode: str | None = None) -> PairingConfig:
@@ -212,7 +225,7 @@ class SyncEngine:
                 except (ProviderError, UnsafeTargetError) as exc:
                     source.status = ConnectionStatus.failed.value
                     source.status_message = str(exc)[:500]
-                    source.last_checked_at = datetime.now(UTC)
+                    source.last_checked_at = datetime.now(timezone.utc)
                     self.run.error_count += 1
                     self._log(f"'{source.name}' unreachable: {exc}", "error")
 
@@ -274,13 +287,20 @@ class SyncEngine:
                 from app.services.roster_import import refresh_companies
 
                 refresh_companies(self.db, self.tenant, odoo, force=True)
-            except Exception:
+            except Exception:  # noqa: BLE001 — a display cache must never fail a sync
                 log.warning("company refresh skipped", exc_info=True)
+            # Before the push, so a terminal that can now be assigned releases
+            # its held punches in this same cycle.
+            if is_multi_company(odoo):
+                for note in infer_device_companies(self.db, self.tenant):
+                    self._log(note, "info", ui=False)
+            self._sync_odoo_devices(odoo, odoo_conn)
+            self._refresh_open_mirror(odoo)
             self._push(odoo, odoo_conn)
 
             self.tenant.consecutive_failures = 0
             odoo_conn.status = ConnectionStatus.connected.value
-            odoo_conn.last_checked_at = datetime.now(UTC)
+            odoo_conn.last_checked_at = datetime.now(timezone.utc)
             self.run.status = (
                 SyncStatus.partial.value if self.run.error_count else SyncStatus.success.value
             )
@@ -312,7 +332,7 @@ class SyncEngine:
         finally:
             if self.only_source_id and self.run.status == SyncStatus.failed.value:
                 self.tenant.consecutive_failures = self._failures_before
-            finished = datetime.now(UTC)
+            finished = datetime.now(timezone.utc)
             self.run.finished_at = finished
             self.run.duration_ms = int((finished - self._started_at).total_seconds() * 1000)
             self.run.log = self._log_lines[-500:]
@@ -339,7 +359,7 @@ class SyncEngine:
 
         # A terminal deleted by hand but still holding punches comes back.
         for restored in restore_terminals_from_punches(self.db, self.tenant, source):
-            self._log(f"Restored terminal {restored.serial_number} — it has {restored.punch_count} punch(es) on record")
+            self._log(f"Restored terminal {restored.serial_number} — it has {restored.punch_count} punch(es) on record", ui=False)
         devices = {
             d.serial_number: d
             for d in self.db.scalars(
@@ -357,13 +377,26 @@ class SyncEngine:
             return
         newest = source.cursor_punch_time
         fetched = created = 0
+        by_id = self._record_cursor(source, provider)
+        top_id: int | None = None          # highest record id stored this run
+        time_pass_top: int | None = None   # ... by the time-window read alone
+        time_pass_created = 0
+        seen_external: set[str] = set()
 
-        try:
+        def consume(events) -> int:
+            """Ingest one read's events; returns how many were new."""
+            nonlocal fetched, newest, top_id
+            made = 0
             # Buffered, so the "have we seen this already?" check can be asked
             # about the handful of punches in hand rather than the whole ledger.
             batch: list[tuple[object, datetime]] = []
-            for event in provider.fetch_punches(since=start_local, until=end_local):
+            for event in events:
+                if event.external_id in seen_external:
+                    continue  # already read by the other pass of this run
+                seen_external.add(event.external_id)
                 fetched += 1
+                if event.record_id is not None and (top_id is None or event.record_id > top_id):
+                    top_id = event.record_id
 
                 # A terminal the customer explicitly disabled is skipped, but an
                 # unknown one is kept: a device that appeared since the last
@@ -381,11 +414,53 @@ class SyncEngine:
 
                 batch.append((event, punch_utc))
                 if len(batch) >= INGEST_BATCH:
-                    created += self._ingest_batch(batch, source, devices)
+                    made += self._ingest_batch(batch, source, devices)
                     batch = []
 
             if batch:
-                created += self._ingest_batch(batch, source, devices)
+                made += self._ingest_batch(batch, source, devices)
+            return made
+
+        try:
+            # 1. By time: always, so nothing ever depends on the id cursor alone.
+            time_pass_created, read_until = self._read_by_time(provider, consume, start_utc, end_utc, tz)
+            time_pass_top = top_id
+            created += time_pass_created
+            if read_until < end_utc:
+                # Only part of the window fit in this run's page budget. The
+                # cursor stops where the complete reading stops, so the rest
+                # is read next run instead of being stepped over.
+                if newest is not None and newest > read_until:
+                    newest = read_until
+                self._log(f"'{source.name}': large backlog — read up to "
+                          f"{utc_to_local(read_until, tz)}, continuing next run", "warning")
+
+            # 2. By record id: whatever the platform stored after the last
+            # record we have, whatever its timestamp — the punch an offline
+            # terminal uploads hours later with an old time.
+            if by_id is not None and read_until >= end_utc:   # a backlog run reads by time only
+                try:
+                    provider.truncated = False
+                    late = consume(provider.fetch_punches_after(
+                        by_id, since=utc_to_local(floor, tz), until=end_local))
+                    if provider.truncated:
+                        # Not read to the end, and not necessarily in id order:
+                        # keep the id cursor where it was rather than skip ids.
+                        top_id = max(x for x in (time_pass_top, by_id) if x is not None)
+                    # A provider that checks ids one by one may stop part-way;
+                    # the cursor goes no further than it checked.
+                    reached = getattr(provider, "record_cursor_until", None)
+                    if isinstance(reached, int) and top_id is not None and top_id > reached:
+                        top_id = max(reached, by_id)
+                except IdFilterUnsupported as exc:
+                    late = 0
+                    source.config = {**(source.config or {}), RECORD_CURSOR_OFF: True}
+                    self._log(f"'{source.name}': reading by record id is not supported here "
+                              f"({exc}); reading by time only", "warning", ui=False)
+                created += late
+                if late:
+                    self._log(f"'{source.name}': {late} punch(es) found by record id "
+                              "outside the time window (uploaded late)")
 
             cached = getattr(provider, "cached_token", None)
             if cached:
@@ -399,13 +474,15 @@ class SyncEngine:
 
             source.status = ConnectionStatus.connected.value
             source.status_message = None
-            source.last_checked_at = datetime.now(UTC)
+            source.last_checked_at = datetime.now(timezone.utc)
             # Advanced last, and only over punches actually stored. If the
             # provider raised mid-iteration the cursor stays put, the rows
             # already written remain, and the next run re-reads the same window
             # — which the unique index makes free.
             if newest:
                 source.cursor_punch_time = newest
+            if getattr(provider, "record_id_cursor", False):
+                self._advance_record_cursor(source, by_id, top_id, time_pass_top, time_pass_created)
         finally:
             provider.close()
 
@@ -413,6 +490,80 @@ class SyncEngine:
         self.run.punches_fetched += fetched
         self.run.punches_new += created
         self._log(f"'{source.name}': {fetched} punch(es) seen, {created} new")
+
+    # -- reading a window by time ------------------------------------------
+    def _read_by_time(self, provider, consume, start_utc: datetime, end_utc: datetime, tz: str):
+        """Read [start, end] by time, slice by slice, oldest first.
+
+        A provider that hit its page cap on a slice (``truncated``) may have
+        left punches anywhere in it — BioTime, for one, pages in id order, not
+        time order — so that slice is split in two and both halves are read
+        again. Returns (new punches, read_until): everything before
+        ``read_until`` was read completely. Bounded per run, so a huge backlog
+        is worked off over several runs, each picking up where the last one's
+        complete reading stopped.
+        """
+        created = 0
+        slices = [(start_utc, end_utc)]
+        read_until = start_utc
+        reads = 0
+        while slices:
+            if reads >= MAX_SLICE_READS:
+                return created, read_until
+            lo, hi = slices.pop(0)
+            reads += 1
+            provider.truncated = False
+            created += consume(provider.fetch_punches(
+                since=utc_to_local(lo, tz), until=utc_to_local(hi, tz)))
+            if provider.truncated and hi - lo > MIN_SLICE:
+                mid = lo + (hi - lo) / 2
+                slices[:0] = [(lo, mid), (mid, hi)]
+                continue
+            if provider.truncated:
+                self._log(f"More punches than one read can hold between "
+                          f"{utc_to_local(lo, tz)} and {utc_to_local(hi, tz)}; "
+                          "some may be missing — raise MAX_PAGES_PER_RUN", "warning")
+            read_until = hi
+        return created, read_until
+
+    # -- record-id cursor --------------------------------------------------
+    @staticmethod
+    def _record_cursor(source: DeviceSource, provider) -> int | None:
+        """The last record id stored for this source, when its platform can
+        be read by id and hasn't been found to ignore that."""
+        if not getattr(provider, "record_id_cursor", False):
+            return None
+        config = source.config or {}
+        if config.get(RECORD_CURSOR_OFF):
+            return None
+        value = config.get(RECORD_CURSOR_KEY)
+        return int(value) if isinstance(value, int) or str(value or "").isdigit() else None
+
+    def _advance_record_cursor(
+        self, source: DeviceSource, old: int | None, top: int | None,
+        time_top: int | None, time_created: int,
+    ) -> None:
+        """Move the id cursor to the highest record id stored this run.
+
+        Ids only grow, so a *new* punch whose id is below the cursor means the
+        platform started counting again (log cleared, device replaced or
+        reset): the cursor follows it down rather than waiting, possibly for
+        ever, for ids to climb past the old value.
+        """
+        if top is None:
+            return
+        config = dict(source.config or {})
+        current = config.get(RECORD_CURSOR_KEY)
+        current = int(current) if str(current or "").isdigit() else old
+        if current is not None and time_created and time_top is not None and time_top < current:
+            self._log(f"'{source.name}': record ids restarted (now {time_top}, was {current}); "
+                      "following the new sequence", "warning", ui=False)
+            config[RECORD_CURSOR_KEY] = time_top
+        elif current is None or top > current:
+            config[RECORD_CURSOR_KEY] = top
+        else:
+            return
+        source.config = config
 
     def _claim_pushed(self, source: DeviceSource, provider) -> None:
         """A push device's punches are already in the ledger — they were
@@ -431,14 +582,10 @@ class SyncEngine:
             .values(first_seen_run_id=self.run.id)
         )
         created = result.rowcount or 0
-        log.warning("ADMS health check before: source_id=%s",source.id,)
-        device = provider._device()
-        log.warning("ADMS DEBUG: serial=%s last_seen_at=%r online=%s", provider.serial, device.last_seen_at if device else None, adms.is_online(device),)
         health = provider.test_connection()
-        log.warning("ADMS health check after: source_id=%s ok=%s message=%s", source.id, health.ok, health.message,)
         source.status = (ConnectionStatus.connected if health.ok else ConnectionStatus.failed).value
         source.status_message = None if health.ok else health.message[:500]
-        source.last_checked_at = datetime.now(UTC)
+        source.last_checked_at = datetime.now(timezone.utc)
         newest = self.db.scalar(select(func.max(PunchRecord.punch_time_utc)).where(
             PunchRecord.tenant_id == self.tenant.id, PunchRecord.source_id == source.id))
         if newest:
@@ -585,11 +732,16 @@ class SyncEngine:
         targets = [s for s in sources if s.auto_provision_employees]
         if not targets:
             return
+        if is_multi_company(odoo):
+            # Which company's people belong on which terminal is not known, so
+            # none are created on any of them.
+            self._log(MULTI_COMPANY_PROVISION_MESSAGE, "warning", ui=False)
+            return
 
         try:
             roster = odoo.list_employees()
         except OdooError as exc:
-            self._log(f"Could not read the Odoo roster for provisioning: {exc}", "warning")
+            self._log(f"Could not read the Odoo roster for provisioning: {exc}", "warning", ui=False)
             return
 
         wanted: dict[str, str] = {}  # emp_code -> name, active employees only
@@ -608,7 +760,7 @@ class SyncEngine:
             try:
                 provider = build_source_provider(self.tenant, source)
             except (ProviderError, UnsupportedCapability, UnsafeTargetError) as exc:
-                self._log(f"'{source.name}': could not connect to provision employees: {exc}", "warning")
+                self._log(f"'{source.name}': could not connect to provision employees: {exc}", "warning", ui=False)
                 continue
 
             try:
@@ -623,7 +775,7 @@ class SyncEngine:
                         e.emp_code for e in provider.fetch_employees() if e.emp_code
                     }
                 except (ProviderError, UnsupportedCapability) as exc:
-                    self._log(f"'{source.name}': could not read its employee list: {exc}", "warning")
+                    self._log(f"'{source.name}': could not read its employee list: {exc}", "warning", ui=False)
                     continue
 
                 created_here = 0
@@ -646,10 +798,10 @@ class SyncEngine:
                         # validation rule, ...) must not abort the rest of
                         # the roster — same principle as _fetch_and_ingest
                         # isolating one dead source from the others.
-                        self._log(f"'{source.name}': could not provision '{code}': {exc}", "warning")
+                        self._log(f"'{source.name}': could not provision '{code}': {exc}", "warning", ui=False)
 
                 if created_here:
-                    self._log(f"'{source.name}': provisioned {created_here} employee(s) from Odoo's roster")
+                    self._log(f"'{source.name}': provisioned {created_here} employee(s) from Odoo's roster", ui=False)
                 provisioned += created_here
             finally:
                 provider.close()
@@ -667,7 +819,7 @@ class SyncEngine:
                 self.db, self.tenant, odoo, sources, self._log, build_source_provider
             )
         except Exception as exc:  # noqa: BLE001 — an import is a convenience, never a reason to fail a sync
-            self._log(f"Employee import skipped: {exc}", "warning")
+            self._log(f"Employee import skipped: {exc}", "warning", ui=False)
             return
         if imported:
             self.run.employees_matched = (self.run.employees_matched or 0) + imported
@@ -695,7 +847,7 @@ class SyncEngine:
         try:
             enabled = {row["id"] for row in odoo.list_employees()}
         except OdooError as exc:
-            self._log(f"Could not check which companies are on: {exc}", "warning")
+            self._log(f"Could not check which companies are on: {exc}", "warning", ui=False)
             return
 
         released = parked = 0
@@ -723,7 +875,8 @@ class SyncEngine:
         if released or parked:
             self.db.flush()
             self._log(
-                f"Company switches: {parked} employee(s) set aside, {released} restored"
+                f"Company switches: {parked} employee(s) set aside, {released} restored",
+                ui=False,
             )
 
     # -- stage 5 -----------------------------------------------------------
@@ -973,13 +1126,7 @@ class SyncEngine:
         """Every company this connection may touch, or None when that can't
         be read (then only explicit mismatches are caught, nothing is held
         for being unassigned)."""
-        try:
-            scope = odoo.company_scope()
-            if scope is not None:
-                return list(scope)
-            return [c["id"] for c in odoo.list_companies()]
-        except OdooError:
-            return None
+        return enabled_company_ids(odoo)
 
     def _company_hold_reason(
         self, punch: PunchRecord, mapping: EmployeeMapping, enabled: list[int] | None
@@ -1132,6 +1279,8 @@ class SyncEngine:
                         f"state was lost after an earlier attempt already closed "
                         f"attendance {attendance_id} in Odoo — nothing to write",
                     )
+                elif self._settle_overlap(odoo, mapping, interval, by_id, pending_ids, config):
+                    continue  # covered by a record already in Odoo — nothing to write
                 else:
                     attendance_id = odoo.create_attendance(
                         employee_id,
@@ -1165,9 +1314,140 @@ class SyncEngine:
         if config.mode is PairingMode.first_last:
             self._settle_covered_punches(punches, result.intervals, by_id)
 
-        mapping.last_synced_at = datetime.now(UTC)
+        mapping.last_synced_at = datetime.now(timezone.utc)
         if punches:
             mapping.last_punch_at = max(p.punch_time_utc for p in punches)
+
+    def _settle_overlap(
+        self,
+        odoo: OdooClient,
+        mapping: EmployeeMapping,
+        interval,
+        by_id: dict[str, PunchRecord],
+        pending_ids: set,
+        config: PairingConfig,
+    ) -> bool:
+        """Deal with a new check-in that falls inside a record Odoo already has.
+
+        Odoo rejects overlapping attendances, closed ones included, so writing
+        it would fail and — being retried — keep failing. Two cases:
+
+        * The record was closed by BioBridge itself, at the shift limit
+          (a forgotten check-out). That closure was a guess, and this punch
+          proves the person was back at the door earlier, so the record is
+          shortened to end where this one starts — the same rule as for a
+          check-in that follows a forgotten check-out. Returns False: the
+          caller goes on to create the new record.
+        * A real record already spans it (a second check-in without a
+          check-out, say). The punch is settled as covered, with the record
+          named, rather than left as an error that Retry cannot fix. Returns
+          True: nothing to write.
+        """
+        covering = odoo.attendance_covering(mapping.odoo_employee_id, interval.check_in)
+        if covering is None:
+            return False
+        start = parse_dt(covering.get("check_in"))
+        end = parse_dt(covering.get("check_out"))
+        limit = timedelta(hours=config.max_shift_hours)
+        local = self.db.scalars(
+            select(AttendanceRecord).where(
+                AttendanceRecord.tenant_id == self.tenant.id,
+                AttendanceRecord.odoo_attendance_id == covering["id"],
+            )
+        ).first()
+        guessed = (local is not None and local.is_auto_closed) or (
+            start is not None and end is not None and abs((end - start) - limit) < timedelta(seconds=2)
+        )
+        if guessed:
+            odoo.close_attendance(covering["id"], interval.check_in, auto_closed=True)
+            self._mirror_close(covering["id"], interval.check_in, auto_closed=True)
+            self._log(
+                f"{mapping.emp_code}: attendance {covering['id']} had been closed automatically "
+                f"at the {config.max_shift_hours}h limit; shortened it to end at "
+                f"{utc_to_local(interval.check_in, self.tenant.timezone):%Y-%m-%d %H:%M} "
+                "where this check-in begins",
+                "warning",
+            )
+            return False
+
+        shown = (
+            f"{utc_to_local(start, self.tenant.timezone):%Y-%m-%d %H:%M} to "
+            f"{utc_to_local(end, self.tenant.timezone):%Y-%m-%d %H:%M}"
+            if start and end else "an earlier time"
+        )
+        message = (
+            f"Not sent: it falls inside attendance {covering['id']} ({shown}), which Odoo "
+            "already has for this employee. Odoo does not allow overlapping attendances."
+        )
+        for punch_id in (interval.check_in_punch_id, interval.check_out_punch_id):
+            punch = by_id.get(punch_id or "")
+            if punch is not None and punch_id in pending_ids:
+                punch.process_state = PunchState.skipped.value
+                punch.error_message = message
+        self._log(f"{mapping.emp_code}: {message}", "warning")
+        return True
+
+    def _refresh_open_mirror(self, odoo: OdooClient) -> None:
+        """Bring records BioBridge shows as open in step with Odoo.
+
+        A shift can be closed in Odoo by something other than a sync — the
+        hourly stale-shift sweep, or a person editing it by hand — and the
+        local copy would then stay "Open" for ever. Odoo is authoritative:
+        every locally-open record is looked up (one query), and any that
+        Odoo shows with a check-out takes it. Records Odoo does not return
+        are left alone: a company switch can hide them as well as a delete.
+        """
+        rows = self.db.scalars(
+            select(AttendanceRecord)
+            .where(
+                AttendanceRecord.tenant_id == self.tenant.id,
+                AttendanceRecord.check_out.is_(None),
+                AttendanceRecord.odoo_attendance_id.is_not(None),
+            )
+            .order_by(AttendanceRecord.check_in.desc())
+            .limit(500)
+        ).all()
+        if not rows:
+            return
+        try:
+            live = odoo.attendances_by_id([r.odoo_attendance_id for r in rows])
+        except OdooError as exc:
+            log.warning("open-record refresh skipped for %s: %s", self.tenant.slug, exc)
+            return
+        limit = timedelta(hours=self.tenant.max_shift_hours)
+        fixed = 0
+        for row in rows:
+            found = live.get(row.odoo_attendance_id)
+            end = parse_dt(found.get("check_out")) if found else None
+            if end is None:
+                continue
+            row.check_out = end
+            row.check_out_local = utc_to_local(end, self.tenant.timezone)
+            row.worked_hours = (end - row.check_in).total_seconds() / 3600
+            if abs((end - row.check_in) - limit) < timedelta(seconds=2):
+                row.is_auto_closed = True        # the shift-limit sweep's signature
+            fixed += 1
+        if fixed:
+            self.db.flush()
+            self._log(f"{fixed} attendance record(s) already closed in Odoo updated here", "info")
+
+    def _mirror_close(self, attendance_id: int, check_out: datetime, *, auto_closed: bool) -> None:
+        """Keep the local copy of a record in step when its check-out changes
+        outside the normal pairing path (the stale-shift sweep, a shortened
+        auto-close)."""
+        row = self.db.scalars(
+            select(AttendanceRecord).where(
+                AttendanceRecord.tenant_id == self.tenant.id,
+                AttendanceRecord.odoo_attendance_id == attendance_id,
+            )
+        ).first()
+        if row is None:
+            return
+        row.check_out = check_out
+        row.check_out_local = utc_to_local(check_out, self.tenant.timezone)
+        row.worked_hours = (check_out - row.check_in).total_seconds() / 3600
+        row.is_auto_closed = auto_closed
+        self.db.flush()
 
     def _synced_punches_for_days(
         self, pending: list[PunchRecord], config: PairingConfig
@@ -1320,6 +1600,84 @@ class SyncEngine:
         # fetch time (its terminal was imported later) — see device_links.
         return device_for_punch(self.db, punch)
 
+    def _sync_odoo_devices(self, odoo: OdooClient, odoo_conn: OdooConnection) -> None:
+        """Keep every terminal's Odoo device (and its company) current each
+        cycle, not only when a punch happens to be pushed — so a company set
+        in BioBridge, or a device registered before it was, reaches Odoo."""
+        if not odoo_conn.has_device_tracking:
+            self._auto_enable_device_tracking(odoo, odoo_conn)
+        if not odoo_conn.has_device_tracking:
+            self._log(
+                "Odoo device tracking is off for this connection, so terminals and their "
+                "companies are not written to Odoo. Run Test Connection to re-detect it.",
+                "warning",
+                ui=False,
+            )
+            return
+        for device in self.db.scalars(
+            select(Device).where(Device.tenant_id == self.tenant.id)
+        ):
+            self._odoo_device_id(odoo, odoo_conn, device)
+        removed, errors = device_removals.work_off(self.db, self.tenant.id, odoo)
+        if removed:
+            self._log(f"Removed {removed} terminal(s) of a deleted connection from Odoo")
+        if errors:
+            self._log(
+                f"{len(errors)} terminal(s) of a deleted connection could not be removed from "
+                f"Odoo yet; retrying next sync. {errors[0]}", "warning", ui=False,
+            )
+        try:
+            if odoo.ensure_device_company_rule():
+                self._log("Odoo device company rule is in place", ui=False)
+            for line in odoo.check_device_isolation():
+                # Server log only: a diagnostic, not something for the run log
+                # customers read.
+                log.info("[tenant=%s] Isolation check: %s", self.tenant.slug, line)
+        except Exception as exc:  # noqa: BLE001 — a diagnostic must never fail a sync
+            self._log(
+                f"Could not set up the Odoo device company rule: {exc}. The connected "
+                "user needs Settings access, or run Update Setup on the connection.",
+                "warning",
+                ui=False,
+            )
+
+    def _auto_enable_device_tracking(self, odoo: OdooClient, odoo_conn: OdooConnection) -> None:
+        """Create the device model in Odoo when this connection has none yet.
+
+        A fresh Odoo has neither the add-on nor the bootstrap model, and until
+        now the model was only created by clicking Test Connection, so a sync
+        on a new instance silently wrote no devices and no companies. Best
+        effort: needs Settings access on the Odoo user, and never fails a sync.
+        """
+        try:
+            odoo.ensure_device_tracking_bootstrap()
+            mode = odoo._device_tracking_mode()
+        except Exception as exc:  # noqa: BLE001
+            self._log(
+                f"Could not create the device model in Odoo: {exc}. The connected Odoo "
+                "user needs Settings (Administrator) access.",
+                "warning",
+                ui=False,
+            )
+            return
+        if mode is None:
+            return
+        odoo_conn.has_device_tracking = True
+        odoo_conn.device_tracking_mode = mode
+        self.db.flush()
+        self._log(f"Created Odoo device tracking ({mode}) for this connection", ui=False)
+
+    def _terminal_company_id(self, device: Device) -> int | None:
+        """The Odoo company this terminal belongs to: its own, else its
+        connection's default."""
+        if device.company_id is not None:
+            return device.company_id
+        source = self._source_cache.get(device.source_id)
+        if source is None and device.source_id:
+            source = self.db.get(DeviceSource, device.source_id)
+            self._source_cache[device.source_id] = source
+        return source.default_company_id if source is not None else None
+
     def _odoo_device_id(
         self, odoo: OdooClient, odoo_conn: OdooConnection, device: Device | None
     ) -> int | None:
@@ -1336,13 +1694,26 @@ class SyncEngine:
             return None
         if device.id in self._odoo_device_cache:
             return self._odoo_device_cache[device.id]
+        if not terminal_may_register_in_odoo(self.db, device):
+            self._log(
+                f"Terminal {device.serial_number} not written to Odoo: none of its "
+                "employees is mapped yet", ui=False,
+            )
+            return None
         try:
+            terminal_company = self._terminal_company_id(device)
             odoo_id = odoo.upsert_device(
                 device.serial_number,
                 name=device.alias,
                 location=device.area,
                 terminal_model=device.model,
                 ip_address=device.ip_address,
+                company_id=terminal_company,
+            )
+            self._log(
+                f"Odoo device {device.serial_number}: id {odoo_id}, company "
+                f"{terminal_company if terminal_company is not None else 'not set in BioBridge'}",
+                ui=False,
             )
         except OdooError as exc:
             # has_device_tracking was true as of the last connection test, but
@@ -1351,6 +1722,7 @@ class SyncEngine:
             self._log(
                 f"Could not register device {device.serial_number} in Odoo: {exc}",
                 "warning",
+                ui=False,
             )
             odoo_id = None
         self._odoo_device_cache[device.id] = odoo_id
@@ -1511,7 +1883,7 @@ def store_punch(
     db.add(record)
     if device is not None:
         device.punch_count = (device.punch_count or 0) + 1
-        device.last_seen_at = datetime.now(UTC)
+        device.last_seen_at = datetime.now(timezone.utc)
         # A punch is live proof the terminal is there, regardless of
         # whether "Import terminals" has been re-run since it was last
         # flagged missing.
@@ -1526,7 +1898,7 @@ def close_stale_attendances(db: Session, tenant: Tenant) -> int:
     open record that blocks every subsequent check-in for that person.
     """
     engine = SyncEngine(db, tenant, "maintenance")
-    conn = engine._active_odoo_connection()
+    conn = engine._active_odoo_connection()  # noqa: SLF001
     if conn is None:
         return 0
 
@@ -1551,6 +1923,7 @@ def close_stale_attendances(db: Session, tenant: Tenant) -> int:
             auto_close = close_stale_at(check_in, utcnow_naive(), config)
             if auto_close:
                 odoo.close_attendance(live["id"], auto_close, auto_closed=True)
+                engine._mirror_close(live["id"], auto_close, auto_closed=True)  # noqa: SLF001
                 mapping.open_attendance_id = None
                 mapping.open_check_in = None
                 closed += 1

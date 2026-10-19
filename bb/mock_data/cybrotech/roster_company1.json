@@ -1,0 +1,53 @@
+{
+  "company_id": 1,
+  "company_name": "My Company",
+  "departments": [],
+  "employees": [
+    {
+      "id": 2,
+      "emp_code": "80001",
+      "first_name": "James",
+      "last_name": "",
+      "department": null,
+      "enable_attendance": true
+    },
+    {
+      "id": 3,
+      "emp_code": "80003",
+      "first_name": "Joseph",
+      "last_name": "",
+      "department": null,
+      "enable_attendance": true
+    },
+    {
+      "id": 4,
+      "emp_code": "80002",
+      "first_name": "Isaac",
+      "last_name": "",
+      "department": null,
+      "enable_attendance": true
+    }
+  ],
+  "terminals": [
+    {
+      "id": 911,
+      "sn": "MOCK-CYBROTECH-C1-GATE-01",
+      "alias": "Main Entrance",
+      "ip_address": "10.1.0.11"
+    },
+    {
+      "id": 912,
+      "sn": "MOCK-CYBROTECH-C1-GATE-02",
+      "alias": "Back Door",
+      "ip_address": "10.1.0.12"
+    }
+  ],
+  "skipped": [
+    "Administrator"
+  ],
+  "odoo": {
+    "url": "https://biobridge.easyinstance.com",
+    "db": "biobridge"
+  },
+  "tenant": "cybrotech"
+}

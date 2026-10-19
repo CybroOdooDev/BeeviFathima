@@ -4,6 +4,7 @@ re-login when it expires), event search paged by time, device list, users."""
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -12,10 +13,6 @@ from app.integrations.base import EmployeeRecord, ProviderError, SourceConfig
 from app.integrations.providers import biostar2 as bs
 from app.integrations.providers.biostar2 import BioStar2Provider, direction_of, is_punch
 from tests.test_platform_admin import api, head, signup  # noqa: F401
-from datetime import datetime, timedelta, timezone
-
-UTC = timezone.utc
-
 
 LOGIN, PASSWORD, TZ = "admin", "Biostar1!", "Asia/Dubai"
 
@@ -33,6 +30,7 @@ class FakeBioStar:
         ]
         self.users = {"1001": "Jane Doe"}
         self.searches: list[dict] = []
+        self.ignore_id = False   # a server version that ignores the id condition and order
 
     def expire_sessions(self):
         self.sessions.clear()
@@ -57,8 +55,16 @@ class FakeBioStar:
         if path == "/api/events/search":
             query = body["Query"]
             self.searches.append(query)
-            lo, hi = query["conditions"][0]["values"]
-            rows = sorted((e for e in self.events if lo <= e["datetime"] <= hi), key=lambda e: e["datetime"])
+            rows = list(self.events)
+            for cond in query["conditions"]:
+                if cond["column"] == "datetime":
+                    lo, hi = cond["values"]
+                    rows = [e for e in rows if lo <= e["datetime"] <= hi]
+                elif cond["column"] == "id" and cond["operator"] == 5 and not self.ignore_id:
+                    rows = [e for e in rows if int(e["id"]) > int(cond["values"][0])]
+            order = query["orders"][0]["column"]
+            rows.sort(key=(lambda e: int(e["id"])) if order == "id" and not self.ignore_id
+                      else (lambda e: e["datetime"]))
             return httpx.Response(200, json={"EventCollection": {"rows": rows[:query["limit"]]},
                                              "Response": {"code": "0"}})
         if path == "/api/users" and request.method == "GET":
@@ -126,7 +132,7 @@ def test_expired_session_logs_in_again(server):
 
 def test_punches_are_paged_by_time_and_filtered(server, monkeypatch):
     monkeypatch.setattr(bs, "PAGE_SIZE", 10)
-    base = datetime(2026, 9, 29, 4, 0, tzinfo=UTC)   # 08:00 in Dubai
+    base = datetime(2026, 9, 29, 4, 0, tzinfo=timezone.utc)   # 08:00 in Dubai
     server.events = [event(i, "1001", base + timedelta(minutes=i), tna=1 if i % 2 else 2) for i in range(1, 26)]
     server.events += [event(100, "", base, code=20480),          # door opened: no user
                       event(101, "1002", base, code=4354),        # identify failed
@@ -145,7 +151,7 @@ def test_punches_are_paged_by_time_and_filtered(server, monkeypatch):
 
 def test_a_full_page_within_one_second_still_advances(server, monkeypatch):
     monkeypatch.setattr(bs, "PAGE_SIZE", 5)
-    moment = datetime(2026, 9, 29, 4, 0, tzinfo=UTC)
+    moment = datetime(2026, 9, 29, 4, 0, tzinfo=timezone.utc)
     server.events = [event(i, str(1000 + i), moment) for i in range(1, 6)]   # 5 in one second
     server.events.append(event(9, "1009", moment + timedelta(minutes=5)))
     punches = list(provider().fetch_punches(datetime(2026, 9, 29, 0, 0), datetime(2026, 9, 30, 0, 0)))
@@ -191,7 +197,7 @@ def test_connect_import_and_sync_through_the_api(api, server, monkeypatch):
     odoo = FakeOdoo()
     monkeypatch.setattr(engine_mod, "build_odoo_client", lambda t, c: odoo)
 
-    now = datetime.now(UTC).replace(microsecond=0)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
     server.events = [event(1, "1001", now - timedelta(hours=3), tna=1),
                      event(2, "", now - timedelta(hours=2), code=20480),
                      event(3, "1001", now - timedelta(hours=1), tna=2)]
@@ -199,3 +205,26 @@ def test_connect_import_and_sync_through_the_api(api, server, monkeypatch):
     assert run["status"] == "success", run
     assert run["punches_new"] == 2 and len(odoo.attendances) == 1
     assert next(iter(odoo.attendances.values()))["check_out"] is not None
+
+
+# --- reading by event id ---------------------------------------------------------
+def test_reads_events_after_an_id_in_id_order_and_pages_by_id(server, monkeypatch):
+    monkeypatch.setattr(bs, "PAGE_SIZE", 2)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    server.events = [event(i, "1001", now - timedelta(hours=1, minutes=i)) for i in range(1, 6)]
+    server.events.append(event(6, "1001", now - timedelta(days=3)))   # stored late, old time
+    zone_now = now.astimezone(bs.ZoneInfo(TZ)).replace(tzinfo=None)
+    punches = list(provider().fetch_punches_after(3, zone_now - timedelta(days=30), zone_now))
+    assert [p.record_id for p in punches] == [4, 5, 6]
+    id_conds = [q["conditions"][0]["values"][0] for q in server.searches if q["conditions"][0]["column"] == "id"]
+    assert id_conds == ["3", "5"], "keyset paging by the last id on each page"
+
+
+def test_a_server_ignoring_the_id_condition_is_reported(server):
+    from app.integrations.base import IdFilterUnsupported
+    server.ignore_id = True
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    server.events = [event(i, "1001", now - timedelta(hours=1, minutes=i)) for i in range(1, 4)]
+    zone_now = now.astimezone(bs.ZoneInfo(TZ)).replace(tzinfo=None)
+    with pytest.raises(IdFilterUnsupported):
+        list(provider().fetch_punches_after(2, zone_now - timedelta(days=1), zone_now))

@@ -12,11 +12,7 @@ import pytest
 
 from app.integrations.base import ProviderError, SourceConfig
 from app.integrations.providers import cosec_centra as cc
-from app.integrations.providers.cosec_centra import (
-    CosecCentraProvider,
-    parse_when,
-    records,
-)
+from app.integrations.providers.cosec_centra import CosecCentraProvider, parse_when, records
 from tests.test_platform_admin import api, head, signup  # noqa: F401
 
 PASSWORD, TZ = "matrix@123", "Asia/Kolkata"
@@ -43,8 +39,13 @@ def template_bare(e):
 
 
 class FakeCentra:
+    #: How the simulated server reads eventta's index: "from" it, "after" it,
+    #: "ignore" it (every event), or "none" (no eventta endpoint at all).
+    index_mode = "from"
+
     def __init__(self, template=template_a):
         self.template = template
+        self.index_reads: list[int] = []
         self.events: list[dict] = []
         self.windows: list[tuple[datetime, datetime]] = []
         self.urls: list[str] = []
@@ -58,11 +59,18 @@ class FakeCentra:
         expected = "Basic " + base64.b64encode(f"sa:{PASSWORD}".encode()).decode()
         if request.headers.get("authorization") != expected:
             return httpx.Response(401, text="Unauthorized")
-        if request.url.path != "/cosec/api.svc/event-ta-date":
-            return httpx.Response(404, text="Endpoint not found.")
         query = request.url.query.decode()
         assert "&" not in query, "COSEC wants semicolons, not ampersands"
         params = dict(part.split("=", 1) for part in query.split(";"))
+        if request.url.path == "/cosec/api.svc/eventta" and self.index_mode != "none":
+            index, count = int(params["index"]), int(params["count"])
+            self.index_reads.append(index)
+            keep = {"from": lambda e: e["index"] >= index, "after": lambda e: e["index"] > index,
+                    "ignore": lambda e: True}[self.index_mode]
+            picked = sorted((e for e in self.events if keep(e)), key=lambda e: e["index"])[:count]
+            return httpx.Response(200, text=f"<COSEC_API>{''.join(self.template(e) for e in picked)}</COSEC_API>")
+        if request.url.path != "/cosec/api.svc/event-ta-date":
+            return httpx.Response(404, text="Endpoint not found.")
         assert params["action"] == "get" and params["format"] == "xml"
         lo, hi = (datetime.strptime(x, FMT) for x in params["daterange"].split("-"))
         self.windows.append((lo, hi))
@@ -154,9 +162,8 @@ def test_a_long_backfill_is_capped(server):
 
 
 def test_sync_writes_attendance_and_learns_panels(api, server, monkeypatch):
-    from zoneinfo import ZoneInfo
-
     from sqlalchemy import select
+    from zoneinfo import ZoneInfo
 
     from app.core.crypto import encrypt
     from app.models import OdooConnection, Tenant
@@ -187,3 +194,96 @@ def test_sync_writes_attendance_and_learns_panels(api, server, monkeypatch):
     assert [d["serial_number"] for d in devices] == ["Main Gate"]
     again = api.post(f"/api/v1/sources/{source['id']}/sync", headers=head(token)).json()
     assert again["punches_new"] == 0, "the overlap re-reads, the ledger dedupes"
+
+
+# -- by index: late events whatever their time ---------------------------------
+def test_time_reads_carry_the_index_as_record_id(server):
+    server.add(datetime(2026, 10, 1, 9, 0))
+    (event,) = provider().fetch_punches(datetime(2026, 10, 1), datetime(2026, 10, 2))
+    assert event.record_id == 1 and event.external_id == "cosec-srv:1"
+
+
+@pytest.mark.parametrize("mode", ["from", "after"])
+def test_reads_events_stored_after_an_index_whatever_their_time(server, mode):
+    server.index_mode = mode
+    server.add(datetime(2026, 10, 1, 9, 0))                    # 1, already stored
+    server.add(datetime(2026, 9, 20, 8, 0), user="1002")      # 2, a panel's late backlog
+    server.add(datetime(2026, 10, 1, 9, 30))                   # 3
+    p = provider()
+    events = list(p.fetch_punches_after(1, datetime(2026, 9, 1), datetime(2026, 10, 2)))
+    assert [(e.record_id, e.emp_code) for e in events] == [(2, "1002"), (3, "1001")]
+    assert server.index_reads[0] == 1, "asked from the last stored index, so 'after' skips nothing"
+    assert p.record_cursor_until == 3
+
+
+def test_a_large_backlog_pages_and_stops_at_the_run_budget(server, monkeypatch):
+    monkeypatch.setattr(cc, "INDEX_PAGE", 10)
+    monkeypatch.setattr(cc, "MAX_INDEX_PAGES", 2)
+    for i in range(35):
+        server.add(datetime(2026, 10, 1, 8, 0) + timedelta(minutes=i))
+    p = provider()
+    events = list(p.fetch_punches_after(0, datetime(2026, 9, 1), datetime(2026, 10, 2)))
+    assert [e.record_id for e in events] == list(range(1, 20))
+    assert p.record_cursor_until == 19, "the next run carries on from here"
+    rest = list(provider().fetch_punches_after(19, datetime(2026, 9, 1), datetime(2026, 10, 2)))
+    assert [e.record_id for e in rest][:1] == [20]
+
+
+def test_rows_without_a_user_still_move_the_cursor(server):
+    server.add(datetime(2026, 10, 1, 9, 0), user="")
+    p = provider()
+    assert list(p.fetch_punches_after(0, datetime(2026, 9, 1), datetime(2026, 10, 2))) == []
+    assert p.record_cursor_until == 1
+
+
+@pytest.mark.parametrize("mode,template,why", [
+    ("ignore", template_a, "ignored the index"),
+    ("none", template_a, "no index read"),
+    ("from", template_b, "no Index No column"),
+])
+def test_servers_that_cannot_read_by_index_are_reported(monkeypatch, mode, template, why):
+    from app.integrations.base import IdFilterUnsupported
+
+    fake = FakeCentra(template=template)
+    fake.index_mode = mode
+    monkeypatch.setattr(cc, "TRANSPORT", httpx.MockTransport(fake))
+    for i in range(3):
+        fake.add(datetime(2026, 10, 1, 9, i))
+    with pytest.raises(IdFilterUnsupported, match=why):
+        list(provider().fetch_punches_after(2, datetime(2026, 9, 1), datetime(2026, 10, 2)))
+
+
+def test_sync_picks_up_a_panels_late_backlog_by_index(api, server, monkeypatch):
+    from sqlalchemy import select
+    from zoneinfo import ZoneInfo
+
+    from app.core.crypto import encrypt
+    from app.models import DeviceSource, OdooConnection, Tenant
+    from app.services import sync_engine as engine_mod
+    from tests.conftest import FakeOdoo
+
+    token = signup(api, "Acme", "owner@acme.example.com")
+    now = datetime.now(ZoneInfo(TZ)).replace(tzinfo=None, microsecond=0)
+    server.add(now - timedelta(hours=3))
+    source = api.post("/api/v1/sources", headers=head(token), json={
+        "name": "COSEC", "provider": "cosec_centra", "connection_kind": "platform",
+        "base_url": "http://cosec-srv/cosec", "username": "sa", "password": PASSWORD,
+        "server_timezone": TZ}).json()
+    s = api.session_factory()
+    tenant = s.scalars(select(Tenant)).first()
+    s.add(OdooConnection(tenant_id=tenant.id, name="Odoo", url="https://acme.odoo.com", db_name="acme",
+                         username="bot@acme.com", api_key_enc=encrypt("key", tenant.crypto_key), is_active=True))
+    s.commit(); s.close()
+    monkeypatch.setattr(engine_mod, "build_odoo_client",
+                        lambda t, c: FakeOdoo(employees={"1001": (11, "Jane"), "1002": (12, "Sam")}))
+    sync = lambda: api.post(f"/api/v1/sources/{source['id']}/sync", headers=head(token)).json()
+    assert sync()["punches_new"] == 1
+
+    server.add(now - timedelta(days=2), user="1002")   # an offline panel hands over yesterday's punch
+    server.add(now - timedelta(minutes=20))
+    run = sync()
+    assert run["status"] == "success" and run["punches_new"] == 2, run
+    s = api.session_factory()
+    config = s.get(DeviceSource, source["id"]).config
+    s.close()
+    assert config.get("record_cursor") == 3 and not config.get("record_cursor_unsupported")

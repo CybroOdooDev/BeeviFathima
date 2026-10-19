@@ -99,7 +99,9 @@ def test_middle_punches_do_not_linger_as_pending(db, tenant, local_day, monkeypa
 def test_next_day_gets_its_own_record(db, tenant, local_day, monkeypatch):
     _first_last(db, tenant)
     odoo = FakeOdoo()
-    d = local_day
+    # Two days back, so "the next day" is yesterday — already over at any hour
+    # the suite runs, rather than partly in the future before 17:00 local.
+    d = local_day - timedelta(days=1)
     rows = [punch("c1", "1001", d.replace(hour=8)), punch("c2", "1001", d.replace(hour=17))]
     cycle(db, tenant, odoo, rows, monkeypatch)
     tomorrow = d + timedelta(days=1)

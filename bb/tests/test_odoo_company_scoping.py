@@ -21,6 +21,8 @@ A fake XML-RPC ``models`` proxy, same seam as test_odoo_device_bootstrap.py
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 
 from app.integrations.odoo import OdooClient, OdooCredentials, OdooError
@@ -130,7 +132,8 @@ class FakeXmlRpcModels:
                 limit = kwargs.get("limit") or 0
                 if limit:
                     matches = matches[:limit]
-                return [{"id": r["id"]} for r in matches]
+                wanted = kwargs.get("fields") or ["id"]
+                return [{f: r.get(f, False) for f in {"id", *wanted}} for r in matches]
             if method == "write":
                 ids, vals = args
                 for i in ids:

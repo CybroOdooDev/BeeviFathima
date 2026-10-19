@@ -184,7 +184,7 @@ export async function render(mount) {
               <tr><td>Attendance closed</td><td class="num" style="text-align:right">${esc(run.attendances_closed)}</td></tr>
             </tbody>
           </table>
-          ${run.error_message ? banner('Last Error', run.error_message, 'bad') : ''}
+          ${run.error_message ? banner('Error', run.error_message, 'bad') : ''}
         ` : empty('No Sync Has Run Yet', 'Connect both sides, then press Sync now.')}
         ${auth.canWrite ? `
           <div class="row" style="margin-top:14px">

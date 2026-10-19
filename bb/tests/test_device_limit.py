@@ -7,8 +7,8 @@ from sqlalchemy import select
 
 from app.models import Device, PunchRecord, PunchState, SubscriptionPlan
 from app.services.device_limits import over_limit_device_ids
-from tests.conftest import FakeOdoo
 from tests.test_sync_engine import punch, run
+from tests.conftest import FakeOdoo
 
 
 def _on_plan(db, tenant, max_devices):

@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 import logging
-from time import monotonic
+from datetime import date, datetime, time, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from time import monotonic
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import (
+    require_owner,
     Principal,
     audit,
     get_principal,
-    require_owner,
     require_syncable,
     require_writer,
 )
@@ -33,8 +35,8 @@ from app.models import (
     TenantStatus,
 )
 from app.schemas import (
-    AccountDeleteIn,
     AlertsOut,
+    AccountDeleteIn,
     AttendanceOut,
     DashboardOut,
     MappingOut,
@@ -46,19 +48,15 @@ from app.schemas import (
     TenantOut,
     TenantUpdate,
 )
-from app.services.alerts import tenant_alerts
 from app.services.scheduling import (
     effective_interval,
     next_run_at,
     renewal_warning,
     scheduler_health,
 )
+from app.services.alerts import tenant_alerts
 from app.services.sync_engine import SyncEngine
 from app.services.timeutils import utcnow_naive
-
-from datetime import datetime, timedelta, timezone, time, date
-
-UTC = timezone.utc
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["sync"])
@@ -640,7 +638,7 @@ def dashboard(
     principal: Principal = Depends(get_principal), db: Session = Depends(get_db)
 ) -> DashboardOut:
     tenant = principal.tenant
-    midnight = datetime.now(UTC).replace(
+    midnight = datetime.now(timezone.utc).replace(
         hour=0, minute=0, second=0, microsecond=0, tzinfo=None
     )
 

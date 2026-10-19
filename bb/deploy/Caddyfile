@@ -1,0 +1,28 @@
+# BioBridge's front door. {$VAR} values come from docker-compose.prod.yml.
+{
+	email {$ACME_EMAIL}
+}
+
+# The dashboard, API and staff console, over HTTPS (certificate obtained and
+# renewed automatically).
+{$APP_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy api:8000
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+}
+
+# ZKTeco ADMS push terminals speak plain HTTP and cannot follow a redirect to
+# HTTPS, so they get their own port carrying /iclock/ only — nothing else of
+# the app is reachable on it.
+http://:{$ADMS_PORT} {
+	@iclock path /iclock /iclock/*
+	handle @iclock {
+		reverse_proxy api:8000
+	}
+	respond 404
+}

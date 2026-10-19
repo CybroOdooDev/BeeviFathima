@@ -1,0 +1,10 @@
+{
+  "tenant": "cybrotech",
+  "odoo": {
+    "url": "https://biobridge.easyinstance.com",
+    "db": "biobridge"
+  },
+  "companies": [
+    1
+  ]
+}

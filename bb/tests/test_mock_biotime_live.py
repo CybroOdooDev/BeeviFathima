@@ -90,8 +90,7 @@ def test_the_simulator_produces_alternating_punches_stamped_now(live):
 
 
 def test_regenerating_a_file_continues_its_ids(tmp_path):
-    from zoneinfo import ZoneInfo
-
     from tools.generate_punches import build
+    from zoneinfo import ZoneInfo
     rows, _ = build(["5"], 2, "00:01", "00:02", ZoneInfo("Asia/Kolkata"), 0, False, 1, first_id=500)
     assert min(r["id"] for r in rows) == 500

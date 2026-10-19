@@ -29,6 +29,7 @@ import hashlib
 import hmac
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlencode
 
@@ -40,10 +41,6 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.session import get_db
 from app.models import StripeEvent, SubscriptionPlan, Tenant, TenantStatus
-
-from datetime import datetime, timezone
-
-UTC = timezone.utc
 
 log = logging.getLogger(__name__)
 
@@ -293,7 +290,7 @@ def _card(pm: Any) -> dict[str, Any] | None:
 
 
 def _ts(value: Any) -> str | None:
-    return datetime.fromtimestamp(int(value), tz=UTC).isoformat() if value else None
+    return datetime.fromtimestamp(int(value), tz=timezone.utc).isoformat() if value else None
 
 
 def _invoice_out(inv: dict[str, Any]) -> dict[str, Any]:
@@ -469,7 +466,7 @@ def _period_end(subscription: dict[str, Any]) -> datetime | None:
     if raw is None:
         ends = [i.get("current_period_end") for i in _items(subscription) if i.get("current_period_end")]
         raw = max(ends) if ends else None
-    return datetime.fromtimestamp(int(raw), tz=UTC) if raw else None
+    return datetime.fromtimestamp(int(raw), tz=timezone.utc) if raw else None
 
 
 def apply_subscription(db: Session, tenant: Tenant, subscription: dict[str, Any],
@@ -487,7 +484,7 @@ def apply_subscription(db: Session, tenant: Tenant, subscription: dict[str, Any]
     period_end = _period_end(subscription)
     previous_end = tenant.subscription_renews_at
     if previous_end is not None and previous_end.tzinfo is None:
-        previous_end = previous_end.replace(tzinfo=UTC)
+        previous_end = previous_end.replace(tzinfo=timezone.utc)
     # A new billing period has started since we last looked: whatever price
     # it is on is now the plan in force (a queued switch lands here).
     renewed = bool(period_end and previous_end and period_end > previous_end)

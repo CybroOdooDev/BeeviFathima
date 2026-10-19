@@ -867,6 +867,8 @@ class ProvisionOut(BaseModel):
     already_on_device: int
     already_mapped: int
     no_badge_or_pin: int
+    #: Why nothing was attempted (several Odoo companies are on), else null.
+    skipped: str | None = None
 
 
 class DeviceOut(ORMModel):

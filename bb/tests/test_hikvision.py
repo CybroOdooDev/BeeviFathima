@@ -14,11 +14,7 @@ import pytest
 
 from app.integrations.base import EmployeeRecord, ProviderError, SourceConfig
 from app.integrations.providers import hikvision as hik
-from app.integrations.providers.hikvision import (
-    HikvisionProvider,
-    direction_of,
-    parse_event_time,
-)
+from app.integrations.providers.hikvision import HikvisionProvider, direction_of, parse_event_time
 from tests.test_platform_admin import api, head, signup  # noqa: F401
 
 USER, PASSWORD, REALM, NONCE = "admin", "Hik12345", "DS-K1T343", "nonce-4f1d"
@@ -27,8 +23,9 @@ TZ = "Asia/Kolkata"
 
 
 class FakeTerminal:
-    def __init__(self, events=None, reject_minor_zero=False):
+    def __init__(self, events=None, reject_minor_zero=False, serial_filter="honours"):
         self.events = events or []
+        self.serial_filter = serial_filter  # "honours" | "ignores" | "rejects" beginSerialNo
         self.users = {"1001": "Jane Doe"}
         self.reject_minor_zero = reject_minor_zero
         self.failed_logins = 0
@@ -67,6 +64,12 @@ class FakeTerminal:
                 return httpx.Response(400, json={"statusCode": 6, "statusString": "Invalid Content",
                                                  "subStatusCode": "badParameters"})
             rows = [e for e in self.events if cond["minor"] in (0, e["minor"])]
+            if "beginSerialNo" in cond:
+                if self.serial_filter == "rejects":
+                    return httpx.Response(400, json={"statusCode": 6, "statusString": "Invalid Content",
+                                                     "subStatusCode": "badJsonContent"})
+                if self.serial_filter == "honours":
+                    rows = [e for e in rows if e["serialNo"] >= cond["beginSerialNo"]]
             page = rows[cond["searchResultPosition"]:cond["searchResultPosition"] + cond["maxResults"]]
             more = cond["searchResultPosition"] + len(page) < len(rows)
             return httpx.Response(200, json={"AcsEvent": {
@@ -230,3 +233,31 @@ def test_a_sync_turns_terminal_events_into_odoo_attendance(api, terminal, monkey
 
     again = api.post(f"/api/v1/sources/{source['id']}/sync", headers=head(token)).json()
     assert again["punches_new"] == 0, "the overlap window re-reads, the ledger dedupes"
+
+
+# --- reading by event serial number --------------------------------------------
+def test_reads_events_after_a_serial_number_whatever_their_time(terminal):
+    base = datetime(2026, 9, 29, 7, 0)
+    terminal.events = [ev(i, "1001", base + timedelta(minutes=i)) for i in range(1, 6)]
+    terminal.events.append(ev(6, "1001", base - timedelta(days=3)))   # uploaded late, old time
+    punches = list(provider().fetch_punches_after(4, base - timedelta(days=30), base + timedelta(days=1)))
+    assert [p.record_id for p in punches] == [5, 6]
+    sent = [r[2]["AcsEventCond"] for r in terminal.requests if r[1].endswith("AcsEvent")]
+    assert sent[-1]["beginSerialNo"] == 5
+
+
+def test_time_reads_carry_the_serial_number_too(terminal):
+    base = datetime(2026, 9, 29, 7, 0)
+    terminal.events = [ev(7, "1001", base)]
+    (punch,) = provider().fetch_punches(base - timedelta(hours=1), base + timedelta(hours=1))
+    assert punch.record_id == 7
+
+
+@pytest.mark.parametrize("behaviour", ["ignores", "rejects"])
+def test_firmware_without_the_serial_filter_is_reported(terminal, behaviour):
+    from app.integrations.base import IdFilterUnsupported
+    base = datetime(2026, 9, 29, 7, 0)
+    terminal.serial_filter = behaviour
+    terminal.events = [ev(i, "1001", base + timedelta(minutes=i)) for i in range(1, 6)]
+    with pytest.raises(IdFilterUnsupported):
+        list(provider().fetch_punches_after(3, base - timedelta(days=1), base + timedelta(days=1)))

@@ -44,9 +44,8 @@ from __future__ import annotations
 import logging
 import uuid
 import xml.etree.ElementTree as ET
-from collections.abc import Iterator
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Iterator
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -58,6 +57,7 @@ from app.integrations.base import (
     Capability,
     ConnectionInfo,
     EmployeeRecord,
+    IdFilterUnsupported,
     ProviderError,
     PunchEvent,
     SourceConfig,
@@ -147,6 +147,15 @@ def direction_of(status: str | None) -> bool | None:
     return True if key in _IN else False if key in _OUT else None
 
 
+def _serial_no(row: dict) -> int | None:
+    """The terminal's event serial number, when it is a plain integer."""
+    value = row.get("serialNo")
+    try:
+        return int(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
 @register
 class HikvisionProvider(AttendanceProvider):
     slug = "hik_isapi"
@@ -162,6 +171,7 @@ class HikvisionProvider(AttendanceProvider):
         Capability.WRITE_EMPLOYEES,
     })
     kinds = frozenset({"device"})
+    record_id_cursor = True
     config_fields = (
         {"name": "base_url", "label": "Device Address", "type": "text", "required": True,
          "help": "http://<device IP> — add :port if it isn't 80. Use https:// only "
@@ -282,14 +292,14 @@ class HikvisionProvider(AttendanceProvider):
         )])
 
     # -- punches --------------------------------------------------------------
-    def _search_events(self, minor: int, start: str, end: str) -> Iterator[dict]:
+    def _search_events(self, minor: int, start: str, end: str, extra: dict | None = None) -> Iterator[dict]:
         search_id = uuid.uuid4().hex
         position = 0
         for _ in range(MAX_PAGES):
             body = {"AcsEventCond": {
                 "searchID": search_id, "searchResultPosition": position,
                 "maxResults": PAGE_SIZE, "major": MAJOR_ACCESS, "minor": minor,
-                "startTime": start, "endTime": end,
+                "startTime": start, "endTime": end, **(extra or {}),
             }}
             data = self._json(self._call("POST", "/ISAPI/AccessControl/AcsEvent?format=json", body),
                               "the event search")
@@ -301,17 +311,12 @@ class HikvisionProvider(AttendanceProvider):
             if status != "MORE" or got == 0:
                 return
             position += got
+        self.truncated = True   # the window was not read to its end
         log.warning("Hikvision %s: stopped paging after %d pages", self.base, MAX_PAGES)
 
-    def fetch_punches(self, since=None, until=None) -> Iterator[PunchEvent]:
-        info = self.device_info()
-        serial = info.get("serialNumber") or info.get("deviceID") or urlparse(self.base).hostname or "hik"
-        now = datetime.now(ZoneInfo(self.tz)).replace(tzinfo=None)
-        start = format_time(since or now - timedelta(days=1), self.tz)
-        end = format_time(until or now, self.tz)
-
+    def _events(self, start: str, end: str, extra: dict | None = None) -> list[dict]:
         try:
-            rows = list(self._search_events(0, start, end))
+            return list(self._search_events(0, start, end, extra))
         except HikvisionRefused as exc:
             # Some firmware insists on a specific minor code. Only a refusal
             # falls back: an unreachable device or a wrong password must fail
@@ -320,15 +325,49 @@ class HikvisionProvider(AttendanceProvider):
             rows, accepted = [], 0
             for minor in FALLBACK_MINORS:
                 try:
-                    rows.extend(self._search_events(minor, start, end))
+                    rows.extend(self._search_events(minor, start, end, extra))
                     accepted += 1
                 except HikvisionRefused:
                     continue
             if not accepted:
                 raise
+            return rows
 
+    def _window(self, since, until) -> tuple[str, str]:
+        now = datetime.now(ZoneInfo(self.tz)).replace(tzinfo=None)
+        return (format_time(since or now - timedelta(days=1), self.tz),
+                format_time(until or now, self.tz))
+
+    def _serial(self) -> tuple[dict, str]:
+        info = self.device_info()
+        return info, info.get("serialNumber") or info.get("deviceID") or urlparse(self.base).hostname or "hik"
+
+    def fetch_punches(self, since=None, until=None) -> Iterator[PunchEvent]:
+        info, serial = self._serial()
+        start, end = self._window(since, until)
+        rows = self._events(start, end)
+        rows.sort(key=lambda r: (str(r.get("time") or ""), _serial_no(r) or 0))
+        yield from self._punches(rows, info, serial)
+
+    def fetch_punches_after(self, after_id: int, since=None, until=None) -> Iterator[PunchEvent]:
+        """Events numbered after ``after_id``: ISAPI's ``beginSerialNo``
+        condition. Firmware that rejects or ignores it is reported as
+        IdFilterUnsupported, so the engine reads this terminal by time only."""
+        info, serial = self._serial()
+        start, end = self._window(since, until)
+        try:
+            rows = self._events(start, end, {"beginSerialNo": after_id + 1})
+        except HikvisionRefused as exc:
+            raise IdFilterUnsupported(f"the terminal refused beginSerialNo: {exc}") from exc
+        if any((_serial_no(r) or 0) and _serial_no(r) <= after_id for r in rows):
+            raise IdFilterUnsupported("the terminal ignored beginSerialNo")
+        rows = [r for r in rows if (_serial_no(r) or 0) > after_id]
+        rows.sort(key=lambda r: _serial_no(r) or 0)
+        yield from self._punches(rows, info, serial)
+
+    def _punches(self, rows: list[dict], info: dict, serial: str) -> Iterator[PunchEvent]:
         seen: set[str] = set()
-        for row in sorted(rows, key=lambda r: (str(r.get("time") or ""), r.get("serialNo") or 0)):
+        for row in rows:
             employee = str(row.get("employeeNoString") or row.get("employeeNo") or "").strip()
             if not employee:
                 continue  # door / alarm / stranger events carry no employee
@@ -354,6 +393,7 @@ class HikvisionProvider(AttendanceProvider):
                 first_name=first or None,
                 last_name=last or None,
                 verify_type=VERIFY_BY_MINOR.get(minor, (row.get("currentVerifyMode") or "")[:8] or None),
+                record_id=_serial_no(row),
                 raw={"punch_state": row.get("attendanceStatus") or "", "minor": minor,
                      "serialNo": serial_no, "time": row.get("time")},
             )

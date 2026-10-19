@@ -23,9 +23,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.core.config import settings
-from app.db import migrations
-from app.db.session import engine
+from app.core.config import settings  # noqa: E402
+from app.db import migrations  # noqa: E402
+from app.db.session import engine  # noqa: E402
 
 
 def main() -> int:

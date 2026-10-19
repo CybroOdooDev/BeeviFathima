@@ -10,8 +10,10 @@ mailers (MTSM-11, MTSM-18):
     Time-attendance events in a window — what this provider reads, one day at
     a time so a first 30-day backfill never asks for a month in one reply.
 ``eventta?action=get;index=1;count=100;format=xml``
-    The same events by database index (not used: the window form fits the
-    sync engine's overlap-and-dedupe model directly).
+    The same events by database index — the record-id read
+    (``fetch_punches_after``): everything COSEC stored after the last index
+    BioBridge has, whatever its event time, so a panel that was offline and
+    hands over its backlog late is still picked up.
 
 The response columns are not fixed: they come from an **API template** the
 customer defines in COSEC (Admin → Utility → API Configuration). So instead
@@ -20,6 +22,15 @@ a user id (``UserID``, ``user-id``, ``EmpCode``…), a date and time (one
 ``…DateTime`` field, or separate ``…Date`` and ``…Time``), optionally an
 index number, entry/exit and the device. The setup form tells the customer
 which fields the template needs.
+
+Reading by index
+----------------
+Needs the Index No column in the template (it is also what de-duplicates).
+Whether ``index=`` means "from" or "after" that index is not stated in the
+mailers, so each read asks from the last index already stored: either way
+nothing is skipped, and the one already held is dropped. A server that
+answers with indexes below that, or a template without the column, is
+reported as IdFilterUnsupported and the connection reads by time only.
 
 Built from Matrix's published mailers; tested against a simulated server with
 two different templates (tests/test_cosec_centra.py), not a live CENTRA.
@@ -31,9 +42,8 @@ from __future__ import annotations
 import logging
 import re
 import xml.etree.ElementTree as ET
-from collections.abc import Iterator
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Iterator
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -44,6 +54,7 @@ from app.integrations.base import (
     AttendanceProvider,
     Capability,
     ConnectionInfo,
+    IdFilterUnsupported,
     ProviderError,
     PunchEvent,
     SourceConfig,
@@ -56,6 +67,8 @@ log = logging.getLogger(__name__)
 TRANSPORT: httpx.BaseTransport | None = None
 
 MAX_DAYS = 45   # a guard on one run's window
+INDEX_PAGE = 500        # events per eventta request
+MAX_INDEX_PAGES = 40    # per run; a bigger backlog continues next run
 
 
 class CentraError(ProviderError):
@@ -155,6 +168,7 @@ class CosecCentraProvider(AttendanceProvider):
     )
     capabilities = frozenset({Capability.READ_PUNCHES})
     kinds = frozenset({"platform"})
+    record_id_cursor = True
     config_fields = (
         {"name": "base_url", "label": "Server URL", "type": "text", "required": True,
          "help": "Where COSEC runs, e.g. http://cosec-server/cosec (the part before /api.svc)."},
@@ -178,6 +192,8 @@ class CosecCentraProvider(AttendanceProvider):
             self.api = f"{parsed.scheme}://{parsed.netloc}{path.rstrip('/')}/api.svc"
         self.tz = config.timezone or "UTC"
         self._client: httpx.Client | None = None
+        #: How far the index read got; the engine's id cursor stops there.
+        self.record_cursor_until: int | None = None
 
     def _http(self) -> httpx.Client:
         if self._client is None:
@@ -231,28 +247,74 @@ class CosecCentraProvider(AttendanceProvider):
         end = until or now
         start = since or end - timedelta(days=1)
         start = max(start, end - timedelta(days=MAX_DAYS))
-        host = urlparse(self.api).hostname or "cosec"
         cursor = start
         while cursor < end:
             chunk_end = min(cursor + timedelta(days=1), end)
             for row in self._window(cursor, chunk_end):
-                user = _pick(row, USER_KEYS)
-                when = parse_when(row)
-                if not user or when is None:
-                    continue
-                index = _pick(row, INDEX_KEYS)
-                device = _pick(row, DEVICE_KEYS)
-                name = _pick(row, NAME_KEYS)
-                first, _, last = name.partition(" ")
-                yield PunchEvent(
-                    external_id=f"{host}:{index}" if index else f"{host}:{user}:{when:%Y%m%d%H%M%S}:{device}",
-                    emp_code=user,
-                    punch_time_local=when,
-                    direction=direction_of(_pick(row, DIRECTION_KEYS)),
-                    terminal_sn=device or None,
-                    terminal_alias=device or None,
-                    first_name=first or None,
-                    last_name=last or None,
-                    raw={"punch_state": _pick(row, DIRECTION_KEYS), "fields": row},
-                )
+                event = self._event(row)
+                if event is not None:
+                    yield event
             cursor = chunk_end
+
+    def _host(self) -> str:
+        return urlparse(self.api).hostname or "cosec"
+
+    def _event(self, row: dict[str, str]) -> PunchEvent | None:
+        user = _pick(row, USER_KEYS)
+        when = parse_when(row)
+        if not user or when is None:
+            return None
+        index = _pick(row, INDEX_KEYS)
+        device = _pick(row, DEVICE_KEYS)
+        name = _pick(row, NAME_KEYS)
+        first, _, last = name.partition(" ")
+        return PunchEvent(
+            external_id=f"{self._host()}:{index}" if index else f"{self._host()}:{user}:{when:%Y%m%d%H%M%S}:{device}",
+            emp_code=user,
+            punch_time_local=when,
+            direction=direction_of(_pick(row, DIRECTION_KEYS)),
+            terminal_sn=device or None,
+            terminal_alias=device or None,
+            first_name=first or None,
+            last_name=last or None,
+            record_id=int(index) if index.isdigit() else None,
+            raw={"punch_state": _pick(row, DIRECTION_KEYS), "fields": row},
+        )
+
+    # -- by index: what COSEC stored after the last index we have ------------
+    def fetch_punches_after(self, after_id: int, since=None, until=None) -> Iterator[PunchEvent]:
+        """Events COSEC stored after index ``after_id``, in index order,
+        whatever their event time (``eventta``). Asked from ``after_id``
+        itself, so it does not matter whether the server reads ``index=`` as
+        "from" or "after". At most MAX_INDEX_PAGES requests per run;
+        ``record_cursor_until`` is the last index read, so a bigger backlog
+        carries on from there next run."""
+        start = after_id
+        self.record_cursor_until = after_id
+        for _ in range(MAX_INDEX_PAGES):
+            try:
+                rows = records(self._get("eventta", {"index": start, "count": INDEX_PAGE, "format": "xml"}))
+            except CentraError as exc:
+                if "No COSEC API" in str(exc) or "error code" in str(exc):
+                    raise IdFilterUnsupported(f"the server has no index read (eventta): {exc}") from exc
+                raise
+            if not rows:
+                return
+            indexes = [_pick(r, INDEX_KEYS) for r in rows]
+            if not all(i.isdigit() for i in indexes):
+                raise IdFilterUnsupported("the API template has no Index No column")
+            numbers = [int(i) for i in indexes]
+            if min(numbers) < start:
+                raise IdFilterUnsupported("the server ignored the index it was asked from")
+            for row, number in sorted(zip(rows, numbers), key=lambda pair: pair[1]):
+                if number <= start:
+                    continue                  # already held: asked "from" it, read last page
+                event = self._event(row)
+                if event is not None:
+                    yield event
+            top = max(numbers)
+            self.record_cursor_until = max(self.record_cursor_until, top)
+            if len(rows) < INDEX_PAGE or top <= start:
+                return
+            start = top
+        log.info("COSEC %s: index backlog continues next run from %s", self._host(), start)

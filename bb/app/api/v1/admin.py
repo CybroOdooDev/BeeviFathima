@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import re
 import secrets
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, select
@@ -25,19 +26,21 @@ from sqlalchemy.orm import Session
 from app.api.deps import audit_platform, get_platform_admin
 from app.core.config import settings
 from app.core.security import hash_password
+from app.services.email_check import UngenuineEmailError, assert_genuine_email
+from app.services.email_verification import issue_verification_token, send_verification_email
 from app.db.session import get_db
 from app.models import (
-    OPEN_STAGES,
-    PIPELINE_STAGES,
     AccountClosure,
     ContactEvent,
     ContactRequest,
+    OPEN_STAGES,
+    PIPELINE_STAGES,
+    PendingSignup,
     Device,
     DeviceSource,
     EmployeeMapping,
     MappingStatus,
     OdooConnection,
-    PendingSignup,
     PunchRecord,
     PunchState,
     SubscriptionPlan,
@@ -54,9 +57,10 @@ from app.schemas import (
     ContactRequestUpdate,
     ErrorGroup,
     MailSettingsIn,
+    StripeSettingsIn,
+    TenantDeleteIn,
     MailTestIn,
     MessageOut,
-    StripeSettingsIn,
     SubscriptionPlanAdminOut,
     SubscriptionPlanIn,
     SyncRunOut,
@@ -65,7 +69,6 @@ from app.schemas import (
     TenantCreateIn,
     TenantCreateOut,
     TenantDeactivateIn,
-    TenantDeleteIn,
     TenantDiagnosticsOut,
     TenantScheduleUpdate,
     TenantUsageOut,
@@ -73,11 +76,6 @@ from app.schemas import (
 from app.services import billing, mail_settings, stripe_settings
 from app.services.account_deletion import EXIT_REASONS, delete_tenant
 from app.services.device_limits import over_limit_device_ids
-from app.services.email_check import UngenuineEmailError, assert_genuine_email
-from app.services.email_verification import (
-    issue_verification_token,
-    send_verification_email,
-)
 from app.services.mailer import MailError, build_message, deliver
 from app.services.scheduling import (
     SYNCABLE,
@@ -87,9 +85,6 @@ from app.services.scheduling import (
     scheduler_health,
 )
 from app.services.sync_engine import SyncEngine
-from datetime import datetime, timedelta, timezone
-
-UTC = timezone.utc
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin", tags=["platform"])
@@ -230,7 +225,7 @@ def platform_overview(
     from failed runs is scrubbed of employee names (``_redact``) exactly as the
     per-account diagnostics are.
     """
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     tenants = db.scalars(select(Tenant).order_by(Tenant.name)).all()
     rows = [(t, _to_out(db, t)) for t in tenants]
 
@@ -239,7 +234,7 @@ def platform_overview(
         by_status[t.status] = by_status.get(t.status, 0) + 1
 
     def aware(value):
-        return value if value is None or value.tzinfo else value.replace(tzinfo=UTC)
+        return value if value is None or value.tzinfo else value.replace(tzinfo=timezone.utc)
 
     new_30d = sum(1 for t, _o in rows if t.created_at and aware(t.created_at) >= now - timedelta(days=30))
 
@@ -714,7 +709,7 @@ def deactivate_tenant(
     # Only on the way in: re-running this to correct the reason should not move
     # the date and lose when the account actually stopped.
     if not already:
-        tenant.suspended_at = datetime.now(UTC)
+        tenant.suspended_at = datetime.now(timezone.utc)
 
     # The reason is deliberately NOT in the audit detail. This trail belongs to
     # the customer — it exists so they can see that support changed something —
@@ -839,7 +834,7 @@ def create_tenant(
         # Same trial length as self-signup (settings.trial_days). Staff can
         # move it immediately from the account's own row if this onboarding
         # should start on a different clock.
-        subscription_renews_at=datetime.now(UTC) + timedelta(days=settings.trial_days),
+        subscription_renews_at=datetime.now(timezone.utc) + timedelta(days=settings.trial_days),
     )
     db.add(tenant)
     db.flush()
@@ -1340,10 +1335,10 @@ def update_contact_request(
     if new_stage and new_stage != req.status:
         db.add(ContactEvent(
             contact_id=req.id, kind="stage", from_stage=req.status, to_stage=new_stage,
-            actor=actor.email, created_at=datetime.now(UTC),
+            actor=actor.email, created_at=datetime.now(timezone.utc),
         ))
         req.status = new_stage
-        req.stage_changed_at = datetime.now(UTC)
+        req.stage_changed_at = datetime.now(timezone.utc)
         if new_stage != "lost":
             req.lost_reason = None   # a reason belongs to a lost lead only
     # A lead that asked for a demo gets a pending one the moment it is worked.
@@ -1356,7 +1351,7 @@ def update_contact_request(
                                 "Move the lead to Contacted before setting a demo status")
         db.add(ContactEvent(
             contact_id=req.id, kind="demo", from_stage=req.demo_status, to_stage=data["demo_status"],
-            actor=actor.email, created_at=datetime.now(UTC),
+            actor=actor.email, created_at=datetime.now(timezone.utc),
         ))
         req.demo_status = data["demo_status"]
     if "notes" in data:
@@ -1398,7 +1393,7 @@ def add_contact_note(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No such request")
     event = ContactEvent(
         contact_id=req.id, kind="note", note=payload.note.strip(), actor=actor.email,
-        created_at=datetime.now(UTC),
+        created_at=datetime.now(timezone.utc),
     )
     req.handled_by = actor.email
     db.add(event)

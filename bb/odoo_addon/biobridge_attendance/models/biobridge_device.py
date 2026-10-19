@@ -1,6 +1,7 @@
 # Part of BioBridge Attendance Devices. See LICENSE file for full copyright
 # and licensing details.
-from odoo import api, fields, models
+from odoo import _, api, fields, models
+from odoo.exceptions import ValidationError
 
 
 class BiobridgeDevice(models.Model):
@@ -47,6 +48,27 @@ class BiobridgeDevice(models.Model):
             "A device with this serial number already exists for this company.",
         ),
     ]
+
+    @api.constrains("company_id")
+    def _check_company_vs_attendance(self):
+        """A device cannot move to a company that its recorded attendance
+        does not belong to: every record must keep matching its terminal."""
+        for device in self:
+            clash = self.env["hr.attendance"].with_context(active_test=False).search_count(
+                [
+                    ("device_id", "=", device.id),
+                    ("employee_id.company_id", "!=", device.company_id.id),
+                ]
+            )
+            if clash:
+                raise ValidationError(
+                    _(
+                        "Device %(device)s has attendance from employees of another "
+                        "company, so it cannot be assigned to %(company)s.",
+                        device=device.display_name,
+                        company=device.company_id.display_name,
+                    )
+                )
 
     def _compute_attendance_count(self):
         counts = dict(
@@ -105,10 +127,14 @@ class BiobridgeDevice(models.Model):
         """
         vals = dict(vals or {})
         vals["serial_number"] = serial_number
+        # BioBridge sends the terminal's own company when it knows it. Fall
+        # back to the session company only when it does not, so a terminal is
+        # never filed under whichever company the API user happens to be in.
+        company_id = vals.pop("company_id", None) or self.env.company.id
         device = self.search(
             [
                 ("serial_number", "=", serial_number),
-                ("company_id", "=", self.env.company.id),
+                ("company_id", "=", company_id),
             ],
             limit=1,
         )
@@ -118,4 +144,5 @@ class BiobridgeDevice(models.Model):
             device.write({k: v for k, v in vals.items() if v})
             return device.id
         vals.setdefault("name", serial_number)
+        vals["company_id"] = company_id
         return self.create(vals).id

@@ -861,10 +861,11 @@ async function renderOdoo(mount, route) {
       const v = odooValues();
       const asSaved = odoo && !v.api_key && v.url === odoo.url
         && v.db_name === odoo.db_name && v.username === odoo.username;
-      if (result.ok && asSaved) {
+      // A failure is recorded too: the pill must go to Failed, not keep saying Connected.
+      if (asSaved) {
         try {
-          const saved = await api.post(`/odoo-connections/${odoo.id}/test`);
-          if (saved.ok) {
+          await api.post(`/odoo-connections/${odoo.id}/test`);
+          {
             const fresh = (await api.get('/odoo-connections')).find((c) => c.id === odoo.id);
             if (fresh) {
               Object.assign(odoo, fresh);
@@ -872,7 +873,7 @@ async function renderOdoo(mount, route) {
               if (box) box.innerHTML = statusRow(odoo);
             }
           }
-        } catch { /* the test itself passed; the pill catches up on the next load */ }
+        } catch { /* the pill catches up on the next load */ }
       }
       return result;
     },
@@ -1168,7 +1169,6 @@ function companyFieldHtml(odoo, companies, off) {
 let editingSourceId = null;
 let confirmDeleteId = null; // a source id pending removal confirmation
 
-const PROVIDER_LABEL = { zk_device: 'ZKTeco protocol', zk_adms: 'Cloud push', hik_isapi: 'Hikvision', biostar2: 'Suprema BioStar 2', cosec: 'Matrix COSEC', cosec_centra: 'COSEC CENTRA', crosschex: 'Anviz CrossChex', hikconnect: 'Hik-Connect', hikcentral: 'HikCentral', cams: 'Cams biometrics', dahua: 'Dahua' };
 /** Which direct-device protocol is offered first. */
 const DIRECT_ORDER = { zk_device: 0, hik_isapi: 1, dahua: 2, cosec: 3, cams: 4, biotime: 0, biostar2: 1, hikcentral: 2, hikconnect: 3, cosec_centra: 4, crosschex: 5 };
 /** Where push devices send to — from /providers (setup), for the forms. */
@@ -1261,6 +1261,22 @@ async function renderBiometric(mount, route) {
  * trapping and Esc-to-close for free. Nothing is saved until Connect.
  * ======================================================================== */
 
+/* Companies switched on for the account's Odoo; [] when there is no Odoo, it
+ * has a single company, or it cannot be reached (the picker is then hidden). */
+async function loadEnabledCompanies() {
+  try {
+    const conns = await api.get('/odoo-connections');
+    const conn = conns.find((c) => c.is_active !== false) || conns[0];
+    if (!conn) return [];
+    const all = await api.get(`/odoo-connections/${conn.id}/companies`);
+    const off = new Set(conn.disabled_company_ids || []);
+    const on = all.filter((c) => !off.has(c.id) && (conn.company_id == null || c.id === conn.company_id));
+    return on.length > 1 ? on : [];
+  } catch {
+    return [];
+  }
+}
+
 function openAddWizard({ providersFor, onDone, canProvision = new Set() }) {
   document.querySelector('dialog.wizard')?.remove();
   const dialog = document.createElement('dialog');
@@ -1275,6 +1291,20 @@ function openAddWizard({ providersFor, onDone, canProvision = new Set() }) {
     tested: null,      // { fingerprint, result }
   };
   const STEPS = ['Details', 'Test & Connect'];
+  // A standalone device is one terminal and belongs to one company.
+  let companies = [];
+  loadEnabledCompanies().then((list) => {
+    companies = list;
+    if (dialog.isConnected && state.step === 1 && state.provider && kind() === 'device' && list.length) {
+      state.values = readForm($('#wizForm', dialog) || dialog);
+      render();
+    }
+  });
+  const companyField = () => (isDevice() && companies.length ? field({
+    name: 'company_id', label: 'Company', required: true, value: state.values.company_id || '',
+    options: [{ value: '', label: 'Choose a company…' }, ...companies.map((c) => ({ value: String(c.id), label: c.name }))],
+    help: 'The Odoo company this device belongs to. Its punches go to this company only.',
+  }) : '');
 
   const allProviders = providersFor();
   const metaOf = () => allProviders.find((p) => p.slug === state.provider);
@@ -1290,6 +1320,11 @@ function openAddWizard({ providersFor, onDone, canProvision = new Set() }) {
     const values = { ...state.values };
     values.connection_kind = kind();
     values.provider = state.provider;
+    const pickedCompany = values.company_id ? companies.find((c) => String(c.id) === String(values.company_id)) : null;
+    delete values.company_id;
+    if (pickedCompany && isDevice()) {
+      values.config = { ...(values.config || {}), company_id: pickedCompany.id, company_name: pickedCompany.name };
+    }
     if (state.provider === 'zk_device' && values.base_url && !/^zk:\/\//i.test(values.base_url)) {
       values.base_url = `zk://${values.base_url}`;
     }
@@ -1329,7 +1364,7 @@ function openAddWizard({ providersFor, onDone, canProvision = new Set() }) {
             placeholder: 'Search or choose a protocol…', emptyNote: 'No Matching Protocol',
           })}
           ${state.provider
-            ? sourceFieldsHtml(null, kind(), [metaOf()], state.provider)
+            ? sourceFieldsHtml(null, kind(), [metaOf()], state.provider) + companyField()
             : '<p class="hint">Pick a protocol to see what it needs — BioTime, ZKTeco, Hikvision, Dahua and more.</p>'}
         </form>`;
     }
@@ -1341,6 +1376,7 @@ function openAddWizard({ providersFor, onDone, canProvision = new Set() }) {
       ['Type', hintOf(metaOf() || {})],
       ['Name', v.name],
       ...(isDevice() ? [['Location', v.location]] : []),
+      ...(isDevice() && v.config?.company_name ? [['Company', v.config.company_name]] : []),
       [push ? 'Device Serial' : ['crosschex', 'hikconnect'].includes(state.provider) ? 'Region' : state.provider === 'cams' ? 'Endpoint URL' : isDevice() ? 'Device Address' : 'Server URL',
         push ? String(v.base_url || '').replace(/^adms:\/\//i, '') : v.base_url],
       ...(v.username ? [[state.provider === 'crosschex' ? 'API Key' : state.provider === 'hikconnect' ? 'App Key' : state.provider === 'hikcentral' ? 'Partner Key' : state.provider === 'cams' ? 'Service Tag ID' : 'Username', v.username]] : []),
@@ -1541,10 +1577,29 @@ function openEditWizard({ source, onDone, canProvision = new Set() }) {
   const result = $('#wizResult', dialog);
   const error = $('#wizError', dialog);
 
+  // A standalone device is one terminal and belongs to one company; the picker
+  // appears when the Odoo has several enabled (same rule as the add wizard).
+  let companies = [];
+  const currentCompany = source.default_company_id != null ? String(source.default_company_id) : '';
+  if (kind === 'device') {
+    loadEnabledCompanies().then((list) => {
+      if (!dialog.isConnected || !list.length) return;
+      companies = list;
+      const wrap = document.createElement('div');
+      wrap.innerHTML = field({
+        name: 'company_id', label: 'Company', required: true, value: currentCompany,
+        options: [{ value: '', label: 'Choose a company…' }, ...list.map((c) => ({ value: String(c.id), label: c.name }))],
+        help: 'The Odoo company this device belongs to. Its punches go to this company only.',
+      });
+      form.append(wrap);
+    });
+  }
+
   /** The form's values shaped the way the API takes them. A blank password
    * means "keep the saved one", so it is left out. */
   const payload = () => {
     const values = readForm(form);
+    delete values.company_id;   // saved on its own, through the company endpoint
     if (!values.password) delete values.password;
     if (provider === 'zk_device' && values.base_url && !/^zk:\/\//i.test(values.base_url)) {
       values.base_url = `zk://${values.base_url}`;
@@ -1603,6 +1658,10 @@ function openEditWizard({ source, onDone, canProvision = new Set() }) {
     busy(event.target, async () => {
       try {
         await api.patch(`/sources/${source.id}`, payload());
+        const picked = companies.find((c) => String(c.id) === String(form.elements.company_id?.value));
+        if (picked && String(picked.id) !== currentCompany) {
+          await api.put(`/sources/${source.id}/default-company`, { company_id: picked.id, company_name: picked.name });
+        }
         // Re-check at once, so the status shown is about the values just
         // saved rather than "unverified".
         const outcome = await api.post(`/sources/${source.id}/test`);
@@ -1645,6 +1704,8 @@ async function provisionAfterTest(sourceId) {
     if (error.status >= 500) toast(`Employees not added to the device: ${error.message}`, 'bad');
     return;
   }
+  // A skipped run (several Odoo companies on) stays quiet: it would repeat on
+  // every Test Connection. The reason shows when the option is switched on.
   if (result.created.length || result.failed.length) {
     toast(provisionSummary(result), result.failed.length ? 'bad' : 'ok');
   }
@@ -1710,9 +1771,7 @@ function confirmDeleteTerminal(name, serial, punches = 0) {
 }
 
 function sourceCard(source, devices, readonly, canProvision = false, canImport = true) {
-  const kindLabel = source.provider === 'zk_adms' ? 'Cloud Push Device'
-    : source.connection_kind === 'device' ? 'Standalone Device' : 'Platform Server';
-  const providerLabel = PROVIDER_LABEL[source.provider];
+  const companyPill = (name) => (name ? ` <span class="pill mute">${esc(name)}</span>` : '');
   const isConfirming = confirmDeleteId === source.id;
 
   return `
@@ -1721,9 +1780,7 @@ function sourceCard(source, devices, readonly, canProvision = false, canImport =
         <div style="min-width:0">
           <div class="row" style="gap:8px;align-items:center">
             <strong>${esc(source.name)}</strong>
-            ${pill(source.status)}
-            <span class="pill mute">${esc(kindLabel)}</span>
-            ${providerLabel ? `<span class="pill mute">${esc(providerLabel)}</span>` : ''}
+            ${pill(source.status)}${source.connection_kind === 'device' && !devices.length ? companyPill(source.default_company_name) : ''}
           </div>
           <div class="hint mono" style="margin-top:2px">${esc(source.provider === 'zk_adms'
             ? `serial ${source.base_url.replace(/^adms:\/\//i, '')}` : source.base_url)}</div>
@@ -1750,17 +1807,17 @@ function sourceCard(source, devices, readonly, canProvision = false, canImport =
           <button type="button" class="sm danger" data-remove-commit="${esc(source.id)}">Remove</button>
           <button type="button" class="sm link" data-remove-cancel="${esc(source.id)}">Cancel</button>
         </div>` : ''}
-      ${source.status_message ? banner('Last Error', source.status_message, 'bad') : ''}
+      ${source.status_message ? banner('Error', source.status_message, 'bad') : ''}
 
       ${devices.length ? `
         <div class="scroll" style="margin-top:12px">
           <table>
-            <thead><tr><th>Device</th><th>Serial</th><th>IP</th><th class="num">Punches</th><th>Last Seen</th><th>Pairing</th><th></th></tr></thead>
+            <thead><tr><th>Device</th><th>Serial</th><th>IP</th><th class="num">Punches</th><th>Last Seen</th><th></th></tr></thead>
             <tbody>
               ${devices.map((d) => `
                 <tr data-device="${esc(d.id)}">
                   <td>
-                    ${esc(d.alias || '—')}
+                    ${esc(d.alias || '—')}${companyPill(d.company_name || source.default_company_name)}
                     ${d.missing_since
                       ? ` ${pill('missing')} <span class="hint" title="Not reported by this connection's last &quot;Import terminals&quot; run">since ${esc(fmtAgo(d.missing_since))}</span>`
                       : ''}
@@ -1769,7 +1826,6 @@ function sourceCard(source, devices, readonly, canProvision = false, canImport =
                   <td class="mono">${esc(d.ip_address || '—')}</td>
                   <td class="num">${esc(d.matched_punch_count ?? d.punch_count)}</td>
                   <td>${esc(fmtAgo(d.last_seen_at))}</td>
-                  <td>${esc(d.pairing_override || 'account default')}</td>
                   <td style="text-align:right">
                     ${readonly ? pill(d.is_enabled ? 'active' : 'skipped')
                       : `<div class="row" style="justify-content:flex-end;gap:6px;flex-wrap:nowrap">
@@ -1862,7 +1918,7 @@ function sourceFieldsHtml(source, kind, providers, provider) {
         <strong>In COSEC First</strong>
         <ol>
           <li>Open <b>Admin → Utility → API Configuration</b>.</li>
-          <li>In the <b>T&amp;A events</b> template include <b>User ID</b> and <b>Event Date/Time</b> — and ideally <b>Entry/Exit</b>, <b>Device</b> and <b>Index No</b>.</li>
+          <li>In the <b>T&amp;A events</b> template include <b>User ID</b> and <b>Event Date/Time</b> — ideally <b>Entry/Exit</b> and <b>Device</b>, and <b>Index No</b> so punches a panel hands over late are still picked up.</li>
           <li>Save, then test here. The test tells you if a field is missing.</li>
         </ol>
       </div>
@@ -2185,7 +2241,7 @@ function statusRow(connection) {
       ${pill(connection.status)}
     </div>
     ${connection.status_message
-      ? banner('Last Error', connection.status_message, 'bad') : ''}`;
+      ? banner('Error', connection.status_message, 'bad') : ''}`;
 }
 
 function wireBiometric(mount, canProvision = new Set(), sources = [], providersFor) {

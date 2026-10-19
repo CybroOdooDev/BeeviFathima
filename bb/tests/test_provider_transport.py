@@ -38,10 +38,10 @@ def no_backoff():
     part these tests care about; ``test_transport_errors_are_retried`` asserts it
     is still three.
     """
-    original = BioTimeProvider._send.retry.wait
-    BioTimeProvider._send.retry.wait = wait_none()
+    original = BioTimeProvider._send.retry.wait  # noqa: SLF001
+    BioTimeProvider._send.retry.wait = wait_none()  # noqa: SLF001
     yield
-    BioTimeProvider._send.retry.wait = original
+    BioTimeProvider._send.retry.wait = original  # noqa: SLF001
 
 
 def _dead_port() -> int:
@@ -117,17 +117,17 @@ def test_transport_errors_are_retried(refused_url: str, monkeypatch) -> None:
     """
     provider = _provider(refused_url)
     attempts = 0
-    real_request = provider._client.request
+    real_request = provider._client.request  # noqa: SLF001
 
     def counting(*args, **kwargs):
         nonlocal attempts
         attempts += 1
         return real_request(*args, **kwargs)
 
-    monkeypatch.setattr(provider._client, "request", counting)
+    monkeypatch.setattr(provider._client, "request", counting)  # noqa: SLF001
     try:
         with pytest.raises(ProviderError):
-            provider._authenticate()
+            provider._authenticate()  # noqa: SLF001
     finally:
         provider.close()
     assert attempts == 3, "a transient blip should get two more goes"
@@ -137,7 +137,7 @@ def test_authenticate_wraps_transport_errors(refused_url: str) -> None:
     provider = _provider(refused_url)
     try:
         with pytest.raises(ProviderError):
-            provider._authenticate()
+            provider._authenticate()  # noqa: SLF001
     finally:
         provider.close()
 

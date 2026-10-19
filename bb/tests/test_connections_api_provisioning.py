@@ -25,6 +25,7 @@ from app.integrations.base import (
     Capability,
     ConnectionInfo,
     PunchEvent,
+    SourceConfig,
     register,
 )
 from app.main import app

@@ -37,8 +37,8 @@ on it.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
-from typing import Any
+from datetime import datetime, timedelta, timezone
+from typing import Any, Iterator
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -50,15 +50,13 @@ from app.integrations.base import (
     Capability,
     ConnectionInfo,
     EmployeeRecord,
+    IdFilterUnsupported,
     ProviderError,
     PunchEvent,
     SourceConfig,
     TerminalRecord,
     register,
 )
-from datetime import datetime, timedelta, timezone
-
-UTC = timezone.utc
 
 log = logging.getLogger(__name__)
 
@@ -66,6 +64,10 @@ log = logging.getLogger(__name__)
 TRANSPORT: httpx.BaseTransport | None = None
 
 PAGE_SIZE = 500
+#: Search operators (Suprema's list: 0 EQUAL, 1 NOT_EQUAL, 2 CONTAINS,
+#: 3 BETWEEN, 4 LIKE, 5 GREATER, 6 LESS).
+OP_BETWEEN = 3
+OP_GREATER = 5
 MAX_PAGES = 1000
 SUCCESS_RANGES = ((0x1000, 0x10FF), (0x1300, 0x13FF), (0x1500, 0x15FF))
 TNA_DIRECTION = {1: True, 2: False, 3: False, 4: True, 5: False, 6: True}
@@ -114,20 +116,26 @@ def parse_time(value: str | None) -> datetime | None:
         moment = datetime.fromisoformat(text)
     except ValueError:
         try:
-            moment = datetime.strptime(str(value)[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=UTC)
+            moment = datetime.strptime(str(value)[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
         except ValueError:
             return None
-    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
 
 
 def utc_text(moment: datetime) -> str:
-    return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 def _nested(value: Any, key: str) -> str:
     if isinstance(value, dict):
         return str(value.get(key) or "").strip()
     return str(value or "").strip()
+
+
+def _event_no(row: dict) -> int | None:
+    """The server's event id, when it is a plain integer."""
+    value = str(row.get("id") or "").strip()
+    return int(value) if value.isdigit() else None
 
 
 @register
@@ -145,6 +153,7 @@ class BioStar2Provider(AttendanceProvider):
         Capability.WRITE_EMPLOYEES,
     })
     kinds = frozenset({"platform"})
+    record_id_cursor = True
     config_fields = (
         {"name": "base_url", "label": "Server URL", "type": "text", "required": True,
          "help": "Where BioStar 2 runs, e.g. https://biostar.example.com (add :port if it isn't 443)."},
@@ -161,7 +170,8 @@ class BioStar2Provider(AttendanceProvider):
         base = (config.base_url or "").strip().rstrip("/")
         if base and "://" not in base:
             base = f"https://{base}"
-        base = base.removesuffix("/api")
+        if base.endswith("/api"):
+            base = base[:-4]
         self.base = base
         self.tz = config.timezone or "UTC"
         self._session: str | None = config.token or None
@@ -284,21 +294,49 @@ class BioStar2Provider(AttendanceProvider):
                 model=_nested(row.get("device_type_id"), "name") or None,
             )
 
+    def _bounds(self, since, until) -> tuple[datetime, datetime]:
+        zone = ZoneInfo(self.tz)
+        now = datetime.now(timezone.utc)
+        return (since.replace(tzinfo=zone) if since else now - timedelta(days=1),
+                until.replace(tzinfo=zone) if until else now)
+
+    def _search(self, conditions: list[dict], order: str) -> list[dict]:
+        body = {"Query": {"limit": PAGE_SIZE, "conditions": conditions,
+                          "orders": [{"column": order, "descending": False}]}}
+        return (self._call("POST", "/api/events/search", json=body).get("EventCollection") or {}).get("rows") or []
+
+    def _punch(self, row: dict, zone: ZoneInfo) -> PunchEvent | None:
+        event_id = str(row.get("id") or "").strip()
+        when = parse_time(row.get("datetime"))
+        code = _nested(row.get("event_type_id"), "code")
+        employee = _nested(row.get("user_id"), "user_id")
+        if not event_id or not is_punch(code) or not employee or when is None:
+            return None
+        device = row.get("device_id") or {}
+        name = _nested(row.get("user_id"), "name")
+        first, _, rest = name.partition(" ")
+        return PunchEvent(
+            external_id=event_id,
+            emp_code=employee,
+            punch_time_local=when.astimezone(zone).replace(tzinfo=None),
+            direction=direction_of(row.get("tna_key")),
+            terminal_sn=_nested(device, "id") or None,
+            terminal_alias=_nested(device, "name") or None,
+            first_name=first or None,
+            last_name=rest or None,
+            verify_type=verify_of(code),
+            record_id=_event_no(row),
+            raw={"punch_state": str(row.get("tna_key") or ""), "event_code": code},
+        )
+
     def fetch_punches(self, since=None, until=None) -> Iterator[PunchEvent]:
         zone = ZoneInfo(self.tz)
-        now = datetime.now(UTC)
-        start = since.replace(tzinfo=zone) if since else now - timedelta(days=1)
-        end = until.replace(tzinfo=zone) if until else now
+        start, end = self._bounds(since, until)
         seen: set[str] = set()
 
         for _ in range(MAX_PAGES):
-            body = {"Query": {
-                "limit": PAGE_SIZE,
-                "conditions": [{"column": "datetime", "operator": 3,
-                                "values": [utc_text(start), utc_text(end)]}],
-                "orders": [{"column": "datetime", "descending": False}],
-            }}
-            rows = (self._call("POST", "/api/events/search", json=body).get("EventCollection") or {}).get("rows") or []
+            rows = self._search([{"column": "datetime", "operator": OP_BETWEEN,
+                                  "values": [utc_text(start), utc_text(end)]}], "datetime")
             fresh = 0
             last: datetime | None = None
             for row in rows:
@@ -310,31 +348,46 @@ class BioStar2Provider(AttendanceProvider):
                     continue
                 seen.add(event_id)
                 fresh += 1
-                code = _nested(row.get("event_type_id"), "code")
-                employee = _nested(row.get("user_id"), "user_id")
-                if not is_punch(code) or not employee or when is None:
-                    continue
-                device = row.get("device_id") or {}
-                name = _nested(row.get("user_id"), "name")
-                first, _, rest = name.partition(" ")
-                yield PunchEvent(
-                    external_id=event_id,
-                    emp_code=employee,
-                    punch_time_local=when.astimezone(zone).replace(tzinfo=None),
-                    direction=direction_of(row.get("tna_key")),
-                    terminal_sn=_nested(device, "id") or None,
-                    terminal_alias=_nested(device, "name") or None,
-                    first_name=first or None,
-                    last_name=rest or None,
-                    verify_type=verify_of(code),
-                    raw={"punch_state": str(row.get("tna_key") or ""), "event_code": code},
-                )
+                punch = self._punch(row, zone)
+                if punch is not None:
+                    yield punch
             if len(rows) < PAGE_SIZE or last is None:
                 return
             # Next page from the last row's time; ids already seen are skipped.
             # A full page of one second's events would never advance, so step on.
             start = last if fresh else last + timedelta(seconds=1)
+        self.truncated = True   # the window was not read to its end
         log.warning("BioStar 2 %s: stopped paging after %d pages", self.base, MAX_PAGES)
+
+    def fetch_punches_after(self, after_id: int, since=None, until=None) -> Iterator[PunchEvent]:
+        """Events with an id above ``after_id`` (the server numbers events as
+        it stores them, so a late upload gets a new id), read in id order and
+        paged by id. A server that ignores the id condition or the id order is
+        reported as IdFilterUnsupported rather than trusted."""
+        zone = ZoneInfo(self.tz)
+        start, end = self._bounds(since, until)
+        cursor = after_id
+        for _ in range(MAX_PAGES):
+            rows = self._search([
+                {"column": "id", "operator": OP_GREATER, "values": [str(cursor)]},
+                {"column": "datetime", "operator": OP_BETWEEN, "values": [utc_text(start), utc_text(end)]},
+            ], "id")
+            ids = [_event_no(r) for r in rows]
+            if any(i is None for i in ids):
+                raise IdFilterUnsupported("events without a numeric id")
+            if any(i <= cursor for i in ids):
+                raise IdFilterUnsupported("the server ignored the id condition")
+            if ids != sorted(ids):
+                raise IdFilterUnsupported("the server ignored the id order")
+            for row in rows:
+                punch = self._punch(row, zone)
+                if punch is not None:
+                    yield punch
+            if len(rows) < PAGE_SIZE:
+                return
+            cursor = ids[-1]
+        self.truncated = True   # the window was not read to its end
+        log.warning("BioStar 2 %s: stopped paging by id after %d pages", self.base, MAX_PAGES)
 
     def fetch_employees(self) -> Iterator[EmployeeRecord]:
         offset = 0

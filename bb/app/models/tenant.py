@@ -166,14 +166,14 @@ class Tenant(Base, UUIDPk, Timestamped):
     limit_max_devices: Mapped[int | None] = mapped_column(Integer)
     limit_min_sync_interval_minutes: Mapped[int | None] = mapped_column(Integer)
 
-    users: Mapped[list[User]] = relationship(
+    users: Mapped[list["User"]] = relationship(
         back_populates="tenant", cascade="all, delete-orphan"
     )
     #: ``foreign_keys`` is required on both now that two columns reference
     #: subscription_plan — without it SQLAlchemy has no way to tell which FK
     #: each relationship is for and refuses to guess.
-    plan: Mapped[SubscriptionPlan | None] = relationship(foreign_keys=[plan_id])
-    pending_plan: Mapped[SubscriptionPlan | None] = relationship(
+    plan: Mapped["SubscriptionPlan | None"] = relationship(foreign_keys=[plan_id])
+    pending_plan: Mapped["SubscriptionPlan | None"] = relationship(
         foreign_keys=[pending_plan_id]
     )
 
@@ -199,7 +199,7 @@ class Tenant(Base, UUIDPk, Timestamped):
     def plan_name(self) -> str | None:
         return self.plan.name if self.plan_id else None
 
-    def limit_for(self, name: str, plan: SubscriptionPlan | None | object = ...) -> int | None:
+    def limit_for(self, name: str, plan: "SubscriptionPlan | None | object" = ...) -> int | None:
         """The limit ``name`` actually in force for this account; None = unlimited.
 
         ``name`` is a SubscriptionPlan limit column (``max_employees``,

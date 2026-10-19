@@ -18,15 +18,14 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
+from datetime import timezone
 
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.integrations.odoo import OdooClient, OdooError
-from app.models import Device, DeviceSource, PunchRecord, Tenant
-from datetime import timezone
-
-UTC = timezone.utc
+from app.models import Device, DeviceSource, EmployeeMapping, MappingStatus, PunchRecord, Tenant
+from app.services.company_scope import terminal_company_id
 
 
 def device_for_punch(db: Session, punch: PunchRecord) -> Device | None:
@@ -50,6 +49,34 @@ def device_for_punch(db: Session, punch: PunchRecord) -> Device | None:
     if device is not None:
         punch.device_id = device.id
     return device
+
+
+def terminal_may_register_in_odoo(db: Session, device: Device) -> bool:
+    """Whether this terminal may be written to Odoo as a device record.
+
+    A terminal that has punches but whose employees are all unmapped is held
+    back: nothing says whose terminal it is, and Odoo should not carry a device
+    for people BioBridge cannot place. It registers as soon as one of its
+    employees is mapped, automatically or by hand. A terminal with no punches
+    yet (just discovered, or just connected) is not penalised.
+    """
+    base = select(PunchRecord.id).where(
+        PunchRecord.tenant_id == device.tenant_id,
+        PunchRecord.source_id == device.source_id,
+        PunchRecord.terminal_sn == device.serial_number,
+    )
+    if db.scalar(base.limit(1)) is None:
+        return True
+    mapped = (
+        base.join(
+            EmployeeMapping,
+            (EmployeeMapping.tenant_id == PunchRecord.tenant_id)
+            & (EmployeeMapping.emp_code == PunchRecord.emp_code),
+        )
+        .where(EmployeeMapping.status == MappingStatus.mapped.value)
+        .limit(1)
+    )
+    return db.scalar(mapped) is not None
 
 
 @dataclass
@@ -119,6 +146,8 @@ def link_attendance_devices(
 
     for device_id, ids in by_device.items():
         device = devices[device_id]
+        if not terminal_may_register_in_odoo(db, device):
+            continue
         try:
             odoo_device_id = odoo.upsert_device(
                 device.serial_number,
@@ -126,6 +155,7 @@ def link_attendance_devices(
                 location=device.area,
                 terminal_model=device.model,
                 ip_address=device.ip_address,
+                company_id=terminal_company_id(db, device),
             )
             odoo.set_attendance_device(ids, odoo_device_id)
         except OdooError as exc:
@@ -164,7 +194,7 @@ def restore_terminals_from_punches(db: Session, tenant: Tenant, source: DeviceSo
         device = Device(
             tenant_id=tenant.id, source_id=source.id, serial_number=serial,
             punch_count=count,
-            last_seen_at=newest.replace(tzinfo=newest.tzinfo or UTC) if newest else None,
+            last_seen_at=newest.replace(tzinfo=newest.tzinfo or timezone.utc) if newest else None,
         )
         db.add(device)
         db.flush()

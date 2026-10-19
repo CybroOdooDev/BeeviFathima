@@ -23,6 +23,8 @@ RUN pip install -r requirements.txt \
     && apt-get purge -y --auto-remove gcc libpq-dev
 
 COPY app ./app
+# tools/ holds db_upgrade (run at every start), the SQLite → Postgres copier
+# and the support scripts; tests and mock data stay out (.dockerignore).
 COPY tools ./tools
 COPY alembic ./alembic
 COPY alembic.ini ./alembic.ini
@@ -47,4 +49,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
 # takes a database lock, so replicas starting together take turns, and it is a
 # no-op when nothing is pending. The worker and beat services override this
 # command and do not migrate — they start after the API in compose.
-CMD ["sh", "-c", "python tools/db_upgrade.py && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers"]
+# --forwarded-allow-ips: behind the bundled Caddy (or any proxy on the compose
+# network) the client address and https scheme come from X-Forwarded-*. Only
+# the proxy can reach this port in the production compose, so trusting it is
+# safe there; locally there is no proxy and the headers are simply absent.
+CMD ["sh", "-c", "python tools/db_upgrade.py && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'"]

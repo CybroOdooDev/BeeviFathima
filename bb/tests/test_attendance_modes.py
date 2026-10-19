@@ -40,14 +40,7 @@ def test_old_odoo_without_modes_or_technical_gets_nothing():
 
 def test_state_based_two_check_ins_close_the_first_as_auto_closed():
     from datetime import datetime
-
-    from app.services.pairing import (
-        Direction,
-        PairingConfig,
-        PairingMode,
-        Punch,
-        pair_punches,
-    )
+    from app.services.pairing import Direction, PairingConfig, PairingMode, Punch, pair_punches
 
     def p(i, hour, d):
         return Punch(str(i), "1", datetime(2026, 10, 9, hour), d)

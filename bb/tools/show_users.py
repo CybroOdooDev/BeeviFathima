@@ -28,23 +28,19 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from sqlalchemy import inspect, text  # noqa: E402
 
-from sqlalchemy import inspect, text
-
-import app.models  # noqa: F401
-from app.core.config import settings
-from app.core.security import hash_password, verify_password
-from app.db.base import Base
-from app.db.schema_check import detect_drift
-from app.db.session import engine, session_scope
-from app.models import Tenant, User
-from datetime import datetime, timedelta, timezone
-
-UTC = timezone.utc
-
+from app.core.config import settings  # noqa: E402
+from app.core.security import hash_password, verify_password  # noqa: E402
+from app.db.base import Base  # noqa: E402
+from app.db.schema_check import detect_drift  # noqa: E402
+from app.db.session import engine, session_scope  # noqa: E402
+from app.models import Tenant, User  # noqa: E402
+import app.models  # noqa: E402,F401
 
 
 class Row:
@@ -66,7 +62,7 @@ class Row:
 def read_users_raw(db, email: str | None) -> list[Row]:
     live = [c["name"] for c in inspect(engine).get_columns("app_user")]
     columns = ", ".join(live)
-    sql = f"SELECT {columns} FROM app_user"
+    sql = f"SELECT {columns} FROM app_user"  # noqa: S608 — names from the schema
     params = {}
     if email:
         sql += " WHERE email = :email"
@@ -83,15 +79,15 @@ def _aware(value):
             value = datetime.fromisoformat(value)
         except ValueError:
             return None
-    return value.replace(tzinfo=UTC) if value.tzinfo is None else value
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
 
 
 def login_blockers(user: User) -> list[str]:
     """Every reason the login endpoint would refuse this account, in its order."""
     reasons = []
     locked = _aware(user.locked_until)
-    if locked and locked > datetime.now(UTC):
-        wait = int((locked - datetime.now(UTC)).total_seconds() / 60) + 1
+    if locked and locked > datetime.now(timezone.utc):
+        wait = int((locked - datetime.now(timezone.utc)).total_seconds() / 60) + 1
         reasons.append(
             f"LOCKED for another {wait} min after repeated failures "
             f"(429, not 401 — the error names the wait). Clear it with --unlock."
@@ -167,7 +163,7 @@ def main() -> int:
             else:
                 print("\nThat is a genuine password mismatch, not a lockout or a "
                       "schema problem.")
-                print(f"Recover with:  --email {user.email} --set-password '...'")
+                print("Recover with:  --email {} --set-password '...'".format(user.email))
             return 0
 
         users = read_users_raw(db, args.email)
@@ -201,7 +197,7 @@ def main() -> int:
                          "failed_login_count = 0"]
                 params["pw"] = hash_password(args.set_password)
             db.execute(
-                text(f"UPDATE app_user SET {', '.join(sets)} WHERE email = :email"),
+                text(f"UPDATE app_user SET {', '.join(sets)} WHERE email = :email"),  # noqa: S608
                 params,
             )
             db.commit()
@@ -224,7 +220,7 @@ def main() -> int:
             if getattr(user, "is_platform_admin", False):
                 flags.append("platform staff")
             locked = _aware(user.locked_until)
-            if locked and locked > datetime.now(UTC):
+            if locked and locked > datetime.now(timezone.utc):
                 flags.append("LOCKED")
 
             print(f"  {user.email}")

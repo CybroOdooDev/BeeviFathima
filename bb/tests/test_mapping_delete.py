@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from sqlalchemy import select
+
 from app.db.session import get_db
 from app.main import app
-from app.models import EmployeeMapping, MappingStatus
+from app.models import EmployeeMapping, MappingStatus, PunchRecord
 from tests.test_api_isolation import auth, client, signup  # noqa: F401
 
 

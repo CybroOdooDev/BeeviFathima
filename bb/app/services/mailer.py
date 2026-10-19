@@ -102,7 +102,7 @@ def deliver(config: MailConfig, message: EmailMessage) -> None:
             client.send_message(message)
     except MailError:
         raise
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         raise MailError(_explain(exc, config)) from exc
 
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import os
 import socket
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -31,9 +32,6 @@ from app.models import (
     TenantStatus,
 )
 from app.services.timeutils import ensure_aware, utcnow_naive
-from datetime import datetime, timedelta, timezone
-
-UTC = timezone.utc
 
 log = logging.getLogger(__name__)
 
@@ -204,12 +202,12 @@ def next_run_at(
         return None
     last = last_run_started_at(db, tenant.id)
     if last is None:
-        return now or datetime.now(UTC)
+        return now or datetime.now(timezone.utc)
     return last + timedelta(minutes=effective_interval(tenant))
 
 
 def is_due(db: Session, tenant: Tenant, *, now: datetime | None = None) -> bool:
-    now = now or datetime.now(UTC)
+    now = now or datetime.now(timezone.utc)
     due_at = next_run_at(db, tenant, now=now)
     return due_at is not None and due_at <= now
 
@@ -247,7 +245,7 @@ def due_tenants(db: Session, *, now: datetime | None = None) -> list[Tenant]:
     prevented by the caller (an in-flight set here, a Redis lock under Celery)
     rather than by delaying the clock.
     """
-    now = now or datetime.now(UTC)
+    now = now or datetime.now(timezone.utc)
     tenants = db.scalars(
         select(Tenant).where(Tenant.sync_enabled.is_(True), Tenant.status.in_(SYNCABLE))
     ).all()
@@ -306,7 +304,7 @@ def sweep_subscriptions(db: Session, *, now: datetime | None = None) -> dict[str
     — there is nothing here to notice an early extension, so that switch
     simply waits for whatever date is current when it is finally reached.
     """
-    now = now or datetime.now(UTC)
+    now = now or datetime.now(timezone.utc)
     lapsed = 0
     renewed = 0
     switched = 0
@@ -401,7 +399,7 @@ def renewal_warning(tenant: Tenant, *, now: datetime | None = None) -> dict | No
     renews_at = ensure_aware(tenant.subscription_renews_at)
     if renews_at is None:
         return None
-    now = now or datetime.now(UTC)
+    now = now or datetime.now(timezone.utc)
     days_left = (renews_at - now).total_seconds() / 86400
     if days_left > settings.subscription_warning_days:
         return None

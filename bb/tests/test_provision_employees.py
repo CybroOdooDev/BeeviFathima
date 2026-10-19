@@ -24,22 +24,18 @@ from app.integrations.base import (
     Capability,
     ConnectionInfo,
     EmployeeRecord,
-    ProviderError,
     PunchEvent,
-    SourceConfig,
+    ProviderError,
     register,
 )
 from app.integrations.odoo import OdooError
 from app.integrations.providers.zkteco import ZKDeviceProvider
+from app.integrations.base import SourceConfig
 from app.main import app
 from app.models import Base, EmployeeMapping, MappingStatus, Tenant
 from app.services.provisioning import provision_code, provision_unmapped
 from tests.conftest import FakeOdoo
-from tests.test_zkteco_protocol import (
-    FakeZKDevice,
-    _encode_user_record,
-    _encode_user_record_28,
-)
+from tests.test_zkteco_protocol import FakeZKDevice, _encode_user_record, _encode_user_record_28
 
 SLUG = "test_provisionable_device"
 

@@ -1,16 +1,31 @@
 #!/usr/bin/env python3
-"""Generate a punches.json for tools/mock_biotime.py — for any company in your Odoo.
+"""Generate a one-off BACKLOG of punches for tools/mock_biotime.py (one tenant).
 
-    python3 tools/generate_punches.py --list-companies
-    python3 tools/generate_punches.py --company 7
-    python3 tools/generate_punches.py --company 7 --days 10 --tz Asia/Kolkata --check-in 08:30 --check-out 17:30
+Most of the time you do not need this: tools/mock_biotime.py generates live
+punches by itself, right now, forever. Use this only to pre-load several days of
+history. Its timestamps are fixed when it runs, so the file goes stale — run the
+live mock instead whenever a sync should see something new.
+
+    python3 tools/generate_punches.py --tenant gulf-steel --list-companies
+    python3 tools/generate_punches.py --tenant gulf-steel
+    python3 tools/generate_punches.py --tenant gulf-steel --company 7 --days 10 --tz Asia/Kolkata
 
 then serve them:
 
-    python3 tools/mock_biotime.py --company 7 --port 8107
+    python3 tools/mock_biotime.py --tenant gulf-steel --port 8107
 
-``--company`` is the Odoo res.company id. The roster is that company's active
-employees, read from Odoo (see tools/mock_roster.py for where the Odoo login
+``--tenant`` is required. It names the BioBridge account whose Odoo supplies the
+people, and everything written lives in ``mock_data/<tenant>/`` — one tenant's
+employees, terminals and punches are never visible to another's.
+
+Without ``--company``, punches are generated for the employees of every company
+*enabled* for that tenant in BioBridge: all the Odoo companies when none is
+switched off, all but the switched-off ones otherwise (or only the pinned one).
+Each employee punches on their own company's terminals, which is what lets
+BioBridge tell a terminal's company from the people who use it. ``--company N``
+narrows it to one enabled company.
+
+The roster is read from Odoo (see tools/mock_roster.py for where the Odoo login
 comes from — on a machine where BioBridge is connected to Odoo, nowhere: it
 uses that connection). Each employee's Badge ID (else PIN, else registration
 number) is their device user id, so BioBridge matches every punch straight
@@ -105,6 +120,7 @@ def build(
     seed: int | None,
     terminals: list[str] | None = None,
     first_id: int = 1,
+    terminals_by_code: dict[str, list[str]] | None = None,
 ) -> tuple[list[dict], list[str]]:
     """Return (rows, still_clocked_in_codes).
 
@@ -145,7 +161,9 @@ def build(
             continue
 
         for i, code in enumerate(emp_codes):
-            terminal = terminals[i % len(terminals)]
+            # A tenant-wide run: each person uses their own company's terminals.
+            mine = (terminals_by_code or {}).get(code) or terminals
+            terminal = mine[i % len(mine)]
             check_in_at = jitter(
                 datetime(day.year, day.month, day.day, ci_h, ci_m, tzinfo=tz)
             )
@@ -175,14 +193,13 @@ def main() -> int:
     )
     parser.add_argument(
         "--out", default=None,
-        help="Where to write the punches (default: punches.json for --company 1, "
-             "punches_company<N>.json otherwise, so generating for one company "
-             "never clobbers another's file)",
+        help="Where to write the punches (default: mock_data/<tenant>/punches.json — "
+             "each tenant has its own file, so generating for one never touches another's)",
     )
     parser.add_argument(
-        "--company", type=int, default=1,
-        help="Odoo res.company id whose active employees punch (default: 1). "
-             "Use --list-companies to see the ids.",
+        "--company", type=int, default=None,
+        help="Odoo res.company id to generate for. Omit it to generate for every company "
+             "enabled for the tenant. Use --list-companies to see the ids and which are enabled.",
     )
     parser.add_argument(
         "--emp-codes", default=None,
@@ -208,10 +225,7 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=None,
                         help="Fix the jitter for a reproducible file")
     from tools.mock_roster import (
-        add_odoo_arguments,
-        describe,
-        list_companies,
-        load_roster,
+        add_odoo_arguments, describe, list_companies, load_tenant_roster, resolve_scope,
     )
 
     add_odoo_arguments(parser)
@@ -219,7 +233,8 @@ def main() -> int:
     if args.list_companies:
         return list_companies(args)
 
-    roster = load_roster(args, args.company)
+    scope = resolve_scope(args)
+    roster = load_tenant_roster(args, scope)
     print(describe(roster))
     emp_codes_str = args.emp_codes if args.emp_codes is not None else ",".join(roster.emp_codes)
     emp_codes = [c.strip() for c in emp_codes_str.split(",") if c.strip()]
@@ -228,9 +243,12 @@ def main() -> int:
     if args.days < 1:
         raise SystemExit("--days must be at least 1")
 
-    out = args.out if args.out is not None else (
-        "punches.json" if args.company == 1 else f"punches_company{args.company}.json"
-    )
+    out = args.out if args.out is not None else str(scope.punches_path)
+    company_of = {str(e["emp_code"]): e.get("_company_id") for e in roster.employees}
+    terminals_by_code = {
+        code: [t["sn"] for t in roster.terminals if t.get("_company_id") == company_of.get(code)]
+        for code in emp_codes
+    }
 
     tz = _resolve_tz(args.tz)
     # Continue the ids of the file being replaced. BioBridge remembers every
@@ -255,6 +273,7 @@ def main() -> int:
         seed=args.seed,
         terminals=roster.serials,
         first_id=first_id,
+        terminals_by_code=terminals_by_code,
     )
 
     if not rows:
@@ -279,8 +298,8 @@ def main() -> int:
         print(f"  still clocked in (no check-out yet, on purpose): "
               f"{', '.join(sorted(set(still_in)))}")
     print()
-    company_flag = "" if args.company == 1 else f" --company {args.company}"
-    print(f"  python3 tools/mock_biotime.py{company_flag} --punches {out}")
+    company_flag = "" if args.company is None else f" --company {args.company}"
+    print(f"  python3 tools/mock_biotime.py --tenant {args.tenant}{company_flag}")
     print()
     print("Re-run this whenever the punches feel stale — every timestamp is "
           "computed relative to right now, so an old file is the only thing "

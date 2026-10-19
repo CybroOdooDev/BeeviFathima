@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from jose import JWTError, jwt
@@ -12,12 +13,7 @@ from passlib.context import CryptContext
 
 from app.core.config import settings
 
-from datetime import datetime, timedelta, timezone
-
-UTC = timezone.utc
-
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 
 #: The two doors a session can be minted at.
 #:
@@ -89,7 +85,7 @@ def refresh_ttl(scope: str) -> timedelta:
 def _create_token(
     subject: str, tenant_id: str | None, role: str, ttl: timedelta, kind: str, scope: str
 ) -> str:
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     payload: dict[str, Any] = {
         "sub": subject,
         "tid": tenant_id,

@@ -26,12 +26,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass, field
 
-from app.integrations.base import (
-    AttendanceProvider,
-    EmployeeRecord,
-    ProviderError,
-    UnsupportedCapability,
-)
+from app.integrations.base import AttendanceProvider, EmployeeRecord, ProviderError, UnsupportedCapability
 
 #: Only these, in this order — see the module docstring.
 PROVISION_FIELDS: tuple[str, ...] = ("barcode", "pin")

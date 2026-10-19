@@ -6,24 +6,15 @@ from __future__ import annotations
 import base64
 import hashlib
 import re
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
 
 from app.integrations.base import ProviderError, SourceConfig
 from app.integrations.providers import dahua as dh
-from app.integrations.providers.dahua import (
-    DahuaProvider,
-    direction_of,
-    parse_created,
-    parse_kv,
-    parse_records,
-)
+from app.integrations.providers.dahua import DahuaProvider, direction_of, parse_created, parse_kv, parse_records
 from tests.test_platform_admin import api, head, signup  # noqa: F401
-from datetime import datetime, timedelta, timezone
-
-UTC = timezone.utc
-
 
 USER, PASSWORD, REALM, NONCE = "admin", "Dahua@123", "Login to ASI7214", "nonce-77a1"
 SERIAL, MODEL, TZ = "9A0B1C2D3E4F5G6", "ASI7214S-W", "Asia/Dubai"
@@ -104,7 +95,7 @@ def test_parsers():
                                 "records[1].RecNo=2\nrecords[1].UserID=Li\n")
     assert total == 1000 and rows == [{"RecNo": "1", "UserID": "Zhang"}, {"RecNo": "2", "UserID": "Li"}]
     zone = dh.ZoneInfo(TZ)
-    assert parse_created("1790000000", zone) == datetime.fromtimestamp(1790000000, tz=UTC)
+    assert parse_created("1790000000", zone) == datetime.fromtimestamp(1790000000, tz=timezone.utc)
     assert parse_created("2026-09-29 08:00:00", zone).utcoffset() == timedelta(hours=4)
     assert parse_created("nope", zone) is None
     assert direction_of({"AttendanceState": "CheckOut"}) is False and direction_of({"Type": "Entry"}) is True
@@ -112,7 +103,7 @@ def test_parsers():
 
 
 def test_connects_with_digest_and_names_the_device(device):
-    device.add("1001", datetime.now(UTC) - timedelta(hours=1))
+    device.add("1001", datetime.now(timezone.utc) - timedelta(hours=1))
     info = provider().test_connection()
     assert info.ok and MODEL in info.message and "1 access record" in info.message
     assert list(provider().fetch_terminals())[0].serial_number == SERIAL
@@ -129,7 +120,7 @@ def test_old_firmware_that_only_answers_basic(monkeypatch):
 
 
 def test_maps_records_and_skips_failures(device):
-    base = datetime(2026, 9, 29, 4, 0, tzinfo=UTC)              # 08:00 in Dubai
+    base = datetime(2026, 9, 29, 4, 0, tzinfo=timezone.utc)              # 08:00 in Dubai
     device.add("1001", base, method="15", state="CheckIn")
     device.add("1001", base + timedelta(minutes=1), status="0")           # a failed attempt
     device.add("", base + timedelta(minutes=2), card="777")               # a card with no user
@@ -146,7 +137,7 @@ def test_maps_records_and_skips_failures(device):
 
 def test_pages_by_last_create_time_and_drops_the_overlap(device, monkeypatch):
     monkeypatch.setattr(dh, "PAGE_SIZE", 10)
-    base = datetime(2026, 9, 29, 4, 0, tzinfo=UTC)
+    base = datetime(2026, 9, 29, 4, 0, tzinfo=timezone.utc)
     for i in range(25):
         device.add("1001", base + timedelta(minutes=i))
     punches = list(provider().fetch_punches(datetime(2026, 9, 29, 0, 0), datetime(2026, 9, 30, 0, 0)))
@@ -164,7 +155,7 @@ def test_a_day_at_a_time(device):
 def test_firmware_that_wants_local_text_times(monkeypatch):
     fake = FakeDahua(text_times=True)
     monkeypatch.setattr(dh, "TRANSPORT", httpx.MockTransport(fake))
-    fake.add("1001", datetime(2026, 9, 29, 4, 0, tzinfo=UTC))
+    fake.add("1001", datetime(2026, 9, 29, 4, 0, tzinfo=timezone.utc))
     p = provider()
     (punch,) = p.fetch_punches(datetime(2026, 9, 29, 0, 0), datetime(2026, 9, 30, 0, 0))
     assert punch.punch_time_local == datetime(2026, 9, 29, 8, 0)
@@ -193,7 +184,7 @@ def test_sync_registers_the_terminal_and_writes_attendance(api, device, monkeypa
     odoo = FakeOdoo(employees={"1001": (11, "Jane Doe")})
     monkeypatch.setattr(engine_mod, "build_odoo_client", lambda t, c: odoo)
 
-    now = datetime.now(UTC).replace(microsecond=0)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
     device.add("1001", now - timedelta(hours=3), state="CheckIn")
     device.add("1001", now - timedelta(hours=1), state="CheckOut")
     run = api.post(f"/api/v1/sources/{source['id']}/sync", headers=head(token)).json()
@@ -202,3 +193,119 @@ def test_sync_registers_the_terminal_and_writes_attendance(api, device, monkeypa
     devices = api.get("/api/v1/devices", headers=head(token)).json()
     assert [d["serial_number"] for d in devices] == [SERIAL]
     assert api.post(f"/api/v1/sources/{source['id']}/sync", headers=head(token)).json()["punches_new"] == 0
+
+
+# -- late records: gaps in the RecNo sequence ----------------------------------
+
+def _read(p, start, end):
+    """The engine's order: the time window first, then the record-id read."""
+    return list(p.fetch_punches(start, end))
+
+
+def test_a_record_stored_with_an_old_time_is_found_by_its_number(device):
+    base = datetime(2026, 9, 29, 4, 0, tzinfo=timezone.utc)                # 08:00 Dubai
+    device.add("1001", base)                                                # RecNo 1
+    device.add("1002", base - timedelta(days=3))                            # RecNo 2: clock set back
+    device.add("1003", base + timedelta(minutes=5))                         # RecNo 3
+    p = provider()
+    window = _read(p, datetime(2026, 9, 29, 7, 0), datetime(2026, 9, 29, 9, 0))
+    assert [e.record_id for e in window] == [1, 3]
+    late = list(p.fetch_punches_after(1, datetime(2026, 9, 1, 0, 0), datetime(2026, 9, 29, 9, 0)))
+    assert [(e.emp_code, e.record_id) for e in late] == [("1002", 2)]
+    assert late[0].external_id == f"{SERIAL}:2"
+    assert p.record_cursor_until == 3
+
+
+def test_no_gaps_means_no_extra_queries(device):
+    base = datetime(2026, 9, 29, 4, 0, tzinfo=timezone.utc)
+    for i in range(3):
+        device.add("1001", base + timedelta(minutes=i))
+    p = provider()
+    _read(p, datetime(2026, 9, 29, 7, 0), datetime(2026, 9, 29, 9, 0))
+    asked = len(device.queries)
+    assert list(p.fetch_punches_after(1, datetime(2026, 9, 1), datetime(2026, 9, 29, 9, 0))) == []
+    assert len(device.queries) == asked and p.record_cursor_until == 3
+
+
+def test_failed_attempts_count_as_seen_numbers(device):
+    base = datetime(2026, 9, 29, 4, 0, tzinfo=timezone.utc)
+    device.add("1001", base)
+    device.add("1001", base + timedelta(minutes=1), status="0")            # RecNo 2, not a punch
+    device.add("1001", base + timedelta(minutes=2))
+    p = provider()
+    _read(p, datetime(2026, 9, 29, 7, 0), datetime(2026, 9, 29, 9, 0))
+    asked = len(device.queries)
+    assert list(p.fetch_punches_after(0, datetime(2026, 9, 1), datetime(2026, 9, 29, 9, 0))) == []
+    assert len(device.queries) == asked
+
+
+def test_search_budget_holds_the_cursor_below_what_is_still_missing(device, monkeypatch):
+    monkeypatch.setattr(dh, "MAX_GAP_DAYS", 2)
+    base = datetime(2026, 9, 29, 4, 0, tzinfo=timezone.utc)
+    device.add("1001", base)                                                # 1
+    device.add("1002", base - timedelta(days=10))                           # 2: beyond 2 days back
+    device.add("1003", base + timedelta(minutes=5))                         # 3
+    p = provider()
+    _read(p, datetime(2026, 9, 29, 7, 0), datetime(2026, 9, 29, 9, 0))
+    assert list(p.fetch_punches_after(0, datetime(2026, 9, 1), datetime(2026, 9, 29, 9, 0))) == []
+    assert p.record_cursor_until == 1
+    assert not getattr(p, "config_updates", None)          # not a fruitless search, just unfinished
+
+
+def test_gaps_that_are_never_found_switch_to_time_only(device):
+    from app.integrations.base import IdFilterUnsupported
+
+    base = datetime(2026, 9, 29, 4, 0, tzinfo=timezone.utc)
+    device.add("1001", base)
+    device.records.append({**device.records[0], "RecNo": "5", "CreateTime": int((base + timedelta(minutes=1)).timestamp())})
+    options: dict = {}
+    for attempt in range(1, dh.MISS_LIMIT + 1):
+        p = DahuaProvider(SourceConfig(base_url="http://10.0.0.108", username=USER, password=PASSWORD,
+                                       timezone=TZ, options=dict(options)))
+        _read(p, datetime(2026, 9, 29, 7, 0), datetime(2026, 9, 29, 9, 0))
+        call = lambda: list(p.fetch_punches_after(1, datetime(2026, 9, 1), datetime(2026, 9, 29, 9, 0)))
+        if attempt < dh.MISS_LIMIT:
+            assert call() == [] and p.record_cursor_until == 5
+        else:
+            with pytest.raises(IdFilterUnsupported):
+                call()
+        options.update(p.config_updates)
+    assert options[dh.MISSES_KEY] == dh.MISS_LIMIT
+
+
+def test_sync_picks_up_a_record_written_with_an_old_time(api, device, monkeypatch):
+    from sqlalchemy import select
+
+    from app.core.crypto import encrypt
+    from app.models import DeviceSource, OdooConnection, Tenant
+    from app.services import sync_engine as engine_mod
+    from tests.conftest import FakeOdoo
+
+    token = signup(api, "Acme", "owner@acme.example.com")
+    source = api.post("/api/v1/sources", headers=head(token), json={
+        "name": "Lobby", "provider": "dahua", "connection_kind": "device",
+        "base_url": "http://10.0.0.108", "username": USER, "password": PASSWORD,
+        "server_timezone": TZ}).json()
+    s = api.session_factory()
+    tenant = s.scalars(select(Tenant)).first()
+    s.add(OdooConnection(tenant_id=tenant.id, name="Odoo", url="https://acme.odoo.com", db_name="acme",
+                         username="bot@acme.com", api_key_enc=encrypt("key", tenant.crypto_key), is_active=True))
+    s.commit(); s.close()
+    odoo = FakeOdoo(employees={"1001": (11, "Jane Doe"), "1002": (12, "Sam Roe")})
+    monkeypatch.setattr(engine_mod, "build_odoo_client", lambda t, c: odoo)
+
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    device.add("1001", now - timedelta(hours=2))
+    sync = lambda: api.post(f"/api/v1/sources/{source['id']}/sync", headers=head(token)).json()
+    assert sync()["punches_new"] == 1
+    s = api.session_factory()
+    assert s.get(DeviceSource, source["id"]).config.get("record_cursor") == 1
+    s.close()
+
+    device.add("1002", now - timedelta(days=2))      # the terminal's clock was set back
+    device.add("1001", now - timedelta(minutes=30))
+    run = sync()
+    assert run["status"] == "success" and run["punches_new"] == 2, run
+    s = api.session_factory()
+    assert s.get(DeviceSource, source["id"]).config.get("record_cursor") == 3
+    s.close()

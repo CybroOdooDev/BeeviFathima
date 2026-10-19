@@ -39,10 +39,10 @@ def _warn_about_schema_drift() -> None:
     the product, and refusing to boot over it would take a working system down.
     """
     try:
-        import app.models  # noqa: F401
         from app.db.base import Base
         from app.db.schema_check import detect_drift
         from app.db.session import engine
+        import app.models  # noqa: F401
 
         drift = detect_drift(engine, Base.metadata)
         if drift.is_empty:
@@ -66,9 +66,9 @@ async def lifespan(app: FastAPI):
         # alters or drops an existing one, so it cannot migrate a schema and is
         # deliberately not run in production. Use tools/init_db.py explicitly,
         # or tools/db_upgrade.py (Alembic) for anything holding data you care about.
-        import app.models  # noqa: F401 — registers every table on Base.metadata
         from app.db.base import Base
         from app.db.session import engine
+        import app.models  # noqa: F401 — registers every table on Base.metadata
 
         Base.metadata.create_all(engine)
         log.info("Schema ensured (development mode)")
@@ -84,6 +84,17 @@ async def lifespan(app: FastAPI):
             raise RuntimeError("JWT_SECRET must be set in production")
         if settings.cors_origins.strip() == "*":
             raise RuntimeError("CORS_ORIGINS must name real origins in production")
+
+    if settings.staff_email or settings.staff_password:
+        # A fixed staff login from the settings; never allowed to stop the boot.
+        try:
+            from app.db.session import session_scope
+            from app.services.staff_bootstrap import ensure_static_staff
+
+            with session_scope() as db:
+                ensure_static_staff(db)
+        except Exception:  # noqa: BLE001
+            log.exception("Could not apply STAFF_EMAIL / STAFF_PASSWORD")
 
     # The clock. Safe in every replica: a database lease decides which one
     # actually dispatches, so scaling the API does not multiply the syncs.
@@ -251,12 +262,6 @@ class RevalidatingStatics(StaticFiles):
 
 STATIC_DIR = Path(__file__).parent / "static"
 if STATIC_DIR.exists():
-    @app.get("/admin", include_in_schema=False)
-    def admin_dashboard_redirect():
-        return RedirectResponse(url="/admin/", status_code=307)
-
-    app.mount("/admin", RevalidatingStatics(directory=STATIC_DIR, html=True), name="admin-dashboard",)
-    
     app.mount("/app", RevalidatingStatics(directory=STATIC_DIR, html=True), name="dashboard")
 
 

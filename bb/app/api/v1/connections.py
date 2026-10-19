@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -11,13 +12,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.deps import (
-    Principal,
-    audit,
-    get_principal,
-    require_syncable,
-    require_writer,
-)
+from app.api.deps import Principal, audit, get_principal, require_syncable, require_writer
 from app.core.crypto import encrypt
 from app.db.session import get_db
 from app.integrations.base import (
@@ -27,7 +22,6 @@ from app.integrations.base import (
     get_provider_class,
 )
 from app.integrations.odoo import OdooError, forget_detected_api
-from app.integrations.providers.zkteco_adms import serial_from_address
 from app.models import (
     ConnectionStatus,
     Device,
@@ -42,12 +36,12 @@ from app.models import (
 from app.schemas import (
     DeviceOut,
     DeviceUpdate,
+    SourceCompanyIn,
     OdooConnectionIn,
     OdooConnectionOut,
     OdooConnectionTestIn,
     OdooConnectionUpdate,
     ProvisionOut,
-    SourceCompanyIn,
     SourceIn,
     SourceOut,
     SourceTestIn,
@@ -55,21 +49,26 @@ from app.schemas import (
     SyncRunOut,
     TestResult,
 )
-from app.services import adms
+from app.integrations.providers.zkteco_adms import serial_from_address
+from app.services import adms, device_removals
 from app.services.connections import (
     UnsafeTargetError,
     address_key,
     build_odoo_client,
     build_source_provider,
 )
+from app.services.company_scope import (
+    MULTI_COMPANY_PROVISION_MESSAGE,
+    is_multi_company,
+    tenant_is_multi_company,
+    terminal_company_id,
+)
 from app.services.device_limits import over_limit_device_ids
+from app.services.device_links import terminal_may_register_in_odoo
+from app.services.friendly_errors import friendly_odoo_message
 from app.services.provisioning import provision_unmapped
 from app.services.roster_import import auto_import
 from app.services.sync_engine import SyncEngine
-
-from datetime import datetime, timezone
-
-UTC = timezone.utc
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["connections"])
@@ -113,10 +112,13 @@ def _probe_odoo(principal: Principal, conn: OdooConnection) -> TestResult:
     try:
         info = build_odoo_client(principal.tenant, conn).ping()
     except (OdooError, UnsafeTargetError) as exc:
+        # The customer sees one short sentence; the technical detail is ours.
+        log.warning("Odoo connection test failed for %s: %s", conn.url, exc)
+        friendly = friendly_odoo_message(exc)
         conn.status = ConnectionStatus.failed.value
-        conn.status_message = str(exc)[:500]
-        conn.last_checked_at = datetime.now(UTC)
-        return TestResult(ok=False, message=str(exc))
+        conn.status_message = friendly
+        conn.last_checked_at = datetime.now(timezone.utc)
+        return TestResult(ok=False, message=friendly)
 
     conn.status = ConnectionStatus.connected.value
     conn.status_message = None
@@ -125,7 +127,7 @@ def _probe_odoo(principal: Principal, conn: OdooConnection) -> TestResult:
     conn.has_companion_addon = bool(info.get("has_companion_addon"))
     conn.has_device_tracking = bool(info.get("has_device_tracking"))
     conn.device_tracking_mode = info.get("device_tracking_mode")
-    conn.last_checked_at = datetime.now(UTC)
+    conn.last_checked_at = datetime.now(timezone.utc)
     # company_name is a display cache, refreshed here and only here — never
     # trust a name the client sent, and never leave a stale one paired with
     # whatever company_id ends up being true after this probe.
@@ -558,13 +560,13 @@ def _probe_source(principal: Principal, source: DeviceSource) -> TestResult:
     except (ProviderError, UnsafeTargetError) as exc:
         source.status = ConnectionStatus.failed.value
         source.status_message = str(exc)[:500]
-        source.last_checked_at = datetime.now(UTC)
+        source.last_checked_at = datetime.now(timezone.utc)
         return TestResult(ok=False, message=str(exc))
     finally:
         if provider is not None:
             provider.close()
 
-    source.last_checked_at = datetime.now(UTC)
+    source.last_checked_at = datetime.now(timezone.utc)
     source.status = (
         ConnectionStatus.connected.value if result.ok else ConnectionStatus.failed.value
     )
@@ -604,6 +606,11 @@ def create_source(
             "connection.",
         )
     _require_provider_fields(provider_cls, payload)
+
+    if payload.auto_provision_employees and tenant_is_multi_company(
+        db, principal.tenant, build_odoo_client
+    ):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, MULTI_COMPANY_PROVISION_MESSAGE)
 
     if payload.auto_provision_employees and not (
         Capability.READ_EMPLOYEES in provider_cls.capabilities
@@ -693,6 +700,10 @@ def update_source(
         else:
             config.pop("location", None)
         source.config = config
+    if data.get("auto_provision_employees") and tenant_is_multi_company(
+        db, principal.tenant, build_odoo_client
+    ):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, MULTI_COMPANY_PROVISION_MESSAGE)
     if data.get("auto_provision_employees"):
         try:
             provider_cls = get_provider_class(source.provider)
@@ -723,9 +734,12 @@ def update_source(
     if data.get("base_url"):
         _refuse_duplicate_address(db, principal, data["base_url"], except_id=source.id,
                                   provider=source.provider, username=data.get("username", source.username))
-        if data["base_url"] != source.base_url and "cosec_cursor" in (source.config or {}):
-            # A different device's log starts from its own beginning.
-            source.config = {k: v for k, v in (source.config or {}).items() if k != "cosec_cursor"}
+        if data["base_url"] != source.base_url:
+            # A different device's log starts from its own beginning, and may
+            # answer an "after record id" query where the old one could not.
+            stale = {"cosec_cursor", "record_cursor", "record_cursor_unsupported", "dahua_recno_misses"}
+            if stale & set(source.config or {}):
+                source.config = {k: v for k, v in (source.config or {}).items() if k not in stale}
         if source.provider == adms.PROVIDER_SLUG and data["base_url"] != source.base_url:
             try:
                 adms.release(db, source)
@@ -854,8 +868,38 @@ def delete_source(
     audit(db, principal, "source.delete", source.id, source.name, request)
     if source.provider == adms.PROVIDER_SLUG:
         adms.release(db, source)
+    queued = 0
+    if _odoo_with_device_tracking(db, principal) is not None:
+        queued = device_removals.queue_source_terminals(db, principal.tenant.id, source)
     db.delete(source)
+    db.flush()
+    if queued:
+        _work_off_device_removals(db, principal)
     db.commit()
+
+
+def _odoo_with_device_tracking(db: Session, principal: Principal) -> OdooConnection | None:
+    conn = db.scalars(
+        select(OdooConnection)
+        .where(OdooConnection.tenant_id == principal.tenant.id, OdooConnection.is_active.is_(True))
+        .limit(1)
+    ).first()
+    return conn if conn is not None and conn.has_device_tracking else None
+
+
+def _work_off_device_removals(db: Session, principal: Principal) -> None:
+    """Try the queued Odoo device removals now. Whatever Odoo does not take
+    stays queued for the next sync; never raises."""
+    conn = _odoo_with_device_tracking(db, principal)
+    if conn is None:
+        return
+    try:
+        odoo = build_odoo_client(principal.tenant, conn)
+        odoo.authenticate()
+    except (OdooError, UnsafeTargetError) as exc:
+        log.warning("Odoo unreachable; device removals stay queued for the next sync: %s", exc)
+        return
+    device_removals.work_off(db, principal.tenant.id, odoo)
 
 
 def _push_devices_to_odoo(
@@ -909,6 +953,8 @@ def _push_devices_to_odoo(
 
     failures: list[str] = []
     for device in devices:
+        if not terminal_may_register_in_odoo(db, device):
+            continue
         try:
             odoo.upsert_device(
                 device.serial_number,
@@ -916,6 +962,7 @@ def _push_devices_to_odoo(
                 location=device.area,
                 terminal_model=device.model,
                 ip_address=device.ip_address,
+                company_id=terminal_company_id(db, device),
             )
         except OdooError as exc:
             log.warning(
@@ -988,15 +1035,49 @@ def _register_standalone_device(
     device.missing_since = None
     # A different serial at this address means the unit was swapped: the old
     # record stays (its history is real) but is flagged as no longer there.
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     for other_serial, other in known.items():
         if other_serial != serial and other.missing_since is None:
             other.missing_since = now
+    # One terminal, one company: it takes the connection's company outright
+    # rather than waiting for punches to reveal it. On a single-company Odoo
+    # the choice is made for it; on a multi-company one it stays unset until the
+    # customer picks (the add dialog asks), and its punches are held.
+    if source.default_company_id is None:
+        _adopt_only_company(db, principal, source)
+    if source.default_company_id is not None and device.company_id is None:
+        device.company_id = source.default_company_id
+        device.company_name = source.default_company_name
     db.flush()
 
     problem = _push_devices_to_odoo(db, principal, [device])
     what = f"{'Registered' if created else 'Updated'} terminal {serial}"
     return f"{what}; {problem}" if problem else f"{what}."
+
+
+def _adopt_only_company(db: Session, principal: Principal, source: DeviceSource) -> None:
+    """On a single-company Odoo, make its one company this connection's company.
+    Quiet no-op on a multi-company Odoo, no Odoo, or when Odoo can't be reached."""
+    conn = db.scalars(
+        select(OdooConnection).where(
+            OdooConnection.tenant_id == principal.tenant.id,
+            OdooConnection.is_active.is_(True),
+        ).limit(1)
+    ).first()
+    if conn is None:
+        return
+    try:
+        odoo = build_odoo_client(principal.tenant, conn)
+        odoo.authenticate()
+        companies = odoo.list_companies()
+    except (OdooError, UnsafeTargetError):
+        return
+    if len(companies) != 1:
+        return
+    config = dict(source.config or {})
+    config["company_id"] = companies[0]["id"]
+    config["company_name"] = companies[0].get("name")
+    source.config = config
 
 
 @router.post("/sources/{source_id}/discover-devices", response_model=list[DeviceOut])
@@ -1065,7 +1146,7 @@ def discover_devices(
     # timestamp is set once and left alone on repeat imports that still don't
     # see it, so it reflects when it first went missing, not the most recent
     # check.
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     missing_now = 0
     for serial, device in existing.items():
         if serial in seen_serials:
@@ -1150,6 +1231,11 @@ def provision_employees(
     try:
         odoo = build_odoo_client(principal.tenant, conn)
         odoo.authenticate()
+        if is_multi_company(odoo):
+            return {
+                "created": [], "failed": [], "already_on_device": 0, "already_mapped": 0,
+                "no_badge_or_pin": 0, "skipped": MULTI_COMPANY_PROVISION_MESSAGE,
+            }
         roster = odoo.list_employees()
     except (OdooError, UnsafeTargetError) as exc:
         raise HTTPException(
@@ -1300,6 +1386,9 @@ def update_device(
               f"{device.alias or device.serial_number} -> {data['company_id']}", request)
     db.commit()
     db.refresh(device)
+    if "company_id" in data:
+        # Reach Odoo now, not on the next punch.
+        _push_devices_to_odoo(db, principal, [device])
     _set_matched_counts(db, principal.tenant.id, [device])
     return device
 
@@ -1324,6 +1413,15 @@ def set_source_company(
         config["company_name"] = payload.company_name
     source.config = config  # reassigned, so the JSON change is seen as a change
     audit(db, principal, "source.company", source.id, str(payload.company_id), request)
+    if source.connection_kind == "device":
+        # A standalone device is one terminal, so its company is the
+        # connection's, not something left to inherit.
+        for terminal in db.scalars(select(Device).where(Device.source_id == source.id)):
+            terminal.company_id = payload.company_id
+            terminal.company_name = payload.company_name if payload.company_id is not None else None
     db.commit()
     db.refresh(source)
+    _push_devices_to_odoo(db, principal, list(db.scalars(
+        select(Device).where(Device.source_id == source.id, Device.company_id.is_(None)
+                             if source.connection_kind != "device" else Device.id.is_not(None)))))
     return source

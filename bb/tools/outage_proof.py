@@ -20,13 +20,13 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import create_engine, select  # noqa: E402
+from sqlalchemy.orm import sessionmaker  # noqa: E402
+from sqlalchemy.pool import StaticPool  # noqa: E402
 
-from app.core.crypto import encrypt
-from app.models import Base, DeviceSource, OdooConnection, Tenant
-from app.services.sync_engine import SyncEngine
+from app.core.crypto import encrypt  # noqa: E402
+from app.models import Base, DeviceSource, OdooConnection, Tenant  # noqa: E402
+from app.services.sync_engine import SyncEngine  # noqa: E402
 
 
 def dead_port() -> int:

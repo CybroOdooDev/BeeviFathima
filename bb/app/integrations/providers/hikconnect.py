@@ -38,8 +38,8 @@ tests/test_hikconnect.py for the shape assumed.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
-from typing import Any
+from datetime import datetime, timedelta, timezone
+from typing import Any, Iterator
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -56,10 +56,6 @@ from app.integrations.base import (
     register,
 )
 from app.integrations.providers.hikvision import direction_of as _hik_direction
-from datetime import datetime, timedelta, timezone
-
-UTC = timezone.utc
-
 
 log = logging.getLogger(__name__)
 
@@ -120,7 +116,7 @@ def parse_time(value: Any, zone: ZoneInfo) -> datetime | None:
         return None
     if isinstance(value, (int, float)) or str(value).isdigit():
         number = float(value)
-        return datetime.fromtimestamp(number / 1000 if number > 1e11 else number, tz=UTC)
+        return datetime.fromtimestamp(number / 1000 if number > 1e11 else number, tz=timezone.utc)
     text = str(value).strip().replace("Z", "+00:00")
     try:
         moment = datetime.fromisoformat(text.replace(" ", "T", 1) if "T" not in text else text)
@@ -286,7 +282,7 @@ class HikConnectProvider(AttendanceProvider):
                 name = str(_first(row, DEVICE_NAME_KEYS) or "").strip() or None
                 status = _first(row, STATUS_KEYS)
                 record_id = _first(raw, ID_KEYS)
-                utc = when.astimezone(UTC)
+                utc = when.astimezone(timezone.utc)
                 yield PunchEvent(
                     external_id=(f"hc:{record_id}" if record_id not in (None, "")
                                  else f"{serial or name or 'hc'}:{person}:{utc:%Y%m%d%H%M%S}"),
@@ -303,4 +299,5 @@ class HikConnectProvider(AttendanceProvider):
             if not rows or len(rows) < PAGE_SIZE or (total and page * PAGE_SIZE >= total):
                 return
             page += 1
+        self.truncated = True   # the window was not read to its end
         log.warning("Hik-Connect %s: stopped paging after %d pages", self.base, MAX_PAGES)

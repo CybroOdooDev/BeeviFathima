@@ -8,6 +8,7 @@ import pytest
 
 from app.services.pairing import (
     Direction,
+    Interval,
     OpenShift,
     PairingConfig,
     PairingMode,

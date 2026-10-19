@@ -16,12 +16,9 @@ from app.services.scheduling import (
     claim_lease,
     due_tenants,
     owner_id,
-)
-from app.services.scheduling import (
     sweep_subscriptions as _sweep_subscriptions,
 )
-from app.services.sync_engine import SyncEngine
-from app.services.sync_engine import close_stale_attendances as _close_stale
+from app.services.sync_engine import SyncEngine, close_stale_attendances as _close_stale
 from app.services.timeutils import utcnow_naive
 from app.workers.celery_app import celery_app
 

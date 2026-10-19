@@ -28,7 +28,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.integrations.odoo import OdooClient, OdooCredentials, OdooError
+from app.integrations.odoo import OdooClient, OdooCredentials, OdooError  # noqa: E402
 
 #: Styled after tools/mock_biotime.py's own EMPLOYEES fixture (Ahmed Sharma /
 #: Sara Tanaka / Jane Haddad) — same shape, different people, so a roster

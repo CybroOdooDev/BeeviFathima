@@ -30,7 +30,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     accept_credentials = True
 
-    def log_message(self, *_args):
+    def log_message(self, *_args):  # noqa: D102 — silence the test output
         pass
 
     def _send(self, payload: bytes, status: int = 200) -> None:
@@ -40,14 +40,14 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
-    def do_POST(self):
+    def do_POST(self):  # noqa: N802
         if self.path == "/api-token-auth/":
             if type(self).accept_credentials:
                 return self._send(b'{"token": "t"}')
             return self._send(b'{"detail": "bad"}', 401)
         self._send(b'{"detail": "Not found."}', 404)
 
-    def do_GET(self):
+    def do_GET(self):  # noqa: N802
         if self.path.startswith("/iclock/api/transactions/"):
             return self._send(b'{"count": 7, "next": null, "data": []}')
         self._send(b"{}")
@@ -174,7 +174,7 @@ class _Slow(BaseHTTPRequestHandler):
     def log_message(self, *_args):
         pass
 
-    def do_GET(self):
+    def do_GET(self):  # noqa: N802
         import time
 
         time.sleep(type(self).delay)

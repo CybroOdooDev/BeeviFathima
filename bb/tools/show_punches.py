@@ -192,7 +192,7 @@ def main() -> int:
                 f"{str(r['punch_time_utc'])[:19]:<20} "
                 f"{str(r.get('punch_time_local') or '—')[:19]:<20} "
                 f"{r['emp_code']:<10} {r['direction']:<5} {r['process_state']:<9} "
-                f"{r.get('odoo_attendance_id') or '—'!s:>6}  {detail[:34]}"
+                f"{str(r.get('odoo_attendance_id') or '—'):>6}  {detail[:34]}"
             )
 
     totals = Counter(p["process_state"] for p in punches)

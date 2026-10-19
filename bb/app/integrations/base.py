@@ -38,6 +38,12 @@ class UnsupportedCapability(ProviderError):
     """Asked a provider to do something it never claimed it could do."""
 
 
+class IdFilterUnsupported(ProviderError):
+    """The platform answered an "after record id N" query without applying the
+    filter (its firmware or version ignores the parameter). The engine stops
+    asking that source by id and keeps reading by time, which is always safe."""
+
+
 class Capability(str, enum.Enum):
     READ_PUNCHES = "read_punches"          # the only universal one
     READ_EMPLOYEES = "read_employees"
@@ -68,6 +74,11 @@ class PunchEvent:
     last_name: str | None = None
     department: str | None = None
     verify_type: str | None = None
+    #: The platform's own sequence number for this record, when it has one
+    #: that only ever grows (Hikvision serialNo, BioStar 2 event id). Lets the
+    #: engine ask for "everything after the last record stored", which catches
+    #: a punch that reaches the platform late with an old timestamp.
+    record_id: int | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -157,7 +168,7 @@ class AttendanceProvider(ABC):
     def close(self) -> None:
         """Release sockets and handles. Safe to call more than once."""
 
-    def __enter__(self) -> AttendanceProvider:
+    def __enter__(self) -> "AttendanceProvider":
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -178,6 +189,24 @@ class AttendanceProvider(ABC):
         report. Yielding rather than returning a list keeps a year of history
         from being held in memory at once.
         """
+
+    #: True when the platform numbers its records with an id that only grows
+    #: and can be asked for records after one (fetch_punches_after).
+    record_id_cursor: bool = False
+
+    #: Set by a read that stopped at the provider's page cap before reaching
+    #: the end of its window. The engine then reads that window again in
+    #: smaller time slices and never moves its cursor past what it read.
+    truncated: bool = False
+
+    def fetch_punches_after(
+        self, after_id: int, since: datetime | None = None, until: datetime | None = None
+    ) -> Iterator[PunchEvent]:
+        """Yield punches whose ``record_id`` is greater than ``after_id``,
+        whatever their timestamp, within the outer ``since``/``until`` bounds.
+        Oldest id first. Raises IdFilterUnsupported when the platform turns
+        out to ignore the id condition."""
+        raise UnsupportedCapability(f"{self.label} cannot fetch punches by record id")
 
     # -- optional, gated on capabilities -----------------------------------
     def fetch_employees(self) -> Iterator[EmployeeRecord]:

@@ -91,8 +91,9 @@ def delete_tenant(db: Session, tenant: Tenant, *, closed_by: str, closed_by_emai
 
     user_ids = select(User.id).where(User.tenant_id == tenant.id)
     db.execute(delete(UserSession).where(UserSession.user_id.in_(user_ids)))
-    db.execute(update(AdmsDevice).where(AdmsDevice.tenant_id == tenant.id)
-               .values(tenant_id=None, source_id=None))
+    from app.services.adms import forget_owner
+    for device in db.scalars(select(AdmsDevice).where(AdmsDevice.tenant_id == tenant.id)).all():
+        forget_owner(db, device)
     for model in _TENANT_TABLES:
         db.execute(delete(model).where(model.tenant_id == tenant.id))
     # A staff member's own login can't belong to a customer account being

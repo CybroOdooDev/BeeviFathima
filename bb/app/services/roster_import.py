@@ -17,17 +17,8 @@ from sqlalchemy.orm import Session
 
 from app.integrations.base import Capability, get_provider_class
 from app.integrations.odoo import MATCH_FIELDS, OdooClient, OdooError
-from app.models import (
-    DeviceSource,
-    EmployeeMapping,
-    MappingStatus,
-    OdooConnection,
-    Tenant,
-)
-from app.services.connections import (
-    build_odoo_client,
-    build_source_provider,
-)
+from app.models import DeviceSource, EmployeeMapping, MappingStatus, OdooConnection, Tenant
+from app.services.connections import build_odoo_client, build_source_provider
 
 log = logging.getLogger(__name__)
 
@@ -213,7 +204,7 @@ def refresh_companies(db: Session, tenant: Tenant, odoo: OdooClient, force: bool
         return 0
     roster = {r["id"]: r for r in roster_rows}
     people = {r["id"]: r.get("name") for r in roster_rows}
-    needs = lambda f: any(isinstance(r.get(f), int) and not isinstance(r.get(f), bool) for r in roster_rows)
+    needs = lambda f: any(isinstance(r.get(f), int) and not isinstance(r.get(f), bool) for r in roster_rows)  # noqa: E731
     companies = _lookup_names(odoo, "res.company") if needs("company_id") else {}
     departments = _lookup_names(odoo, "hr.department") if needs("department_id") else {}
     changed = 0
@@ -250,6 +241,6 @@ def auto_import(db: Session, tenant: Tenant) -> int:
         imported = import_matched_employees(db, tenant, odoo, sources)
         refresh_companies(db, tenant, odoo)
         return imported
-    except Exception:
+    except Exception:  # noqa: BLE001 — a convenience, never a reason to fail a save
         log.warning("auto roster import skipped", exc_info=True)
         return 0

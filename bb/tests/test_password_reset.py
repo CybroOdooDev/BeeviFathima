@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import select
@@ -10,10 +11,6 @@ from sqlalchemy import select
 from app.models import User, UserSession
 from app.services import password_reset
 from tests.test_billing import _signup, client  # noqa: F401
-from datetime import datetime, timedelta, timezone
-
-UTC = timezone.utc
-
 
 NEW = "a-brand-new-password"
 OLD = "a-long-enough-password"
@@ -67,7 +64,7 @@ def test_reset_signs_out_other_sessions_and_clears_a_lockout(client, mail):
     refresh = client.post("/api/v1/auth/login", json={"email": "owner@acme.com", "password": OLD}).json()["refresh_token"]
     s = client.Session()
     u = s.scalars(select(User)).one()
-    u.locked_until = datetime.now(UTC) + timedelta(minutes=10)
+    u.locked_until = datetime.now(timezone.utc) + timedelta(minutes=10)
     u.failed_login_count = 3
     s.commit(); s.close()
     _forgot(client)
@@ -86,7 +83,7 @@ def test_expired_and_bogus_tokens_are_refused(client, mail):
     token = _token(mail)
     s = client.Session()
     u = s.scalars(select(User)).one()
-    u.password_reset_expires_at = datetime.now(UTC) - timedelta(minutes=1)
+    u.password_reset_expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
     s.commit(); s.close()
     assert client.post("/api/v1/auth/reset-password", json={"token": token, "new_password": NEW}).status_code == 400
     assert client.post("/api/v1/auth/reset-password", json={"token": "x" * 40, "new_password": NEW}).status_code == 400
@@ -99,7 +96,7 @@ def test_requests_are_rate_limited_per_account_and_a_new_link_replaces_the_old(c
     first = _token(mail)
     s = client.Session()
     u = s.scalars(select(User)).one()
-    u.password_reset_sent_at = datetime.now(UTC) - timedelta(minutes=5)
+    u.password_reset_sent_at = datetime.now(timezone.utc) - timedelta(minutes=5)
     s.commit(); s.close()
     _forgot(client)
     assert len(mail) == 2

@@ -19,7 +19,7 @@ from app.models import (
     SubscriptionPlan,
 )
 from app.services import sync_engine as engine_mod
-from tests.conftest import FakeOdoo, FakeProvider
+from tests.conftest import TZ, FakeOdoo, FakeProvider
 
 DUBAI_OFFSET = timedelta(hours=4)
 

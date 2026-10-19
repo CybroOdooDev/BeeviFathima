@@ -12,7 +12,8 @@ import threading
 import httpx
 import pytest
 
-from tools import mock_biotime, mock_roster
+import tools.mock_biotime as mock_biotime
+import tools.mock_roster as mock_roster
 
 
 class FakeOdoo:
@@ -43,19 +44,23 @@ def odoo(monkeypatch, tmp_path):
     # Never read the developer's real database: with Odoo connections to
     # several servers saved there, the lookup would refuse to guess.
     monkeypatch.setattr(mock_roster, "_saved_connection", lambda tenant_slug=None: None)
+    monkeypatch.setattr(mock_roster, "_tenant_settings",
+                        lambda tenant: {"known": None, "pin": None, "disabled": []})
     return fake
 
 
 def test_generate_punches_for_an_odoo_company(odoo, tmp_path, monkeypatch, capsys):
     from tools.generate_punches import main
 
-    monkeypatch.setattr(sys, "argv", ["generate_punches.py", "--company", "7", "--days", "3",
+    monkeypatch.setattr(mock_roster, "odoo_login", lambda args: ("http://odoo.test", "db", "u", "k"))
+
+    monkeypatch.setattr(sys, "argv", ["generate_punches.py", "--tenant", "acme", "--company", "7", "--days", "3",
                                       "--include-weekends", "--seed", "1"])
     assert main() == 0
-    rows = json.loads((tmp_path / "punches_company7.json").read_text())
+    rows = json.loads((tmp_path / "mock_data" / "acme" / "punches.json").read_text())
     assert {r["emp_code"] for r in rows} == {"7001", "7002"}
-    assert {r["terminal_sn"] for r in rows} <= {"MOCK-C7-GATE-01", "MOCK-C7-GATE-02"}
-    roster = json.loads((tmp_path / "roster_company7.json").read_text())
+    assert {r["terminal_sn"] for r in rows} <= {"MOCK-ACME-C7-GATE-01", "MOCK-ACME-C7-GATE-02"}
+    roster = json.loads((tmp_path / "mock_data" / "acme" / "roster_company7.json").read_text())
     assert roster["company_name"] == "Kochi Branch" and roster["skipped"] == ["No Badge Person"]
     assert roster["employees"][0]["department"]["dept_name"] == "Production"
     assert "Kochi Branch" in capsys.readouterr().out
@@ -92,19 +97,10 @@ def test_mock_server_serves_the_cached_company(odoo, tmp_path, monkeypatch):
 def test_without_odoo_the_old_fixtures_still_work(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(mock_roster, "odoo_client", lambda *a: None)
-    monkeypatch.setattr(mock_roster, "_saved_connection", lambda tenant_slug=None: None)
-
     args = type("A", (), {"refresh_roster": False})()
     assert mock_roster.load_roster(args, 2).emp_codes == ["2001", "2002", "2003"]
-
     with pytest.raises(SystemExit, match="Connect Odoo"):
         mock_roster.load_roster(args, 9)
-    # monkeypatch.chdir(tmp_path)
-    # monkeypatch.setattr(mock_roster, "odoo_client", lambda *a: None)
-    # args = type("A", (), {"refresh_roster": False})()
-    # assert mock_roster.load_roster(args, 2).emp_codes == ["2001", "2002", "2003"]
-    # with pytest.raises(SystemExit, match="Connect Odoo"):
-    #     mock_roster.load_roster(args, 9)
 
 
 def test_a_cached_roster_is_not_served_for_a_different_odoo(odoo, tmp_path, monkeypatch):
@@ -131,3 +127,26 @@ def test_a_cached_roster_is_not_served_for_a_different_odoo(odoo, tmp_path, monk
     cache = tmp_path / "roster_company7.json"
     data = json.loads(cache.read_text()); data.pop("odoo"); cache.write_text(json.dumps(data))
     assert mock_roster.load_roster(args("https://two.example.com", "db_two"), 7).source == "odoo"
+
+
+def test_an_unreadable_database_stops_the_mock_instead_of_serving_sample_people(monkeypatch):
+    """With the database unreachable (a container that cannot resolve its
+    Postgres, say) the saved Odoo login cannot be read. Falling back to the
+    built-in fixtures would hand a real account someone else's badges and
+    terminals GATE-01..06 — the mock must refuse."""
+    import pytest
+    from sqlalchemy.exc import OperationalError
+
+    import app.db.session as session_module
+    from tools import mock_roster
+
+    class Broken:
+        def __enter__(self):
+            raise OperationalError("select 1", {}, Exception("Temporary failure in name resolution"))
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(session_module, "SessionLocal", lambda: Broken())
+    with pytest.raises(SystemExit, match="built-in sample people"):
+        mock_roster._saved_connection("cybrotech")

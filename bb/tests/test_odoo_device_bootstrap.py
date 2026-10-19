@@ -99,6 +99,13 @@ class FakeXmlRpcModels:
                 self.ir_model_access_rows.append((vals["model_id"], vals["name"]))
                 return self._new_id()
 
+        if model == "ir.rule" and method == "search":
+            return []
+
+        if model == "ir.access":
+            import xmlrpc.client
+            raise xmlrpc.client.Fault(1, f"Object {model} doesn't exist")
+
         if model == "ir.rule":
             # A row's id is 9000 + its index, so write() can find it again.
             if method == "search_read":
@@ -109,10 +116,15 @@ class FakeXmlRpcModels:
                     for i, (mid, n, df) in enumerate(self.ir_rule_rows)
                     if (mid, n) == key_
                 ][:1]
+            if method == "read":
+                return [{"id": i, "active": True, "perm_read": True, "perm_write": True,
+                         "perm_create": True, "perm_unlink": True, "groups": []}
+                        for i in args[0]]
             if method == "write":
                 ids, vals = args
                 for i in ids:
-                    self.ir_rule_rows[i - 9000][2] = vals["domain_force"]
+                    if "domain_force" in vals:
+                        self.ir_rule_rows[i - 9000][2] = vals["domain_force"]
                 return True
             if method == "create":
                 vals = args[0]
@@ -126,6 +138,12 @@ class FakeXmlRpcModels:
             )
             return [{"res_id": res_id}] if res_id else []
 
+        if model == "res.company" and method == "search_read":
+            return [{"id": 1, "name": "Main Co"}]
+
+        if model == "res.users" and method == "read":
+            return [{"id": args[0][0], "company_id": [1, "Main Co"]}]
+
         if model == "x_biobridge_device":
             if method == "search_read":
                 # Every '=' leaf in the domain has to hold, like real Odoo —
@@ -136,7 +154,11 @@ class FakeXmlRpcModels:
                     r for r in self.x_biobridge_device_records.values()
                     if all(r.get(f, False) == v for f, op, v in args[0] if op == "=")
                 ]
-                return [{"id": r["id"]} for r in matches[:1]]
+                wanted = (kwargs or {}).get("fields") or ["id"]
+                return [{f: r.get(f, False) for f in {"id", *wanted}} for r in matches[:1]]
+            if method == "read":
+                return [{"id": i, "x_company_id": self.x_biobridge_device_records[i].get("x_company_id", False)}
+                        for i in args[0]]
             if method == "write":
                 ids, vals = args
                 for i in ids:
@@ -381,7 +403,7 @@ def test_company_rule_domain_treats_an_unset_company_as_visible_everywhere():
     domain_force = next(
         df for mid, _name, df in fake.ir_rule_rows if mid == device_model_id
     )
-    domain = eval(domain_force, {"company_ids": [10]})
+    domain = eval(domain_force, {"company_ids": [10]})  # noqa: S307 - fixed literal, test-only
 
     unscoped = {"x_company_id": False}
     own_company = {"x_company_id": 10}
@@ -451,7 +473,9 @@ def test_upsert_device_claims_a_row_with_no_company_instead_of_duplicating_it():
     client = make_client(fake)
     client.ensure_device_tracking_bootstrap()
     old_id = client.upsert_device("GATE-01", name="Front Gate")  # unscoped
-    assert fake.x_biobridge_device_records[old_id].get("x_company_id") in (None, False)
+    # An unscoped connection now stamps the API user's own company.
+    assert fake.x_biobridge_device_records[old_id]["x_company_id"] == 1
+    fake.x_biobridge_device_records[old_id]["x_company_id"] = False  # a legacy row
 
     client.creds.company_id = 3
     assert client.upsert_device("GATE-01", location="Lobby") == old_id
@@ -593,6 +617,8 @@ class FakeOdoo20(FakeXmlRpcModels):
             raise xmlrpc.client.Fault(1, f"Object {model} doesn't exist")
         if model == "ir.access":
             self.calls.append(f"{model}.{method}")
+            if method == "search":
+                return []
             if method == "search_read":
                 domain = args[0]
                 mid = self._domain_value(domain, "model_id")
@@ -679,3 +705,29 @@ def test_nothing_is_stamped_when_pairing_is_not_tracked():
     att_id = client.create_attendance(11, datetime(2026, 10, 8, 8), pairing_mode="first_last")
     assert "x_pairing_method_id" not in fake.hr_attendance_records[att_id]
     assert not client.has_pairing_tracking()
+
+
+def test_ensure_device_company_rule_adds_the_rule_to_an_existing_bootstrap():
+    fake = FakeXmlRpcModels()
+    client = make_client(fake)
+    client.ensure_device_tracking_bootstrap()
+    fake.ir_rule_rows.clear()  # a connection set up before the rule existed
+    assert client.ensure_device_company_rule() is True
+    assert len(fake.ir_rule_rows) == 1
+    assert "company_ids" in fake.ir_rule_rows[0][2]
+
+
+def test_unassigned_terminal_is_not_filed_under_the_api_users_company_on_multi_company_odoo():
+    fake = FakeXmlRpcModels()
+    orig = fake.execute_kw
+
+    def two_companies(db, uid, key, model, method, args, kwargs=None):
+        if model == "res.company":
+            return [{"id": 1, "name": "A"}, {"id": 2, "name": "B"}]
+        return orig(db, uid, key, model, method, args, kwargs)
+
+    fake.execute_kw = two_companies
+    client = make_client(fake)
+    client.ensure_device_tracking_bootstrap()
+    dev = client.upsert_device("GATE-X")
+    assert not fake.x_biobridge_device_records[dev].get("x_company_id")

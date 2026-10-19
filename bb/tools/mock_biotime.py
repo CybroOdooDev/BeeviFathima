@@ -5,33 +5,46 @@ Mimics the parts the connector talks to: token auth, DRF-style pagination with
 an absolute ``next`` URL, and the three list endpoints. Punch data comes from a
 JSON file (tools/generate_punches.py) so the stream can change between syncs.
 
-Live punches — a simulator and a manual trigger, so a sync always has something
-fresh to fetch (stale files and reused ids are what make a sync "see nothing"):
+Tenant scoping (mandatory): ``--tenant <BioBridge account slug>`` is required.
+A mock server belongs to exactly one tenant. It serves only that tenant's
+employees and terminals, reads and writes only ``mock_data/<tenant>/``, puts the
+tenant in every terminal serial number, and only accepts a login whose username
+is the tenant slug — so a second BioBridge account pointed at this server by
+mistake is refused instead of being shown someone else's people. Without
+``--company`` it serves every company enabled for the tenant in BioBridge.
 
-    python3 tools/mock_biotime.py --company 4 --port 8007 --tz Asia/Kolkata --simulate
+Live punches are the point of this tool, and are ON by default: a simulator
+clocks a random employee of any enabled company in or out right now, every
+--interval seconds, on that company's own terminal — plus a manual trigger — so
+a sync always has something fresh to fetch (pre-generated files go stale, and
+reused ids are what make a sync "see nothing"). --no-simulate turns it off:
+
+    python3 tools/mock_biotime.py --tenant gulf-steel --port 8007 --tz Asia/Kolkata
     curl -X POST localhost:8007/mock/punch -d '{"emp_code": "5"}'      # toggles in/out
     curl -X POST localhost:8007/mock/punch -d '{"emp_code": "5", "state": "out"}'
     curl localhost:8007/mock/state                                      # who is in
 
-Serve any company in your Odoo by its res.company id — its active employees
-become the BioTime personnel list, on two mock terminals of its own:
+Serve a tenant's Odoo — the active employees of every enabled company become
+the BioTime personnel list, each company on two mock terminals of its own:
 
-    python3 tools/generate_punches.py --company 7
-    python3 tools/mock_biotime.py --company 7 --port 8107
+    python3 tools/mock_biotime.py --tenant gulf-steel --port 8107
 
-The punches file defaults to the one generate_punches.py writes for that
-company (punches.json for company 1, punches_company<id>.json otherwise). Run
-one instance per company on different ports to test several BioBridge
-accounts at once. Where the roster comes from (Odoo login, cache, built-in
-fixtures for 1/2/4) is described in tools/mock_roster.py.
+    --company 7     only that company (it must be enabled for the tenant)
+
+The punches file is mock_data/<tenant>/punches.json. Run one instance per tenant
+on different ports to test several BioBridge accounts at once; they share
+nothing. Where the roster comes from (Odoo login, cache, built-in fixtures for
+1/2/4) is described in tools/mock_roster.py.
 """
 
 from __future__ import annotations
 
 import argparse
+import re
 import json
 import os
 import random
+import socket
 import sys
 import threading
 import time
@@ -134,6 +147,15 @@ TERMINALS = DATASETS[1]["terminals"]
 AREAS = [{"id": 1, "area_code": "1", "area_name": "Not Authorized"}, {"id": 2, "area_code": "2", "area_name": "Head Office"}]
 
 PUNCH_FILE: str | None = None
+#: The BioBridge account this server belongs to. None only in unit tests that
+#: build a bare server; the command line always sets it.
+TENANT: str | None = None
+
+
+def _public(row: dict) -> dict:
+    """A row as BioTime would send it: internal ``_``-prefixed bookkeeping (the
+    company a person or terminal belongs to) is never put on the wire."""
+    return {k: v for k, v in row.items() if not str(k).startswith("_")}
 
 
 def _punches() -> list[dict]:
@@ -196,7 +218,10 @@ def add_punch(emp_code: str, state: str | None = None, terminal: str | None = No
         state = {"in": "0", "out": "1"}.get(str(state).lower(), str(state))
         if state not in ("0", "1"):
             raise ValueError("state must be 0/in (check in) or 1/out (check out)")
-        sns = [t["sn"] for t in TERMINALS] or ["MOCK-GATE-01"]
+        # Each person punches on their own company's terminals.
+        company = next((e.get("_company_id") for e in EMPLOYEES if str(e.get("emp_code")) == code), None)
+        own = [t["sn"] for t in TERMINALS if company is not None and t.get("_company_id") == company]
+        sns = own or [t["sn"] for t in TERMINALS] or ["MOCK-GATE-01"]
         row = {
             "id": max([int(r["id"]) for r in rows] + [int(time.time()) - 1]) + 1,
             "emp_code": code,
@@ -251,7 +276,7 @@ class Handler(BaseHTTPRequestHandler):
     def handle_one_request(self):
         try:
             super().handle_one_request()
-        except TimeoutError:
+        except (TimeoutError, socket.timeout):
             self.close_connection = True
 
     def log_message(self, *args):
@@ -261,6 +286,8 @@ class Handler(BaseHTTPRequestHandler):
         body = json.dumps(payload).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        if TENANT:
+            self.send_header("X-Mock-Tenant", TENANT)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -295,12 +322,27 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         if path in ("/api-token-auth/", "/jwt-api-token-auth/"):
-            return self._json({"token": TOKEN})
+            return self._login()
         if path == "/personnel/api/employees/":
             return self._create_employee()
         if path == "/mock/punch":
             return self._mock_punch()
         self._json({"detail": "Not found."}, 404)
+
+    def _login(self):
+        """Issue the token. A server that belongs to a tenant only logs in that
+        tenant: the username must be the account slug, so another BioBridge
+        account pointed here by mistake is refused rather than served."""
+        if TENANT:
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except (ValueError, json.JSONDecodeError):
+                body = {}
+            if str(body.get("username") or "").strip().lower() != TENANT.lower():
+                return self._json({"non_field_errors": [
+                    f"This mock BioTime belongs to tenant {TENANT}. Log in with the username {TENANT}."]}, 400)
+        self._json({"token": TOKEN})
 
     def _mock_punch(self):
         """POST /mock/punch {"emp_code": "5", "state": "in"|"out"|"0"|"1"?,
@@ -365,19 +407,34 @@ class Handler(BaseHTTPRequestHandler):
                     "last_punch": when,
                     "now": {None: "no punches", "0": "checked in", "1": "checked out"}.get(state, state),
                 }
-            return self._json({"punches": len(rows), "server_time": _now_local().strftime(TIME_FMT),
+            return self._json({"tenant": TENANT, "punches": len(rows), "server_time": _now_local().strftime(TIME_FMT),
                                "timezone": SERVER_TZ, "people": people})
         if not self._authorised():
             return
 
         if path == "/personnel/api/departments/":
-            return self._json(self._page(DEPARTMENTS, query, path))
+            return self._json(self._page([_public(d) for d in DEPARTMENTS], query, path))
         if path == "/personnel/api/areas/":
             return self._json(self._page(AREAS, query, path))
         if path == "/personnel/api/employees/":
-            return self._json(self._page(EMPLOYEES, query, path))
+            return self._json(self._page([_public(e) for e in EMPLOYEES], query, path))
         if path == "/iclock/api/terminals/":
-            return self._json(self._page(TERMINALS, query, path))
+            return self._json(self._page([_public(t) for t in TERMINALS], query, path))
+
+        one = re.fullmatch(r"/iclock/api/transactions/(\d+)/", path)
+        if one:
+            row = next((r for r in _punches() if str(r.get("id")) == one.group(1)), None)
+            if row is None:
+                return self._json({"detail": "Not found."}, 404)
+            return self._json({**row, "upload_time": row.get("upload_time") or row["punch_time"]})
+
+        detail = re.fullmatch(r"/iclock/api/transactions/(\d+)/", path)
+        if detail:
+            # One transaction by id, as BioTime serves it; 404 once deleted.
+            row = next((r for r in _punches() if str(r.get("id")) == detail.group(1)), None)
+            if row is None:
+                return self._json({"detail": "Not found."}, 404)
+            return self._json({**row, "upload_time": row.get("upload_time") or row["punch_time"]})
 
         if path == "/iclock/api/transactions/":
             rows = _punches()
@@ -391,6 +448,13 @@ class Handler(BaseHTTPRequestHandler):
                 rows = [r for r in rows if r["punch_time"] >= start]
             if end:
                 rows = [r for r in rows if r["punch_time"] <= end]
+            # upload_time: when the server received the punch (a terminal that
+            # was offline uploads later than it punched). Served as "from that
+            # time on"; a row without one was received as it was punched.
+            uploaded = query.get("upload_time", [None])[0]
+            rows = [{**r, "upload_time": r.get("upload_time") or r["punch_time"]} for r in rows]
+            if uploaded:
+                rows = [r for r in rows if r["upload_time"] >= uploaded]
             rows = sorted(rows, key=lambda r: (r["punch_time"], r["id"]))
             return self._json(self._page(rows, query, path))
 
@@ -411,11 +475,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8099)
     parser.add_argument("--punches", default=None,
-                        help="Punches file (default: the one generate_punches.py writes for --company)")
+                        help="Punches file (default: mock_data/<tenant>/punches.json, the one "
+                             "generate_punches.py writes for the tenant)")
     parser.add_argument(
-        "--company", type=int, default=1,
-        help="Odoo res.company id whose active employees to serve (default: 1). "
-             "Use --list-companies to see the ids.",
+        "--company", type=int, default=None,
+        help="Odoo res.company id to serve. Omit it to serve every company enabled for the "
+             "tenant. Use --list-companies to see the ids and which are enabled.",
     )
     parser.add_argument(
         "--host", default="127.0.0.1",
@@ -424,9 +489,14 @@ def main():
              "container or on another host — use 0.0.0.0 for those.",
     )
     parser.add_argument(
-        "--simulate", action="store_true",
-        help="Live mode: every --interval seconds a random employee clocks in or "
-             "out right now, alternating in/out, appended to the punches file.",
+        "--simulate", action="store_true", default=True,
+        help="Live mode, ON by default: every --interval seconds a random employee of "
+             "any enabled company clocks in or out right now, on that company's own "
+             "terminal, alternating in/out. Kept so old commands still work.",
+    )
+    parser.add_argument(
+        "--no-simulate", dest="simulate", action="store_false",
+        help="Serve only what is already in the punches file; nothing new is generated.",
     )
     parser.add_argument("--reset-punches", action="store_true",
                         help="Empty the punches file before starting (ids restart from the "
@@ -442,10 +512,7 @@ def main():
     )
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from tools.mock_roster import (
-        add_odoo_arguments,
-        describe,
-        list_companies,
-        load_roster,
+        add_odoo_arguments, describe, list_companies, load_tenant_roster, resolve_scope,
     )
 
     add_odoo_arguments(parser)
@@ -453,13 +520,15 @@ def main():
     if args.list_companies:
         return list_companies(args)
 
-    global PUNCH_FILE, DEPARTMENTS, EMPLOYEES, TERMINALS, SERVER_TZ
+    global PUNCH_FILE, DEPARTMENTS, EMPLOYEES, TERMINALS, SERVER_TZ, TENANT
     SERVER_TZ = args.tz
-    roster = load_roster(args, args.company)
+    scope = resolve_scope(args)
+    TENANT = scope.tenant
+    roster = load_tenant_roster(args, scope)
     DEPARTMENTS = roster.departments
     EMPLOYEES = roster.employees
     TERMINALS = roster.terminals
-    PUNCH_FILE = args.punches or ("punches.json" if args.company == 1 else f"punches_company{args.company}.json")
+    PUNCH_FILE = args.punches or str(scope.punches_path)
     if args.reset_punches:
         _write_punches([])
         print(f"  emptied {PUNCH_FILE}", flush=True)
@@ -471,9 +540,9 @@ def main():
                   f"({', '.join(strangers[:6])}{' …' if len(strangers) > 6 else ''}) — probably left over "
                   f"from another company or Odoo. They are still served. Start with --reset-punches, or "
                   f"point --punches at a new file.", flush=True)
-    if not os.path.exists(PUNCH_FILE):
-        print(f"  no punches yet in {PUNCH_FILE} — run: python3 tools/generate_punches.py "
-              f"--company {args.company}", flush=True)
+    if not os.path.exists(PUNCH_FILE) and not args.simulate:
+        print(f"  no punches in {PUNCH_FILE} and --no-simulate is on, so this server has nothing "
+              f"to hand out. Drop --no-simulate, or POST to /mock/punch.", flush=True)
 
     # Threaded: one slow or abandoned client must not stop every other
     # request. BioBridge paginates, so it holds several sequential
@@ -488,6 +557,14 @@ def main():
         flush=True,
     )
     print(f"  {describe(roster)}", flush=True)
+    if roster.source == "fixture":
+        print("  *** BUILT-IN SAMPLE PEOPLE: no Odoo login was found for this account, so these are the "
+              "mock's own fixtures (badges 1001, 0042, A7, 2001-2003, 5, 6001 and terminals "
+              "MOCK-<TENANT>-GATE-01..06), NOT your Odoo's employees. BioBridge will list them as "
+              "unmapped badges. Connect Odoo in BioBridge first, or pass --odoo-url/--odoo-db/"
+              "--odoo-user/--odoo-key. ***", flush=True)
+    print(f"  tenant {TENANT}: log in with the username {TENANT} (any password) — any other "
+          f"username is refused", flush=True)
     print(f"  punches from {PUNCH_FILE}", flush=True)
     print(f"  punch times are in {SERVER_TZ} — set the connection's Server Timezone to match",
           flush=True)
@@ -496,7 +573,8 @@ def main():
     print("  who is in / out:      curl http://%s:%d/mock/state" % (args.host, args.port), flush=True)
     if args.simulate:
         if not PUNCH_FILE:
-            raise SystemExit("--simulate needs a punches file")
+            raise SystemExit("live mode needs a punches file")
+        os.makedirs(os.path.dirname(os.path.abspath(PUNCH_FILE)), exist_ok=True)
         if not os.path.exists(PUNCH_FILE):
             _write_punches([])
         threading.Thread(target=simulate, args=(args.interval, threading.Event(), args.burst),

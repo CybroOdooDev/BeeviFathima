@@ -17,6 +17,7 @@ someone happened to load.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from jose import jwt
 from sqlalchemy import select
@@ -36,10 +37,6 @@ from tests.test_platform_admin import (  # noqa: F401
     signup,
     staff_login,
 )
-from datetime import datetime, timedelta, timezone
-
-UTC = timezone.utc
-
 
 PASSWORD = "a-long-enough-password"
 STAFF_EMAIL = "ops@platform.example.com"
@@ -280,7 +277,7 @@ def test_the_console_refresh_token_also_lives_shorter(api):
 
     # Generous slack: this is about being a day rather than a month, not about
     # the clock.
-    ceiling = datetime.now(UTC) + timedelta(
+    ceiling = datetime.now(timezone.utc) + timedelta(
         days=settings.staff_refresh_token_ttl_days, hours=1
     )
     for session in staff:
@@ -336,8 +333,8 @@ def test_a_token_minted_before_scopes_existed_cannot_reach_the_console(api):
             "tid": user.tenant_id,
             "role": user.role,
             "typ": "access",
-            "iat": int(datetime.now(UTC).timestamp()),
-            "exp": int((datetime.now(UTC) + timedelta(hours=1)).timestamp()),
+            "iat": int(datetime.now(timezone.utc).timestamp()),
+            "exp": int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()),
             "jti": uuid.uuid4().hex,
         },
         settings.jwt_secret,

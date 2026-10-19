@@ -17,8 +17,8 @@ import threading
 import httpx
 import pytest
 
-from tools import mock_biotime
 from tools.mock_biotime import DATASETS, TOKEN, build_server
+import tools.mock_biotime as mock_biotime
 
 
 def _free_port() -> int:
@@ -145,13 +145,18 @@ def test_company_flag_accepts_valid_companies() -> None:
         assert DATASETS[company]["employees"]  # Just verify they exist
 
 
-def test_company_flag_rejects_an_unknown_company() -> None:
+def test_company_flag_rejects_an_unknown_company(tmp_path, monkeypatch) -> None:
+    from tools.mock_biotime import main
     import sys
 
-    from tools.mock_biotime import main
+    import tools.mock_roster as mock_roster
 
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(mock_roster, "_saved_connection", lambda tenant_slug=None: None)
+    monkeypatch.setattr(mock_roster, "_tenant_settings",
+                        lambda tenant: {"known": None, "pin": None, "disabled": []})
     old_argv = sys.argv
-    sys.argv = ["mock_biotime.py", "--company", "3"]
+    sys.argv = ["mock_biotime.py", "--tenant", "acme", "--company", "3"]
     try:
         with pytest.raises(SystemExit):
             main()

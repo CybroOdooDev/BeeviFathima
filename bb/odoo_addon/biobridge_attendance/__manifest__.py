@@ -35,7 +35,7 @@ after the change can be told apart.
     # Deliberately no Odoo-series prefix (no "17.0.x") — nothing here uses a
     # version-specific API, so it installs unchanged on any Odoo release
     # BioBridge itself supports (14 through 19). Bump the last segment only.
-    "version": "1.1.0",
+    "version": "1.2.0",
     # View syntax targets Odoo 17+ specifically (the `invisible="<expr>"`
     # attribute form, not the pre-17 `attrs="{...}"` dialect) — the XML-RPC
     # side of BioBridge itself is version-agnostic back to 14, but this

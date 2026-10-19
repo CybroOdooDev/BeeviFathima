@@ -8,3 +8,5 @@ venv/
 .pytest_cache/
 .coverage
 .DS_Store
+deploy/.env
+deploy/backups/

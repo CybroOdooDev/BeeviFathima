@@ -19,9 +19,6 @@ import pytest
 
 from app.integrations.base import EmployeeRecord, SourceConfig
 from app.integrations.providers.zkteco import (
-    _CMD_PREPARE_BUFFER,
-    _CMD_READ_BUFFER,
-    _USER_STRUCT,
     CMD_ACK_OK,
     CMD_ACK_UNAUTH,
     CMD_ATTLOG_RRQ,
@@ -42,11 +39,14 @@ from app.integrations.providers.zkteco import (
     ZKDeviceProvider,
     ZKError,
     _checksum16,
+    _make_commkey,
+    _CMD_PREPARE_BUFFER,
+    _CMD_READ_BUFFER,
     _Connection,
     _decode_time,
-    _make_commkey,
     _parse_address,
     _split_table,
+    _USER_STRUCT,
 )
 
 MAGIC = b"\x50\x50\x82\x7d"
@@ -196,7 +196,7 @@ class FakeZKDevice:
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._thread.start()
 
-    def __enter__(self) -> FakeZKDevice:
+    def __enter__(self) -> "FakeZKDevice":
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -263,7 +263,9 @@ class FakeZKDevice:
                     conn.sendall(
                         _pack(CMD_ACK_OK, session_id, reply_id, f"{name}={value}\x00".encode())
                     )
-                elif command == CMD_DISABLEDEVICE or command == CMD_ENABLEDEVICE:
+                elif command == CMD_DISABLEDEVICE:
+                    conn.sendall(_pack(CMD_ACK_OK, session_id, reply_id))
+                elif command == CMD_ENABLEDEVICE:
                     conn.sendall(_pack(CMD_ACK_OK, session_id, reply_id))
                 elif command == CMD_GET_FREE_SIZES:
                     # pyzk's read_sizes layout: 20 int32s, users at field 4,
@@ -756,7 +758,7 @@ class _SilentDevice:
                 pass
         self._thread.join(timeout=5)
 
-    def __enter__(self) -> _SilentDevice:
+    def __enter__(self) -> "_SilentDevice":
         return self
 
     def __exit__(self, *exc: object) -> None:

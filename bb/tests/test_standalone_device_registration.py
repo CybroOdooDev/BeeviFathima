@@ -157,6 +157,7 @@ def test_connect_records_the_device_and_pushes_it_to_odoo(client, monkeypatch):
         "serial": "OIN7010066122100033", "name": "Front door",
         "location": "Main entrance", "terminal_model": "uFace202/ID",
         "ip_address": "10.0.11.43",
+    "company_id": None,
     }]
 
 
@@ -203,3 +204,55 @@ def test_platform_connections_are_left_to_import_terminals(client):
         "base_url": "https://bt.test", "username": "u", "password": "p"})
     assert r.status_code == 201, r.text
     assert _devices(client) == []
+
+
+def test_company_chosen_on_connect_is_stamped_on_the_terminal(client, monkeypatch):
+    headers = _token(client)
+    _odoo_with_tracking(client, headers)
+    odoo = RecordingOdoo()
+    odoo.companies = [{"id": 1, "name": "A"}, {"id": 2, "name": "B"}]
+    monkeypatch.setattr(connections_mod, "build_odoo_client", lambda t, c: odoo)
+
+    _add(client, headers, config={"company_id": 2, "company_name": "B"})
+    (device,) = _devices(client)
+    assert (device.company_id, device.company_name) == (2, "B")
+    assert odoo.upserts[-1]["company_id"] == 2
+
+
+def test_single_company_odoo_company_is_adopted(client, monkeypatch):
+    headers = _token(client)
+    _odoo_with_tracking(client, headers)
+    odoo = RecordingOdoo()
+    odoo.companies = [{"id": 7, "name": "Only Co"}]
+    monkeypatch.setattr(connections_mod, "build_odoo_client", lambda t, c: odoo)
+
+    _add(client, headers)
+    (device,) = _devices(client)
+    assert device.company_id == 7
+
+
+def test_multi_company_without_a_choice_stays_unset(client, monkeypatch):
+    headers = _token(client)
+    _odoo_with_tracking(client, headers)
+    odoo = RecordingOdoo()
+    odoo.companies = [{"id": 1, "name": "A"}, {"id": 2, "name": "B"}]
+    monkeypatch.setattr(connections_mod, "build_odoo_client", lambda t, c: odoo)
+
+    _add(client, headers)
+    (device,) = _devices(client)
+    assert device.company_id is None
+
+
+def test_changing_a_standalone_connections_company_moves_its_terminal(client, monkeypatch):
+    headers = _token(client)
+    _odoo_with_tracking(client, headers)
+    odoo = RecordingOdoo()
+    odoo.companies = [{"id": 1, "name": "A"}, {"id": 2, "name": "B"}]
+    monkeypatch.setattr(connections_mod, "build_odoo_client", lambda t, c: odoo)
+    source = _add(client, headers, config={"company_id": 1, "company_name": "A"})
+
+    r = client.put(f"/api/v1/sources/{source['id']}/default-company", headers=headers,
+                   json={"company_id": 2, "company_name": "B"})
+    assert r.status_code == 200, r.text
+    (device,) = _devices(client)
+    assert device.company_id == 2

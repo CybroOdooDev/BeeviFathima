@@ -6,10 +6,10 @@ import pytest
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.models import ContactRequest
+from app.models import ContactRequest, User
 from app.services import contact as contact_service
-from tests.test_account_lifecycle import _staff
 from tests.test_billing import _signup, client  # noqa: F401
+from tests.test_account_lifecycle import _staff  # noqa: F401
 
 FORM = {
     "topic": "Demo", "name": "Ravi Menon", "email": "ravi@globex.com", "company": "Globex",
@@ -166,7 +166,7 @@ def test_the_pipeline_summary_counts_stages_and_conversion(client):  # noqa: F81
         client.post("/api/v1/public/contact", json={**FORM, "email": f"p{n}@globex.com"})
     rows = client.get("/api/v1/admin/contact-requests", headers=staff).json()
     ids = [r["id"] for r in rows]
-    patch = lambda i, st: client.patch(f"/api/v1/admin/contact-requests/{ids[i]}", headers=staff, json={"status": st})
+    patch = lambda i, st: client.patch(f"/api/v1/admin/contact-requests/{ids[i]}", headers=staff, json={"status": st})  # noqa: E731
     patch(0, "won"); patch(1, "lost"); patch(2, "contacted")
     summary = client.get("/api/v1/admin/contact-requests/pipeline", headers=staff).json()
     by = {s["stage"]: s["count"] for s in summary["stages"]}

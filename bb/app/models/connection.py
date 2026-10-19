@@ -161,7 +161,7 @@ class DeviceSource(Base, UUIDPk, Timestamped):
         Boolean, default=False, server_default=text("false"), nullable=False
     )
 
-    devices: Mapped[list[Device]] = relationship(
+    devices: Mapped[list["Device"]] = relationship(
         back_populates="source", cascade="all, delete-orphan"
     )
 
@@ -242,3 +242,23 @@ class Device(Base, UUIDPk, Timestamped):
     company_name: Mapped[str | None] = mapped_column(String(200))
 
     source: Mapped[DeviceSource] = relationship(back_populates="devices")
+
+
+class OdooDeviceRemoval(Base, UUIDPk, Timestamped):
+    """An Odoo device record still to be deleted, because its connection was
+    removed from BioBridge while Odoo could not be reached (or refused).
+    Worked off by every sync that reaches Odoo; see
+    app.services.device_removals."""
+
+    __tablename__ = "odoo_device_removal"
+
+    tenant_id: Mapped[str] = mapped_column(
+        ForeignKey("tenant.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    serial_number: Mapped[str] = mapped_column(String(64), nullable=False)
+    ip_address: Mapped[str | None] = mapped_column(String(64))
+    company_id: Mapped[int | None] = mapped_column(Integer)
+    #: The removed connection's name, for the log line only.
+    source_name: Mapped[str | None] = mapped_column(String(120))
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"), nullable=False)
+    last_error: Mapped[str | None] = mapped_column(Text)

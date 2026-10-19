@@ -1,0 +1,26 @@
+# Keep secrets, local data and build junk out of the image. The image is
+# configured at run time (env_file in compose), never by what was on the
+# builder's disk.
+.env
+.env.*
+!.env.example
+*.db
+*.db-journal
+*.sqlite*
+.venv/
+venv/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.git/
+.gitignore
+tests/
+mock_data/
+Claude outputs/
+bb/
+*.zip
+*.tar.gz
+deploy/data/
+deploy/.env*
+deploy/backups/

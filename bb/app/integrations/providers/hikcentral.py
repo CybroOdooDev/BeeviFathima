@@ -47,8 +47,8 @@ import json
 import logging
 import time
 import uuid
-from collections.abc import Iterator
-from typing import Any
+from datetime import datetime, timedelta, timezone
+from typing import Any, Iterator
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -64,9 +64,6 @@ from app.integrations.base import (
     SourceConfig,
     register,
 )
-from datetime import datetime, timedelta, timezone
-
-UTC = timezone.utc
 
 log = logging.getLogger(__name__)
 
@@ -239,6 +236,7 @@ class HikCentralProvider(AttendanceProvider):
             total = int(data.get("total") or 0)
             if not rows or len(rows) < PAGE_SIZE or (total and page * PAGE_SIZE >= total):
                 return
+        self.truncated = True   # the window was not read to its end
         log.warning("HikCentral %s: stopped paging after %d pages", self.host, MAX_PAGES)
 
     # -- interface -----------------------------------------------------------
@@ -268,7 +266,7 @@ class HikCentralProvider(AttendanceProvider):
             when = parse_time(row.get("eventTime"), zone)
             if not pid or pid in ("0", "-1") or when is None:
                 continue                       # a door or alarm event, not a person
-            event_id = _text(row.get("eventId")) or f"{pid}:{when.astimezone(UTC):%Y%m%d%H%M%S}"
+            event_id = _text(row.get("eventId")) or f"{pid}:{when.astimezone(timezone.utc):%Y%m%d%H%M%S}"
             if event_id in seen:
                 continue                       # the per-type fallback can overlap
             seen.add(event_id)

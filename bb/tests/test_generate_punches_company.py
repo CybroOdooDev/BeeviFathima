@@ -43,21 +43,22 @@ def test_build_with_company_2_terminals_only_uses_company_2_terminals() -> None:
     assert serials.isdisjoint(COMPANY_TERMINALS[1])
 
 
-def test_cli_defaults_out_filename_by_company(tmp_path, monkeypatch) -> None:
-    """--out isn't given, so company 2's file must not collide with company
-    1's punches.json — two mocks generating side by side would otherwise
-    silently overwrite each other's punch data."""
+def test_cli_defaults_out_filename_by_tenant(tmp_path, monkeypatch) -> None:
+    """--out isn't given, so the punches land in the tenant's own folder — two
+    tenants generating side by side can never overwrite each other's data."""
     import sys
 
-    from tools import mock_roster
     from tools.generate_punches import main
 
+    import tools.mock_roster as mock_roster
+
     monkeypatch.chdir(tmp_path)
-    # No real database: with several Odoo servers saved in a developer's one,
-    # the connection lookup would refuse to pick, and this test is about the
-    # file name, not Odoo.
+    # No real database or Odoo: this test is about where the file goes.
     monkeypatch.setattr(mock_roster, "_saved_connection", lambda tenant_slug=None: None)
-    monkeypatch.setattr(sys, "argv", ["generate_punches.py", "--company", "2", "--seed", "1"])
+    monkeypatch.setattr(mock_roster, "_tenant_settings",
+                        lambda tenant: {"known": None, "pin": None, "disabled": []})
+    monkeypatch.setattr(sys, "argv", ["generate_punches.py", "--tenant", "acme", "--company", "2",
+                                      "--seed", "1"])
     assert main() == 0
-    assert (tmp_path / "punches_company2.json").exists()
+    assert (tmp_path / "mock_data" / "acme" / "punches.json").exists()
     assert not (tmp_path / "punches.json").exists()

@@ -28,8 +28,8 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import Iterator
-from typing import Any
+from datetime import datetime, timedelta, timezone
+from typing import Any, Iterator
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -45,10 +45,6 @@ from app.integrations.base import (
     SourceConfig,
     register,
 )
-
-from datetime import datetime, timedelta, timezone
-
-UTC = timezone.utc
 
 log = logging.getLogger(__name__)
 
@@ -76,7 +72,7 @@ def parse_time(value: Any) -> datetime | None:
         moment = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except ValueError:
         return None
-    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
 
 
 @register
@@ -132,7 +128,7 @@ class CrossChexProvider(AttendanceProvider):
         body: dict[str, Any] = {
             "header": {"nameSpace": namespace, "nameAction": action, "version": "1.0",
                        "requestId": str(uuid.uuid4()),
-                       "timestamp": datetime.now(UTC).isoformat(timespec="seconds")},
+                       "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds")},
             "payload": payload,
         }
         if token:
@@ -182,7 +178,7 @@ class CrossChexProvider(AttendanceProvider):
     def test_connection(self) -> ConnectionInfo:
         self._token = None
         self._authenticate()
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.utc)
         payload = self._data("attendance.record", "getrecord", {
             "begin_time": (now - timedelta(days=1)).isoformat(timespec="seconds"),
             "end_time": now.isoformat(timespec="seconds"), "order": "asc", "page": 1, "per_page": 1})
@@ -192,7 +188,7 @@ class CrossChexProvider(AttendanceProvider):
 
     def fetch_punches(self, since=None, until=None) -> Iterator[PunchEvent]:
         zone = ZoneInfo(self.tz)
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.utc)
         start = since.replace(tzinfo=zone) if since else now - timedelta(days=1)
         end = until.replace(tzinfo=zone) if until else now
         page = 1
@@ -228,4 +224,5 @@ class CrossChexProvider(AttendanceProvider):
             if not rows or page >= pages or len(rows) < PAGE_SIZE:
                 return
             page += 1
+        self.truncated = True   # the window was not read to its end
         log.warning("CrossChex %s: stopped paging after %d pages", self.base, MAX_PAGES)

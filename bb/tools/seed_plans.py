@@ -21,10 +21,10 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from sqlalchemy import select
+from sqlalchemy import select  # noqa: E402
 
-from app.db.session import session_scope
-from app.models import SubscriptionPlan
+from app.db.session import session_scope  # noqa: E402
+from app.models import SubscriptionPlan  # noqa: E402
 
 #: Starting tiers, not a contract — edit freely and re-run. ``None`` for
 #: either limit means unlimited / no floor, the same as leaving a tenant's

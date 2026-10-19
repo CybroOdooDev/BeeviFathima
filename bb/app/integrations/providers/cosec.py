@@ -39,9 +39,8 @@ from __future__ import annotations
 
 import logging
 import xml.etree.ElementTree as ET
-from collections.abc import Iterator
 from datetime import datetime
-from typing import Any
+from typing import Any, Iterator
 from urllib.parse import urlparse
 
 import httpx

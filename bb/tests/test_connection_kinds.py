@@ -10,6 +10,7 @@ from app.integrations.base import available_providers
 from app.models import DeviceSource, Tenant
 from tests.test_platform_admin import api, head, signup  # noqa: F401
 
+
 SHIPPED = {"biotime", "zk_device", "zk_adms", "hik_isapi", "biostar2", "cosec", "cosec_centra", "crosschex", "hikconnect", "hikcentral", "cams", "dahua"}
 
 

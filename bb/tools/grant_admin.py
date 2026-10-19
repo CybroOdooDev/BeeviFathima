@@ -35,12 +35,12 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from sqlalchemy import select
+from sqlalchemy import select  # noqa: E402
 
-from app.core.config import settings
-from app.core.security import hash_password
-from app.db.session import session_scope
-from app.models import Tenant, User, UserRole
+from app.core.config import settings  # noqa: E402
+from app.core.security import hash_password  # noqa: E402
+from app.db.session import session_scope  # noqa: E402
+from app.models import Tenant, User, UserRole  # noqa: E402
 
 
 def main() -> int:

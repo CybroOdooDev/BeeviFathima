@@ -25,15 +25,15 @@ import tracemalloc
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta  # noqa: E402
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import create_engine, select  # noqa: E402
+from sqlalchemy.orm import sessionmaker  # noqa: E402
+from sqlalchemy.pool import StaticPool  # noqa: E402
 
-from app.core.crypto import encrypt
-from app.models import Base, DeviceSource, PunchRecord, Tenant
-from app.services.sync_engine import SyncEngine
+from app.core.crypto import encrypt  # noqa: E402
+from app.models import Base, DeviceSource, PunchRecord, Tenant  # noqa: E402
+from app.services.sync_engine import SyncEngine  # noqa: E402
 
 LEDGER_SIZES = [10_000, 100_000, 500_000, 1_000_000]
 TZ = "Asia/Kolkata"
@@ -86,10 +86,10 @@ def main() -> int:
         written = target
 
         # Warm, then measure — we want the steady-state cost, not a cold cache.
-        engine_obj._known_external_ids(source)
+        engine_obj._known_external_ids(source)  # noqa: SLF001
         tracemalloc.start()
         started = time.monotonic()
-        ids = engine_obj._known_external_ids(source)
+        ids = engine_obj._known_external_ids(source)  # noqa: SLF001
         elapsed = time.monotonic() - started
         _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()

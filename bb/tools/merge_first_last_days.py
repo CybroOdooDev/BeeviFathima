@@ -30,14 +30,14 @@ from datetime import date, datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from sqlalchemy import select
+from sqlalchemy import select  # noqa: E402
 
-from app.db.session import SessionLocal
-from app.integrations.odoo import OdooError, fmt_dt
-from app.models import AttendanceRecord, OdooConnection, PunchRecord, Tenant
-from app.services.connections import UnsafeTargetError, build_odoo_client
-from app.services.pairing import PairingConfig, PairingMode, day_of
-from app.services.timeutils import utc_to_local
+from app.db.session import SessionLocal  # noqa: E402
+from app.integrations.odoo import OdooError, fmt_dt  # noqa: E402
+from app.models import AttendanceRecord, OdooConnection, PunchRecord, Tenant  # noqa: E402
+from app.services.connections import UnsafeTargetError, build_odoo_client  # noqa: E402
+from app.services.pairing import PairingConfig, PairingMode, day_of  # noqa: E402
+from app.services.timeutils import utc_to_local  # noqa: E402
 
 
 def plan_for(db, tenant, since: date | None, skipped: list | None = None):

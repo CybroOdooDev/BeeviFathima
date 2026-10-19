@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
 from app.models import EmployeeMapping, PunchRecord, SyncRun, Tenant
 from tests.test_platform_admin import api, head, promote, signup  # noqa: F401
-from datetime import datetime, timedelta, timezone
-
-UTC = timezone.utc
-
 
 STAFF = "ops@platform.example.com"
 
@@ -38,13 +35,13 @@ def test_punch_volume_is_a_count_per_day_and_failed_runs_are_scrubbed(api):  # n
     token = _setup(api)
     db = api.session_factory()
     acme = db.scalars(select(Tenant).where(Tenant.name == "Acme")).one()
-    now = datetime.now(UTC).replace(tzinfo=None)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     for i in range(3):
         db.add(PunchRecord(tenant_id=acme.id, source_id="s", external_id=str(i), emp_code="1",
                            punch_time_utc=now - timedelta(minutes=i), direction="in", process_state="synced"))
     db.add(EmployeeMapping(tenant_id=acme.id, emp_code="1", odoo_employee_name="Sara Tanaka", status="mapped"))
     db.add(SyncRun(tenant_id=acme.id, status="failed", triggered_by="schedule",
-                   started_at=datetime.now(UTC),
+                   started_at=datetime.now(timezone.utc),
                    error_message="Cannot create attendance for Sara Tanaka: already checked in"))
     db.commit()
     db.close()

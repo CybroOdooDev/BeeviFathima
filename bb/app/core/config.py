@@ -50,6 +50,11 @@ class Settings(BaseSettings):
 
     # --- auth ----------------------------------------------------------------
     jwt_secret: str = Field(default="dev-only-change-me-at-least-32-characters")
+    #: A fixed platform-staff login, kept in the server's settings rather than
+    #: created by hand with tools/grant_admin.py — for a host where there is no
+    #: shell to run that in. Both must be set. See app/services/staff_bootstrap.py.
+    staff_email: str = ""
+    staff_password: str = ""
     jwt_algorithm: str = "HS256"
     access_token_ttl_minutes: int = 60 * 12
     refresh_token_ttl_days: int = 30

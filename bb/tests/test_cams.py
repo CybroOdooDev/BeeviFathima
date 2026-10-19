@@ -4,22 +4,15 @@ the query, AuthToken in the body, LoadLog windows, GMT-offset times, status code
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
 
 from app.integrations.base import ProviderError, SourceConfig
 from app.integrations.providers import cams as cm
-from app.integrations.providers.cams import (
-    CamsProvider,
-    direction_of,
-    fmt_time,
-    parse_time,
-)
+from app.integrations.providers.cams import CamsProvider, direction_of, fmt_time, parse_time
 from tests.test_platform_admin import api, head, signup  # noqa: F401
-from datetime import datetime, timedelta, timezone
-
-UTC = timezone.utc
 
 STG, TOKEN, TZ = "STG-1001", "COJJ7eiiPBGUfmIQPvh2PJWWDLX7OuKs", "Asia/Kolkata"
 URL = "https://api.camsgateway.example/rest"
@@ -70,7 +63,7 @@ def provider(token=TOKEN, stg=STG, base=URL):
 
 def test_time_format_round_trips():
     moment = parse_time("2020-09-17 16:53:43 GMT +0530")
-    assert moment.astimezone(UTC) == datetime(2020, 9, 17, 11, 23, 43, tzinfo=UTC)
+    assert moment.astimezone(timezone.utc) == datetime(2020, 9, 17, 11, 23, 43, tzinfo=timezone.utc)
     assert fmt_time(moment) == "2020-09-17 16:53:43 GMT +0530"
     assert fmt_time(datetime(2026, 1, 1, tzinfo=timezone(timedelta(hours=-3, minutes=-30)))) == "2026-01-01 00:00:00 GMT -0330"
     assert parse_time("garbage") is None
@@ -83,7 +76,7 @@ def test_the_stgid_pasted_with_the_url_is_not_doubled():
 
 
 def test_connects_and_names_the_device(gateway):
-    gateway.add("5", datetime.now(UTC) - timedelta(hours=1))
+    gateway.add("5", datetime.now(timezone.utc) - timedelta(hours=1))
     info = provider().test_connection()
     assert info.ok and "Hawking Plus" in info.message and "1 punch " in info.message + " "
     assert list(provider().fetch_terminals())[0].serial_number == STG
@@ -103,7 +96,7 @@ def test_gateway_status_codes_are_explained(gateway):
 
 
 def test_reads_a_week_at_a_time_and_maps_punches(gateway):
-    base = datetime(2026, 9, 1, 4, 0, tzinfo=UTC)                     # 09:30 IST
+    base = datetime(2026, 9, 1, 4, 0, tzinfo=timezone.utc)                     # 09:30 IST
     for day in range(0, 20, 3):
         gateway.add("5", base + timedelta(days=day), "CheckIn", "Fingerprint")
         gateway.add("5", base + timedelta(days=day, hours=9), "CheckOut")
@@ -147,7 +140,7 @@ def test_sync_registers_the_terminal_and_writes_attendance(api, gateway, monkeyp
     odoo = FakeOdoo(employees={"5": (11, "Asha Nair")})
     monkeypatch.setattr(engine_mod, "build_odoo_client", lambda t, c: odoo)
 
-    now = datetime.now(UTC).replace(microsecond=0)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
     gateway.add("5", now - timedelta(hours=3), "CheckIn")
     gateway.add("5", now - timedelta(hours=1), "CheckOut")
     run = api.post(f"/api/v1/sources/{source['id']}/sync", headers=head(token)).json()

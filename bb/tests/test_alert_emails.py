@@ -2,21 +2,18 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.models import DeviceSource, OdooConnection, Tenant
+from app.models import OdooConnection, DeviceSource, Tenant, User
 from app.services import alert_emails
 from app.services.alert_emails import due_alerts, sweep_alert_emails
 from tests.test_billing import _signup, client  # noqa: F401
-from datetime import datetime, timedelta, timezone
 
-UTC = timezone.utc
-
-
-T0 = datetime(2026, 10, 5, 12, 0, tzinfo=UTC)
+T0 = datetime(2026, 10, 5, 12, 0, tzinfo=timezone.utc)
 RED = {"key": "odoo-connection", "severity": "bad", "title": "BioBridge can't reach Odoo", "detail": "Invalid API key."}
 AMBER = {"key": "unmapped", "severity": "warn", "title": "5 badges", "detail": "x"}
 

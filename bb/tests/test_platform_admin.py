@@ -500,13 +500,7 @@ def seed_failure(api, tenant_id: str) -> None:
     """A stuck punch whose Odoo message names the employee, as Odoo's does."""
     from datetime import datetime
 
-    from app.models import (
-        Direction,
-        EmployeeMapping,
-        MappingStatus,
-        PunchRecord,
-        PunchState,
-    )
+    from app.models import Direction, EmployeeMapping, MappingStatus, PunchRecord, PunchState
 
     db = api.session_factory()
     db.add(

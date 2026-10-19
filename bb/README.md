@@ -137,8 +137,9 @@ does the sync inside the request.
 Try the whole loop with no hardware:
 
 ```bash
-python3 tools/generate_punches.py                       # writes punches.json, timed off right now
-python3 tools/mock_biotime.py --punches punches.json     # fake BioTime on :8099
+python3 tools/mock_biotime.py --tenant <slug>            # fake BioTime on :8099, live punches by default; log in as username <slug>
+python3 tools/mock_zk_terminal.py --tenant <slug> --company <id>   # fake standalone ZKTeco unit on :4370 (add it as zk://127.0.0.1:4370), live punches; control on :5370
+# optional, one-off history only:  python3 tools/generate_punches.py --tenant <slug>
 python3 tools/e2e_proof.py --odoo-url https://your.odoo.com \
     --odoo-db yourdb --odoo-user you@example.com --odoo-key <api-key>
 ```
@@ -147,8 +148,14 @@ python3 tools/e2e_proof.py --odoo-url https://your.odoo.com \
 
 ```bash
 source .venv/bin/activate     # or: .venv/bin/python -m pytest
-python -m pytest              # 141 tests, no skips
+python -m pytest              # ~900 tests, no skips, about 7 minutes
 ```
+
+The suite is offline and self-contained: `tests/conftest.py` refuses any
+connection or DNS lookup outside this machine (a test that tries gets an
+immediate "cannot reach" error, the same path a real outage takes), drops
+proxy settings, and gives each test process its own temporary database, so it
+never touches `./biobridge.db` and test files can run in parallel.
 
 If it reports **skips**, a dev dependency is missing. Without `pytest-asyncio`
 pytest skips every async test and still exits 0 — a green run with the entire
@@ -181,7 +188,10 @@ sudo cp deploy/biobridge.service /etc/systemd/system/
 sudo systemctl enable --now biobridge        # survives crashes and reboots
 ```
 
-or `docker compose -f deploy/docker-compose.yml up -d`.
+or on Docker: `docker compose -f deploy/docker-compose.yml up -d --build` (Postgres + the API),
+with `deploy/docker-compose.prod.yml` adding Caddy HTTPS and nightly backups for a server.
+`deploy/README-docker.md` covers both, and moving an existing `biobridge.db` across
+(`tools/sqlite_to_postgres.py`).
 
 **Is it actually running?** That is the question that matters, because a
 BioBridge whose API answers while its scheduler is dead looks perfectly healthy
@@ -352,6 +362,25 @@ doors, and the token each one mints is scoped to its surface:
 | Reaches tenant routes | yes | never |
 | Access token life | 12 h | 1 h |
 | Refresh token life | 30 d | 1 d |
+
+**A fixed staff login, for a host with no shell.** `grant_admin.py` needs a
+shell or a database login on the server. Where there is neither, set
+`STAFF_EMAIL` and `STAFF_PASSWORD` (12+ characters) in the server's settings and
+restart: the API creates that account at start-up — staff, no workspace — and
+signs in at `/#/staff/login` like any other. It is still not reachable from the
+product: only whoever controls the server's environment can set it, which is the
+bar a database login already sets.
+
+* Changing `STAFF_PASSWORD` and restarting **rotates** the password and ends the
+  sessions the old one opened. The setting is the source of truth.
+* Removing the settings does **not** remove the account or its access — revoke it
+  with `grant_admin.py --revoke`, or disable the user.
+* An address that already belongs to a **customer** workspace is left alone, with
+  a log warning, so a setting can never take over a customer's login. Use another
+  address, or promote that account with `grant_admin.py`.
+* A restart also clears a lock-out of this one login.
+
+`tests/test_staff_bootstrap.py`.
 
 **Staff is a backend role, not a customer role.** A platform staff account
 (`is_platform_admin`) signs in at the console door only. The customer door
@@ -753,6 +782,74 @@ Two invariants make a run safe to interrupt:
   re-read window costs nothing and a full re-pull is safe.
 - The cursor advances only **after** punches are stored, and only to the newest
   punch actually seen. A crash costs a retry, never a gap.
+- A read that stops at a provider's page cap (BioTime's `MAX_PAGES_PER_RUN`,
+  and each vendor's own guard) is never trusted as complete. BioTime pages in id
+  order, not time order, so a cut-short read can leave unread punches *before*
+  the newest one it returned. The engine splits that window in half and reads
+  both halves again, down to 10-minute slices, at most 12 reads per source per
+  run; the cursor stops where the complete reading stops, and a large backlog
+  is worked off over the next runs ("large backlog — continuing next run").
+
+### Reading by record id (late uploads)
+
+The time cursor has one blind spot: a punch that reaches the platform late with
+an old timestamp (a terminal that was offline for a day uploads its backlog)
+falls before the re-read window and is never fetched. Platforms that number
+their records with an id that only grows, and can be asked for records after
+one, are also read by id:
+
+1. Every run reads by time first, exactly as above — nothing depends on the id.
+2. It then asks for everything with an id above the highest id already stored
+   (`record_cursor` in the connection's config), whatever its timestamp, back to
+   the backfill limit. Anything new there was uploaded late.
+3. The id cursor moves, with the time cursor, only after both reads are stored.
+   If new punches arrive with ids **below** the cursor, the platform restarted its
+   count (log cleared, device reset, Hikvision's counter wrapping) and the
+   cursor follows it down.
+4. A platform that rejects or ignores the id condition is marked
+   `record_cursor_unsupported` and read by time only from then on. Changing the
+   connection's address clears both keys.
+
+| Platform | Id used | How it is asked |
+|---|---|---|
+| Hikvision ISAPI terminal | event `serialNo` | `AcsEventCond.beginSerialNo` |
+| Suprema BioStar 2 | event `id` | `id` GREATER condition, ordered and paged by id |
+| Matrix COSEC | sequence + rollover | its own `cosec_cursor` (already position-based) |
+| ZKTeco BioTime | transaction `id`, `upload_time` | see below |
+| Dahua terminal | record `RecNo` | gaps in the numbers the time read saw — see below |
+| Matrix COSEC CENTRA | template's Index No | `eventta?action=get;index=N;count=500`, asked from the last stored index (works whether the server reads it as "from" or "after"); 40 pages per run, the rest next run. Needs Index No in the API template |
+| ZKTeco terminal (port 4370) | none | the log has no ids; the terminal records its own punches as they happen, so there are no late uploads to catch |
+
+**Dahua.** `recordFinder.cgi` has no documented "after this RecNo" condition,
+but RecNo counts up as the terminal stores records (failed attempts included).
+Every RecNo the time read returns is noted; a number between the id cursor and
+the highest one seen that did not come back is a record stored with a time
+outside the window (the terminal's clock was set back, say). Only then are older
+days searched, newest first, up to 31 days per run, for those numbers. If the
+budget runs out the cursor waits below the first missing number. Gaps that a
+full search never finds three runs in a row (numbering shared with other record
+types, deleted records) switch the terminal to time only
+(`dahua_recno_misses`). A record whose clock was set *ahead* is not found this
+way.
+
+**BioTime.** Its transaction list ignores id filters and ordering (tested on a
+live server), but it does take `upload_time`, and one transaction can be read by
+id. Two reads cover late uploads:
+
+- *By upload time.* The live window is also asked `?upload_time=<window start>`.
+  What comes back is checked: a server that filters "from that time on" is
+  remembered as `biotime_upload_filter: from`; one that ignores the value, or
+  matches it exactly, as `off` and is not asked again.
+- *By id gaps.* BioTime numbers transactions as it receives them, so an id
+  between two the time read returned, but missing from it, is a transaction
+  with a punch time outside the window — a late upload (or a deleted one). Each
+  gap is read on its own (`/iclock/api/transactions/<id>/`), then the ids past the
+  newest until one does not exist. At most 200 lookups per run; the id cursor
+  stops where the lookups stopped.
+
+Both vendor conditions are honoured by the simulated servers in the tests; they
+still need confirming on a real terminal and server. If either is ignored, step
+4 catches it on the first run.
 
 ### The one thing this gets right that a naive port does not
 
@@ -777,6 +874,31 @@ result = pair_punches(punches, config, open_shift=OpenShift(id, check_in))
 
 `tests/test_pairing.py::test_lone_checkout_closes_the_open_shift_instead_of_opening_one`
 is the test that pins it.
+
+### A punch that lands inside a record Odoo already has
+
+Odoo refuses overlapping attendances for one employee, closed ones included. Its
+message — "the employee was already checked in on …" — prints the *new*
+check-in, which makes it read as if the old record were still open. Retrying
+such a write can never succeed, so before creating a record the engine asks
+Odoo for the one that already spans the check-in (`OdooClient.attendance_covering`):
+
+* **Closed by BioBridge at the shift limit** (a forgotten check-out, cut at
+  `max_shift_hours`): that end time was a guess. The record is shortened to end
+  where the new check-in begins — the same rule as a check-in that follows a
+  forgotten check-out — and the new record is created. The local copy is kept in
+  step, including when the hourly sweep closes a stale shift.
+* **A real record** (punched in and out): the punch is marked *skipped*, with
+  the record's id and times in its message, instead of an error that Retry
+  cannot fix.
+
+A shift can also be closed in Odoo by something other than a sync — the hourly
+stale-shift sweep, or a person editing it. Each cycle looks up the records
+BioBridge still shows as open (one query) and takes the check-out Odoo has, so
+the Attendance page never keeps saying "Open" for a record that is closed.
+
+`tests/test_odoo_overlap.py`. `FakeOdoo` enforces the same overlap rule, so any
+other path that tried to write one would fail a test.
 
 ## Employee mapping
 
@@ -1237,8 +1359,8 @@ server. It prints the URL to paste, and binds loopback-only unless told
 otherwise:
 
 ```bash
-python3 tools/mock_biotime.py --port 8090 --punches punches.json
-python3 tools/mock_biotime.py --host 0.0.0.0 --port 8090   # BioBridge elsewhere
+python3 tools/mock_biotime.py --tenant <slug> --port 8090
+python3 tools/mock_biotime.py --tenant <slug> --host 0.0.0.0 --port 8090   # BioBridge elsewhere
 ```
 
 #### Live punches (simulation)
@@ -1368,6 +1490,19 @@ the JWT and asserts the token's `tid` matches the user row. There is no row-leve
 security in the database, so every query filters on `principal.tenant.id` — an
 unscoped query is a cross-tenant leak. Routes return **404**, not 403, for an
 object belonging to another tenant, so an id's existence is never confirmed.
+`tests/test_tenant_isolation.py` holds this in place: every route needs a login
+unless it is on a short public allowlist, every route that takes an object id is
+probed with another account's ids (expects 404 and the object unchanged), and two
+accounts with the same serial numbers, badges and record numbers keep separate
+ledgers, record cursors and Odoo device-removal queues. A new route with an id in
+its path is picked up by that test automatically.
+
+**Push terminals are global, their data is not.** An ADMS serial number belongs
+to one account at a time. Removing the connection (or deleting the account)
+runs `adms.forget_owner`: the user list the terminal reported, its log stamps
+and any command still waiting for it are dropped, so the next owner inherits
+none of it. The push provider only sees a terminal its own connection holds
+(`adms.owned_by`).
 
 **Credentials are encrypted per tenant.** Fernet with a key derived via HKDF from
 the master key, salted with the tenant id, version-tagged `v1:` for rotation. A

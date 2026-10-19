@@ -9,6 +9,7 @@ typed.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func, select
@@ -17,23 +18,9 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.session import get_db
 from app.models import ContactEvent, ContactRequest, PendingSignup, SubscriptionPlan
-from app.schemas import (
-    ContactIn,
-    ContactOut,
-    MessageOut,
-    PublicPlanOut,
-    RegisterIn,
-    RegisterOut,
-    ResendIn,
-)
-from app.services import billing, onboarding
-from app.services import contact as contact_service
+from app.schemas import ContactIn, ContactOut, MessageOut, PublicPlanOut, RegisterIn, RegisterOut, ResendIn
+from app.services import billing, contact as contact_service, onboarding
 from app.services.email_check import UngenuineEmailError, assert_genuine_email
-
-from datetime import datetime, timezone
-
-UTC = timezone.utc
-
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/public", tags=["public"], dependencies=[Depends(billing.use_config)])
@@ -191,7 +178,7 @@ def contact(payload: ContactIn, request: Request, db: Session = Depends(get_db))
         message=clean(payload.message), preferred_date=payload.preferred_date,
         preferred_window=payload.preferred_window, timezone=clean(payload.timezone), ip=_ip(request),
     )
-    req.stage_changed_at = datetime.now(UTC)
+    req.stage_changed_at = datetime.now(timezone.utc)
     db.add(req)
     db.flush()
     db.add(ContactEvent(contact_id=req.id, kind="stage", from_stage=None, to_stage="new", actor="website",

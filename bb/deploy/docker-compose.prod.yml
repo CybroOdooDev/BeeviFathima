@@ -1,0 +1,67 @@
+# Production override: BioBridge behind Caddy, with automatic HTTPS.
+#
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.prod.yml up -d --build
+#
+# Needs, in deploy/.env (read by compose for the ${…} values below):
+#   POSTGRES_PASSWORD   a long random string
+#   APP_DOMAIN          e.g. app.biobridge.example — its DNS A record must point
+#                       at this server, and ports 80/443 must be open, for Caddy
+#                       to obtain the certificate
+#   ACME_EMAIL          where Let's Encrypt sends expiry notices
+#   ADMS_PORT           plain-HTTP port for ZKTeco push terminals (default 8081)
+# and, in the app env file (BIOBRIDGE_ENV_FILE, default ../.env), production
+# values: ENVIRONMENT=production, real JWT_SECRET and MASTER_ENCRYPTION_KEY,
+# PUBLIC_BASE_URL=https://$APP_DOMAIN, ADMS_SERVER_HOST=$APP_DOMAIN,
+# ADMS_SERVER_PORT=$ADMS_PORT, CORS_ORIGINS. See deploy/.env.production.example.
+
+services:
+  api:
+    # Not published: only Caddy, on the compose network, reaches it.
+    ports: !reset []
+    expose: ["8000"]
+    environment:
+      ENVIRONMENT: production
+
+  caddy:
+    image: caddy:2-alpine
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+      - "${ADMS_PORT:-8081}:${ADMS_PORT:-8081}"
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?set APP_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL}
+      ADMS_PORT: ${ADMS_PORT:-8081}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+  # Nightly database dump, kept 14 days, in deploy/backups/ on the host.
+  backup:
+    image: postgres:16-alpine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes: ["./backups:/backups"]
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        while true; do
+          f=/backups/biobridge-$$(date -u +%Y%m%d-%H%M).sql.gz
+          pg_dump -h postgres -U biobridge biobridge | gzip > "$$f" && echo "backup: $$f"
+          find /backups -name 'biobridge-*.sql.gz' -mtime +14 -delete
+          sleep 86400
+        done
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
